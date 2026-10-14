@@ -423,6 +423,9 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `AGENT_IMAGE_PROXY_TEST_HOSTS` | empty | Tests and local QA only: hosts (names, addresses, or CIDR ranges) the chat image proxy may reach over http on any port, standing in for a public picture host. Refused at startup when `NODE_ENV=production`. The proxy never uses `AGENT_ALLOWED_PRIVATE_HOSTS`: in production it loads public https addresses on port 443 only. |
 | `APP_VERSION` | `0.37.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
+| `LOG_LEVEL` | `info` | `error`, `warn`, `info`, or `debug` (see *Logs*). `debug` adds health checks, static files, single 401/404s, and query SQL. Any other value means `info`. |
+| `LOG_FORMAT` | `pretty` | `pretty` (one readable line per event with `key=value` fields) or `json` (one JSON object per line, for a log shipper). |
+| `LOG_SLOW_MS` | `1000` | A request slower than this many milliseconds logs at `warn` (streams excepted). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
 
@@ -490,6 +493,71 @@ docker compose exec app bun server/storage-admin.ts verify --hash
 Remove the old copies only after `verify --hash` reports 0 failed, you have opened files, pictures, and whiteboards in Nook, and you hold a fresh backup: then, if you want the disk space back, remove `DATA_DIR/documents/objects` and `DATA_DIR/avatars` (Nook no longer reads them). Keep them while you may still switch back. Going back is the same with `migrate --to local` (with the S3_* settings still set) and `STORAGE_BACKEND=local`. `verify` (without `--hash`, sizes only) is safe while the server runs. Exit codes: 0 done, 1 something failed (rerun to resume), 2 usage or settings.
 
 **EXIF and embedded metadata.** Nook stores uploaded files byte for byte and does not strip EXIF or other embedded metadata (for example GPS location or author) from images or PDFs. Tell users to remove it before uploading files they plan to share.
+
+## Logs
+
+The server writes one line per event to stdout (errors to stderr), so Compose collects everything:
+
+```sh
+docker compose logs -f app                       # follow
+docker compose logs -f app | grep ' reports '    # one area (the scope column)
+docker compose logs app | grep 'req=3f9a1c0e2b7d'  # one request, end to end
+docker compose logs app | grep 'run=ffd3ea73'    # one report run, agent run, or generation
+docker compose logs app | grep -E ' (WARN|ERROR) '  # only problems
+```
+
+A line reads `time LEVEL scope message key=value…`:
+
+```
+2026-10-14T05:53:38.000Z INFO  http     POST /api/reports/:reportId/refresh 202 10ms req=5d59e7344097 user=4bcd1f52 role=admin via=web
+```
+
+- **`req=`** is the request id. A well-formed `X-Request-Id` from your proxy is kept; otherwise Nook makes one. Every response carries it back in `X-Request-Id`, and every line logged while the request runs (sign-ins, tool calls, queries) has it.
+- **`run=`** is the first 8 characters of a report run, a generation, an edit, or an agent run: every line of that run has it, including its ClickHouse queries and model steps. Work a request started in the background keeps the request's `req=` too.
+- **`user=`**, **`key=`**, **`report=`**, **`datasource=`** are short ids (the first 8 characters), never names or addresses. `via=` is `web`, `api` (`/api/v1`), or `mcp`.
+- Paths are route templates (`/api/reports/:reportId`), never raw ids or query strings.
+
+**Scopes:** `app` (start, shutdown, crashes), `http`, `auth`, `team`, `keys`, `mcp`, `notes`, `files`, `bin`, `search`, `reports`, `agents`, `knowledge`, `mail`, `calendar`, `vault`, `db`, `storage`, `sweeper`, and a few smaller ones.
+
+**Levels** (`LOG_LEVEL`, default `info`):
+
+| Level | What |
+| --- | --- |
+| `error` | 5xx answers with the stack, failed background work (sweeps, mail, runs), migration failures, uncaught exceptions and unhandled rejections. |
+| `warn` | 4xx answers other than 401 and 404; 401/404 from one client more than 20 times a minute (one line with the count); requests slower than `LOG_SLOW_MS`; refused sign-ins and keys; refused or failed queries; provider errors (status code only). |
+| `info` | Every other request; startup (configuration summary without secrets, each migration with its time, `Listening`); shutdown; sign-in, sign-out, 2FA, key create and revoke; MCP tool calls; agent runs and each model step (tool names, tokens, time); report runs, generations, instructions, proposals, schedules, doc fetches, schema syncs, ClickHouse queries; uploads (size and type); mail and reminder counts; sweeper counts; knowledge indexing. |
+| `debug` | Health checks, the built client's files, single 401s and 404s, Nook's own ClickHouse statements, and the SQL of console, report, and agent queries. |
+
+`LOG_LEVEL=debug` is for a short investigation: it prints query SQL, which can name columns and literal values.
+
+`LOG_FORMAT=json` writes one JSON object per line (`time`, `level`, `scope`, `msg`, then the fields) for a log shipper; an error's stack is in `err.stack`. In the default `pretty` format the stack follows the event on indented lines. Bun prints one plain `Started server: …` line of its own at boot.
+
+**Never logged**, at any level: passwords, session cookies, CSRF tokens, Nook keys, provider and S3 keys, OAuth secrets, the `Authorization` header, TOTP and recovery codes, note and document content, chat prompts and replies, doc markdown, query result rows, and mail bodies. Email addresses are masked (`p***@e***.com`), mail recipients appear as a hash, and client addresses only as a hash in repeated-401 warnings. Every line passes through one redaction step (`server/log.ts`) that also strips anything shaped like a bearer token, key, JWT, `password=`/`token=` pair, or URL credentials, in messages and error stacks alike.
+
+**Example: a report generation** (one `run=` from the doc to the last query):
+
+```
+… INFO  reports  Doc fetched server=0c1d2e3f tool=fetch bytes=4812 hash=9b2c1f0e4a7d ms=212 req=8a1f… user=4bcd1f52 role=member
+… INFO  reports  reports.doc.fetch actor=4bcd1f52 report=2756c849 server=0c1d2e3f tool=fetch bytes=4812 truncated=false changed=true req=8a1f…
+… INFO  reports  reports.generate.start actor=4bcd1f52 report=2756c849 run=6e0b9a12 agentRun=d41f0c77 docSnapshot=1b2c3d4e datasource=ac2b9ece seededTables=3 req=8a1f…
+… INFO  agents   Model step step=1 ms=1840 tools=search_schema,describe_tables promptTokens=3120 completionTokens=96 model=gpt-4.1 run=6e0b9a12 report=2756c849
+… INFO  reports  ClickHouse query query=nook-gen-6e0b9a1212ab-daily class=select ms=41 rowsRead=120000 rows=14 run=6e0b9a12 report=2756c849
+… INFO  reports  reports.generate.run_sql actor=4bcd1f52 report=2756c849 run=6e0b9a12 query=nook-gen-6e0b9a1212ab-daily ok=true rows=14 ms=41
+… INFO  reports  reports.generate.submit actor=4bcd1f52 report=2756c849 run=6e0b9a12 ok=false attempt=1 errors=1
+… INFO  reports  reports.generate.submit actor=4bcd1f52 report=2756c849 run=6e0b9a12 ok=true attempt=2 blocks=6 queries=4
+… INFO  reports  reports.generate.finish actor=4bcd1f52 report=2756c849 run=6e0b9a12 status=succeeded ok=true steps=5 toolCalls=7 submits=2 queries=4 promptTokens=18230 completionTokens=2210
+```
+
+**Example: a failed ClickHouse query** from the SQL console, then a refused one:
+
+```
+… WARN  reports  ClickHouse query failed query=nook-console-34e27dc1366d code=CLICKHOUSE chCode=47 chName=UNKNOWN_IDENTIFIER ms=3 req=5cf9aa0cc6ee user=4bcd1f52 role=admin
+… WARN  reports  reports.console.refused actor=4bcd1f52 report=2756c849 datasource=ac2b9ece query=nook-console-34e27dc1366d req=5cf9aa0cc6ee
+… ERROR http     POST /api/reports/:reportId/console 502 5ms req=5cf9aa0cc6ee user=4bcd1f52 role=admin via=web
+… WARN  reports  Query refused query=nook-console-8c52849f642e code=NOT_ALLOWED_TABLE ms=0 req=667f6390b7b4 user=4bcd1f52 role=admin
+```
+
+`chCode` and `chName` are ClickHouse's own error code; search ClickHouse's `system.query_log` for the `query=` id to see the statement on the warehouse side. The SQL itself is in Nook's log only at `debug`.
 
 ## Backup and restore
 

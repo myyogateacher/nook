@@ -42,6 +42,8 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 ## Known LOW leftovers
 
+- [ ] `tests/restV1.test.ts` "agents" fails in some full-suite runs (lanes E and J, 2026-10-14) but passes on its own (7/7) and passed in lane G's six full proof runs. Probably order-dependent shared state (agents, providers or keys left by an earlier file); find what it reads.
+
 - [x] Button lint baseline accepted for pre-reports screens; new findings fail QA.
 - [ ] Doc browsing (B3): only page reads (`fetch`, `get_document`, `read_document`, `get_page`, `read_note`, `read_document_text`) are kept as pages; search and list answers are not, so "Doc changed" cannot notice a new page a search would now find. Check doc reads at most 16 pages.
 - [ ] "Pick from Nook" (B4) finds Files by name only (`GET /api/files`, the newest 500); there is no full-text search over Files text documents yet.

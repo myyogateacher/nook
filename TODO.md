@@ -26,6 +26,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 - [ ] Generator reliability, proposed and not started: an eval set of docs, fixture data and expected numbers; a metric catalog extracted from the doc; sanity checks on results (join fan-out, totals that reconcile, coverage, units); repair hints for ClickHouse errors; a model fallback.
 - [ ] Report shares live in `report_members`/`report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, with the Access sheet.
 - [ ] Reports test gap: a click test that Inspect → "Open in console" fills in the block's SQL (today the test only checks that the button renders).
+- [ ] Tool-server sync stores `readOnlyHint: false` the same as "not annotated", so the reports browse list hides write tools by `destructiveHint` and name only. Store the raw hint at sync (`server/agents/toolServers.ts`) and use it in `isReadLikeTool`.
 - [ ] Wave 45 leftovers: `format()` the string function is refused along with the table function; tree-check errors that name a qualified column (`t.col`) are shown generically.
 - [ ] App-wide sheets: Forward does not reopen a second-level sheet (one reopen slot in `useHistoryDialogGuard`, D18).
 - [ ] The stopped `test-infra` agent's partial work (fixed test ports, load-tolerant timeouts) is unmerged on its branch.

@@ -1,12 +1,15 @@
 import { cpSync, createReadStream, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { extname, join, normalize } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, extname, join, normalize } from "node:path";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 // D203: Excalidraw's fonts are self-hosted at /excalidraw/fonts/ (no CDN, font-src 'self').
-const excalidrawFontsDir = "node_modules/@excalidraw/excalidraw/dist/prod/fonts";
+// Resolved from this file through the package (not the working directory), so a build run from any cwd,
+// or in a worktree whose node_modules is a symlink, finds the fonts: dist/prod/index.js sits next to fonts/.
+const excalidrawFontsDir = join(dirname(createRequire(import.meta.url).resolve("@excalidraw/excalidraw")), "fonts");
 function excalidrawFonts(): Plugin {
   // Review L6: a production build must apply both rewrites at least once, or it fails.
   let building = false;

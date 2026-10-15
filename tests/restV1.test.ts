@@ -168,7 +168,13 @@ describe("REST v1: parity with MCP", () => {
         expect({ tool: spec.name, body: viaRest.body }).toEqual({ tool: spec.name, body: mcpBody });
       } else if (!spec.write) {
         expect({ tool: spec.name, status: viaRest.status }).toEqual({ tool: spec.name, status: 200 });
-        expect({ tool: spec.name, body: volatile(JSON.stringify(viaRest.body)) }).toEqual({ tool: spec.name, body: volatile(JSON.stringify(mcpBody)) });
+        // get_today also lists other people's items shared with everyone, which earlier files' background
+        // work (agent runs, indexing, thumbnails) may still change between two calls. The REST answer must
+        // equal an MCP answer from just before or just after it, so only a real parity gap fails.
+        const restText = volatile(JSON.stringify(viaRest.body));
+        const before = volatile(JSON.stringify(mcpBody));
+        const after = restText === before ? before : volatile(JSON.stringify(JSON.parse((await invokeMcpToolForTests(spec.name, {}, created.id, "mcp")).content[0]!.text)));
+        expect({ tool: spec.name, body: restText }).toEqual({ tool: spec.name, body: restText === after ? after : before });
       }
     }
     // Real reads with arguments.

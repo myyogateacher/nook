@@ -22,7 +22,7 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 ## Known LOW leftovers
 
 - [ ] Files full-text index leftovers (lane FTS, 060 shipped): an MCP/REST `search_documents` tool on the index (files:read, ranked, snippets) so agents and keys get Files content search; a Back/Forward check at 390 px for a file opened from the notes search Files facet and from "In file text"; PDF text is not indexed because `read_document_text` reads text files only.
-- [ ] (Lane FTS) `tests/restV1.test.ts` "agents" fails in some full-suite runs but passes on its own (7/7) and in lane G's six proof runs. It is probably order-dependent shared state: agents, providers, or keys left behind by an earlier file.
+- [ ] `tests/restV1.test.ts` parity: not reproduced in two full runs (lane FTS). The only cross-module read tool for its key is `get_today`, which lists other people's items shared with everyone that earlier files' background work can change between the MCP and REST calls; the check now brackets the REST call with two MCP reads. If it recurs, the failing tool name pins the shared state.
 
 ## Standing rules for agent briefs
 

@@ -13,19 +13,19 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 
 ## In flight
 
-- [ ] Files full-text index (migration 060, approved 2026-10-15): a `document_fts` index over Files text and Markdown documents, so "Pick from Nook" (K4, today a bounded scan of `GET /api/reports/nook-files`) and Files search become one ranked query, with access exactly as `read_document_text`.
-- [ ] Forward after Back past a page (D480) does not reopen Inspect yet, because it has no `layerKey` or `useLayerOpener`. v0.38.0 is out, so this can be done now.
+- [ ] (Lane FTS) Files full-text index (migration 060, approved 2026-10-15): a `document_fts` index over Files text and Markdown documents, so "Pick from Nook" (K4, today a bounded scan of `GET /api/reports/nook-files`) and Files search become one ranked query, with access exactly as `read_document_text`.
+- [ ] (Lane P1) Forward after Back past a page (D480) does not reopen Inspect yet, because it has no `layerKey` or `useLayerOpener`. v0.38.0 is out, so this can be done now.
 - [ ] Report organization at scale ([plan](docs/plan/REPORTS_ORG.md), Tableau-style; replaces "readers' own placement"; the D460 `group_grants` fold becomes optional cleanup). Phase 2 follows the operator's simple model; all its questions are settled.
-  - [ ] Phase 1 (061): favorites (★, a Favorites nav entry), filters (owner, status, data source, schedule), search and keyset pagination for hundreds of reports, MCP star tools.
+  - [ ] (Lane P1) Phase 1 (061): favorites (★, a Favorites nav entry), filters (owner, status, data source, schedule), search and keyset pagination for hundreds of reports, MCP star tools.
   - [ ] Phase 2 (062): simple permissions (operator decision, 2026-10-15). Folders are only for grouping and never grant access. A report can have several owners, and an owner or an admin can make others owners. An owner can change the report's folder, its sharing and its other permissions. A report always keeps at least one owner. Folders are one workspace-wide tree. Any member can create a folder; only admins can rename, move, reorder or delete one.
   - [ ] Phase 3 (064, optional): report Lists. A report can sit in many lists, and a list never grants access.
 
 ## Known LOW leftovers
 
-- [ ] `tests/inboxApp.test.tsx` "Inbox copy" fails late in the evening IST (seen 23:25 on 2026-10-14: `expiresText` of now + 13.5 days read "expires in 13 days"). It is probably a local-midnight boundary in the day count, not the rounding the test means to check.
-- [ ] `tests/reportsScheduler.test.ts` "at most two scheduled refreshes run at once" failed once in a full-suite run (lane L, 2026-10-14) and passes on its own (3/3). It is probably timing under load.
-- [ ] Lane worktrees without `node_modules` cannot run the `vite build` gate: the Excalidraw fonts copy reads `node_modules/…/fonts` relative to the working directory, so the build fails at writeBundle after emitting `dist`. Lane L was not allowed to install or link `node_modules` in its worktree.
-- [ ] `tests/restV1.test.ts` "agents" fails in some full-suite runs but passes on its own (7/7) and in lane G's six proof runs. It is probably order-dependent shared state: agents, providers, or keys left behind by an earlier file.
+- [ ] (Lane FTS) `tests/inboxApp.test.tsx` "Inbox copy" fails late in the evening IST (seen 23:25 on 2026-10-14: `expiresText` of now + 13.5 days read "expires in 13 days"). It is probably a local-midnight boundary in the day count, not the rounding the test means to check.
+- [ ] (Lane FTS) `tests/reportsScheduler.test.ts` "at most two scheduled refreshes run at once" failed once in a full-suite run (lane L, 2026-10-14) and passes on its own (3/3). It is probably timing under load.
+- [ ] (Lane FTS) Lane worktrees without `node_modules` cannot run the `vite build` gate: the Excalidraw fonts copy reads `node_modules/…/fonts` relative to the working directory, so the build fails at writeBundle after emitting `dist`. Lane L was not allowed to install or link `node_modules` in its worktree.
+- [ ] (Lane FTS) `tests/restV1.test.ts` "agents" fails in some full-suite runs but passes on its own (7/7) and in lane G's six proof runs. It is probably order-dependent shared state: agents, providers, or keys left behind by an earlier file.
 
 ## Standing rules for agent briefs
 

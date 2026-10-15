@@ -5,31 +5,26 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 - Plans of record: `DEVELOPMENT_PLAN.md`, `docs/plan/research/`, [reports plan](docs/plan/WAVES_45-48_REPORTS.md), [report theme](docs/plan/REPORT_THEME.md).
 - Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
-**Current state (2026-10-15).**
+**Current state (2026-10-16).**
 - **v0.42.0** is released (tag and GitHub release, 2026-10-15): PDFs as report docs and in `read_attachment_text`, `search_report_options`, Report owners paging. v0.41.0 brought PDF text in Files, `search_documents`, console parameters and Settings → Report owners.
 - Migrations: **001–063** are released and immutable (045 and 054 unused; 054 is reserved for Messages). Next free: **064**.
 - Development happens directly on `main`, pushed as each change passes its gates.
 
-## In flight
+## Waiting on the operator
 
-- [ ] Report organization at scale ([plan](docs/plan/REPORTS_ORG.md), Tableau-style; replaces "readers' own placement"; the D460 `group_grants` fold becomes optional cleanup). Phases 1 and 2 shipped.
-  - [ ] Phase 3 (064, optional): report Lists. A report can sit in many lists, and a list never grants access.
+- [ ] **Real-model eval of report generation** (D488 chart kinds, D489 parameters): only the scripted provider has run. Run `scripts/reportEval.ts` with `REPORT_EVAL_BASE_URL`, `REPORT_EVAL_MODEL` and `REPORT_EVAL_API_KEY` (Z.ai or OpenAI; see docs/OPERATIONS.md "Report generation eval"), or regenerate reports on the VM. Check: the five kind cases (`onboarding_funnel`, `cohort_retention`, `quota_attainment`, `latency_spread`, `plan_flow`) get fitting chart kinds, and a doc that names a window or a dimension gets a date range or filter. Tune the prompts from the scores.
+- [ ] **Report Lists** ([plan](docs/plan/REPORTS_ORG.md) phase 3, optional, migration 064): a report in many lists; a list never grants access. Start only if the operator asks.
 
-- [ ] Reports: measure chart-kind choice with a real model (left from the chart-kinds lane, D488): run `scripts/reportEval.ts` with `REPORT_EVAL_*` set on the five kind cases (`onboarding_funnel`, `cohort_retention`, `quota_attainment`, `latency_spread`, `plan_flow`) and compare against a run with the shape line and the kind check off; only the scripted golden/trap runs were done.
+## Small fixes
 
-- [ ] Reports parameters, left from lane PARAMS (D489, migration 063):
-  - [ ] Measure parameter adoption with a real model (`scripts/reportEval.ts` with `REPORT_EVAL_*`): a doc that names a window or a dimension should get a date range or filter; only the scripted provider was run.
+- [ ] Settings → Report owners: Forward back into the section titles a past-first-page report's Owners sheet "Report" (the owners API has no title; carry it for admins, or look it up by id).
+- [ ] "Pick from Nook": before the Files index's first backfill after boot, the fallback scan can offer a scanned PDF by name (picking it gives the "no text layer" error).
 
-## Known LOW leftovers
+## Watch (no work unless it shows up)
 
-- [ ] Settings → Report owners past 50,000 reports (lane REP2, D506): **You can't open** walks every live report for its count (42 ms of CPU at 50,000, 166 ms at 200,000; later pages 2 ms), and the unmanaged list's check for reports with no owner rows costs two index counts (about 5 ms at 50,000, 20 ms at 200,000). A blocked person who co-owns a third of all reports makes every unmanaged page check them (50 ms at 50,000, 205 ms at 200,000). If a deployment gets there: count the admin's readable set from its parts, or cache the count per list for a minute.
-  - Forward back into the section reopens a report's Owners sheet titled "Report" when that report is past the first page (the title comes from the list, which loads its first page; the owners API has no title). Small: carry the title in the owners answer for admins, or look it up by id.
-
-- [ ] PDF text leftovers (lanes FILES and PDF, D496, D510–D514):
-  - [ ] The PDF worker has no heap cap: Bun 1.4.2 ignores Worker `resourceLimits` (D513). It runs `smol`, bounded by 16 MiB, 300 pages, 15 s, one at a time. Set a heap limit if Bun gains one.
-  - [ ] Before the Files index's first backfill after boot, "Pick from Nook" matches PDFs by name only and can offer a scan (picking it gives the "no text layer" error); the indexed search never does (D512).
-  - Recorded non-goal: OCR for scanned PDFs (D514). Every usable engine is native (tesseract) or a large WASM bundle with language data; a scan says "no text layer (scanned?)" instead.
-- [ ] `tests/restV1.test.ts` parity: not reproduced in two full runs (lane FTS). The only cross-module read tool for its key is `get_today`, which lists other people's items shared with everyone that earlier files' background work can change between the MCP and REST calls; the check now brackets the REST call with two MCP reads. If it recurs, the failing tool name pins the shared state.
+- Settings → Report owners past 50,000 reports: "You can't open" counts every live report on its first page (166 ms at 200,000); a blocked co-owner of a third of all reports slows the unmanaged list (205 ms at 200,000). Fix then: count the readable set from its parts, or cache the count for a minute (D506).
+- PDF worker memory: Bun 1.4.2 ignores Worker `resourceLimits` (D513); bounded by 16 MiB, 300 pages, 15 s, one at a time. Add a heap limit if Bun gains one.
+- `tests/restV1.test.ts` parity flake: not reproduced since lane FTS bracketed the REST call with two MCP reads; if it recurs, the failing tool name pins the shared state.
 
 ## Standing rules for agent briefs
 

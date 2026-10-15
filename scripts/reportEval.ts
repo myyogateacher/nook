@@ -5,12 +5,13 @@
  *
  *   bun --no-env-file scripts/reportEval.ts [--cases a,b] [--provider scripted|openai] [--variant golden|trap|both]
  *     [--clickhouse http://user:password@127.0.0.1:22200 | --fixtures] [--no-seed] [--record]
- *     [--out <dir>] [--data-dir <dir>] [--port 22241] [--origin http://e.localhost:22241] [--serve] [--tool-choice auto|full] [--timeout <s>]
+ *     [--out <dir>] [--data-dir <dir>] [--port 22241] [--origin http://e.localhost:22241] [--serve] [--tool-choice auto|full] [--token-param max_tokens|max_completion_tokens] [--timeout <s>]
  *   bun --no-env-file scripts/reportEval.ts --compare a.json b.json
  *
  * A real model is read from the environment, never from a file in the repository:
  * REPORT_EVAL_BASE_URL (an OpenAI-compatible base URL), REPORT_EVAL_MODEL, REPORT_EVAL_API_KEY.
- * Providers with only `tool_choice: auto` (Z.ai's GLM) are the default (`--tool-choice auto`).
+ * api.openai.com gets `max_completion_tokens` and the full `tool_choice`; any other base URL is treated
+ * like Z.ai's GLM (`max_tokens`, `tool_choice: auto` only). `--tool-choice` and `--token-param` override.
  * The ClickHouse comes from --clickhouse, REPORT_EVAL_CLICKHOUSE_URL, or CLICKHOUSE_TEST_URL; each
  * case's seed drops and recreates its own `eval_<case>` database there first.
  *
@@ -23,6 +24,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type { CaseResult, EvalReport, Fixtures, LoadedCase } from "../evals/reports/types";
+
+/** OpenAI itself takes `max_completion_tokens` and a named/required `tool_choice`; other
+ *  OpenAI-compatible providers (Z.ai's GLM) get `max_tokens` and `auto` only unless the flags say otherwise. */
+export function evalCompat<C extends { tokenParam: string }>(defaults: C, baseUrl: string, toolChoice?: string, tokenParam?: string) {
+  let openai = false;
+  try { openai = new URL(baseUrl).hostname === "api.openai.com"; } catch { /* reported by the caller */ }
+  const full = toolChoice ? toolChoice === "full" : openai;
+  const param = tokenParam === "max_tokens" || tokenParam === "max_completion_tokens" ? tokenParam : openai ? defaults.tokenParam : "max_tokens";
+  return { ...defaults, tokenParam: param as "max_completion_tokens" | "max_tokens", ...(full ? {} : { namedToolChoice: false, requiredToolChoice: false }) };
+}
 
 type Flags = Record<string, string | boolean>;
 
@@ -120,7 +131,7 @@ async function main() {
     ? { id: "scripted", baseUrl: scripted.baseUrl, apiKey: null, model: "scripted-eval", compat: DEFAULT_COMPAT }
     : {
       id: "eval", baseUrl: baseUrl!, apiKey: process.env.REPORT_EVAL_API_KEY ?? null, model: process.env.REPORT_EVAL_MODEL!,
-      compat: { ...DEFAULT_COMPAT, tokenParam: "max_tokens" as const, ...(flagString(flags, "tool-choice") === "full" ? {} : { namedToolChoice: false, requiredToolChoice: false }) }
+      compat: evalCompat(DEFAULT_COMPAT, baseUrl!, flagString(flags, "tool-choice"), flagString(flags, "token-param"))
     };
   const startedAt = new Date().toISOString();
   const results: CaseResult[] = [];

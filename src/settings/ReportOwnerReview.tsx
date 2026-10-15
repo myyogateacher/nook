@@ -88,7 +88,8 @@ export function ReportOwnerReview() {
   }, [load, query]);
 
   const shown = review?.scope === scope ? review : null;
-  // A sheet Forward reopened knows only its report's id: its title comes with the list.
+  // A sheet Forward reopened knows only its report's id: its title comes with the list or, for a report
+  // past the list's first page, with the owners answer the sheet loads (D508).
   const pendingTitle = managing && !managing.title ? review?.reports.find((report) => report.id === managing.id)?.title : undefined;
   useEffect(() => { if (pendingTitle) setManaging((current) => current && !current.title ? { ...current, title: pendingTitle } : current); }, [pendingTitle]);
   const empty = scope === "unmanaged" ? "Every report has an owner who can manage it." : "You can open every report.";
@@ -130,7 +131,7 @@ export function ReportOwnerReview() {
       </button>
       {shown.total !== null && <small className="file-dialog-hint">{shown.reports.length.toLocaleString()} of {shown.total.toLocaleString()} shown</small>}
     </div>}
-    {managing && <ShareSheet reportId={managing.id} title={managing.title || "Report"} canShare={false} canManageOwners layerKey={`${LAYER}:${managing.id}`} onClose={() => setManaging(null)} reopen={() => setManaging(managing)}
+    {managing && <ShareSheet reportId={managing.id} title={managing.title} canShare={false} canManageOwners layerKey={`${LAYER}:${managing.id}`} onClose={() => setManaging(null)} reopen={() => setManaging(managing)}
       onOwnersChanged={() => { void load(undefined, review?.reports.length ?? 0); }} />}
   </section>;
 }

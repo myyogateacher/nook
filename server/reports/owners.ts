@@ -26,8 +26,8 @@ type Actor = { id: string; role: string };
 const viaMeta = (via: Via) => via.keyId ? { via: "mcp", keyId: via.keyId } : {};
 
 /** The report (live) whose owners `actor` may manage: an owner, or an admin. */
-function manageable(reportId: string, actor: Actor): { id: string; owner_id: string } {
-  const row = db.query("SELECT id, owner_id FROM reports WHERE id = ? AND deleted_at IS NULL").get(reportId) as { id: string; owner_id: string } | null;
+function manageable(reportId: string, actor: Actor): { id: string; owner_id: string; title: string } {
+  const row = db.query("SELECT id, owner_id, title FROM reports WHERE id = ? AND deleted_at IS NULL").get(reportId) as { id: string; owner_id: string; title: string } | null;
   if (!row || (actor.role !== "admin" && !isReportOwner(reportId, actor.id))) throw reportNotFound();
   return row;
 }
@@ -48,14 +48,21 @@ export function canManageOwners(reportId: string, actor: Actor): boolean {
   }
 }
 
-export function listOwners(reportId: string, actor: Actor): ReportOwners {
+/**
+ * `withTitle` (D508, `GET /api/reports/:id/owners` only): the report's title, so the Owners sheet that
+ * Forward reopens in Settings → Report owners names a report past the list's first page. Only for whoever
+ * may manage the owners (an owner, or an admin who may not read the report but sees its title in the
+ * owner review anyway, D500/T399); nothing else of the report. MCP answers are unchanged.
+ */
+export function listOwners(reportId: string, actor: Actor, { withTitle = false } = {}): ReportOwners {
   const report = manageable(reportId, actor);
   const rows = db.query(`SELECT o.user_id AS id, u.display_name AS name, u.disabled_at, u.role, o.created_at, a.display_name AS added_by
     FROM report_owners o JOIN users u ON u.id = o.user_id LEFT JOIN users a ON a.id = o.added_by WHERE o.report_id = ? ORDER BY o.created_at, u.display_name COLLATE NOCASE, o.user_id`)
     .all(reportId) as Array<{ id: string; name: string; disabled_at: string | null; role: string; created_at: string; added_by: string | null }>;
   return {
     owners: rows.map((row): ReportOwner => ({ id: row.id, name: row.name, primary: row.id === report.owner_id, active: row.disabled_at === null && row.role !== "guest", state: ownerStateOf(row), addedBy: row.added_by, addedAt: row.created_at })),
-    canManage: true
+    canManage: true,
+    ...(withTitle ? { title: report.title } : {})
   };
 }
 

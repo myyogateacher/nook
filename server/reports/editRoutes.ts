@@ -116,7 +116,7 @@ export function registerReportEditRoutes(app: Hono<AppEnv>) {
     return { sharing: setSharing(c.get("user").id, reportId, await parseJson(c.req.raw, sharingSchema)) };
   }));
   // Phase 2 (D482): the report's owners; any owner or any admin manages them, never removing the last.
-  app.get("/api/reports/:reportId/owners", handle((c) => listOwners(id(c, "reportId"), c.get("user"))));
+  app.get("/api/reports/:reportId/owners", handle((c) => listOwners(id(c, "reportId"), c.get("user"), { withTitle: true })));
   app.post("/api/reports/:reportId/owners", handle(async (c) => {
     const reportId = id(c, "reportId");
     const { userId } = await parseJson(c.req.raw, ownerSchema);

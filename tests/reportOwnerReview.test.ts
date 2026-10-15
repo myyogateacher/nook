@@ -106,6 +106,26 @@ describe("GET /api/reports/admin/owner-review", () => {
   });
 });
 
+describe("the owners answer names the report (D508)", () => {
+  test("GET …/owners carries the title for an admin who can't read the report and for an owner; anyone else gets 404; MCP and changes answer as before", async () => {
+    expect((await send(admin, "GET", `/reports/${healthy.id}`)).status).toBe(404);
+    const asAdmin = await send(admin, "GET", `/reports/${healthy.id}/owners`);
+    expect(asAdmin.status).toBe(200);
+    expect(Object.keys(asAdmin.body).sort()).toEqual(["canManage", "owners", "title"]);
+    expect(asAdmin.body.title).toBe("Zq review healthy");
+    expect((await send(owner, "GET", `/reports/${healthy.id}/owners`)).body).toMatchObject({ title: "Zq review healthy", canManage: true });
+    for (const session of [member, await person("Title viewer", "viewer"), await person("Title guest", "guest")]) {
+      const refused = await send(session, "GET", `/reports/${healthy.id}/owners`);
+      expect(refused.status).toBe(404);
+      expect(JSON.stringify(refused.body)).not.toContain("Zq review healthy");
+    }
+    // Only the GET: an MCP list and an add answer the owners alone.
+    const listed = await reportTools.find((tool) => tool.name === "list_report_owners")!.handler({ reportId: healthy.id }, { keyId: "k-d508", userId: admin.userId, name: "k", scopes: ["reports:read"] }) as Json;
+    expect(Object.keys(listed).sort()).toEqual(["canManage", "owners"]);
+    expect(Object.keys((await send(owner, "POST", `/reports/${healthy.id}/owners`, { userId: owner.userId })).body).sort()).toEqual(["canManage", "owners"]);
+  });
+});
+
 describe("list_unmanaged_reports", () => {
   const tool = () => reportTools.find((item) => item.name === "list_unmanaged_reports")!;
   const keyOf = (session: Session) => ({ keyId: `k-review-${session.userId.slice(0, 6)}`, userId: session.userId, name: "k", scopes: ["reports:read" as const] });

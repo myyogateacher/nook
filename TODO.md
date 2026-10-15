@@ -17,7 +17,6 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 
 ## Small fixes
 
-- [ ] Settings → Report owners: Forward back into the section titles a past-first-page report's Owners sheet "Report" (the owners API has no title; carry it for admins, or look it up by id).
 - [ ] "Pick from Nook": before the Files index's first backfill after boot, the fallback scan can offer a scanned PDF by name (picking it gives the "no text layer" error).
 
 ## Watch (no work unless it shows up)

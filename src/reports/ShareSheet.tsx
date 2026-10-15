@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Crown, Trash2, Users } from "lucide-react";
 import { listPeople, listPickerGroups, type PickerGroup, type PickerPerson } from "../access/accessApi";
 import { PrincipalPicker } from "../access/PrincipalPicker";
@@ -28,14 +28,20 @@ const LAST_OWNER = "A report always keeps at least one owner. Add another owner 
  * and admins only) and remove owners; each change applies at once and is audited. The last owner can't
  * be removed (T390): its button is disabled, with the reason beside the list.
  */
-function OwnersSection({ reportId, people, onLeft, onChanged }: { reportId: string; people: PickerPerson[]; onLeft: () => void; onChanged?: () => void }) {
+function OwnersSection({ reportId, people, onLeft, onChanged, onTitle }: { reportId: string; people: PickerPerson[]; onLeft: () => void; onChanged?: () => void; onTitle?: (title: string) => void }) {
   const [owners, setOwners] = useState<ReportOwner[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reasonId = useId();
+  const titled = useRef(onTitle);
+  titled.current = onTitle;
   useEffect(() => {
     let alive = true;
-    getOwners(reportId).then((result) => { if (alive) setOwners(result.owners); }, (reason) => { if (alive) setError(messageOf(reason, "Could not load the owners")); });
+    getOwners(reportId).then((result) => {
+      if (!alive) return;
+      setOwners(result.owners);
+      if (result.title) titled.current?.(result.title);
+    }, (reason) => { if (alive) setError(messageOf(reason, "Could not load the owners")); });
     return () => { alive = false; };
   }, [reportId]);
   const options = useMemo(() => {
@@ -99,6 +105,7 @@ function OwnersSection({ reportId, people, onLeft, onChanged }: { reportId: stri
  * the Owners section alone (`canShare` false).
  */
 export function ShareSheet({ reportId, title, onClose, reopen, link, copyFailed = false, flash = () => undefined, canShare = true, canManageOwners = false, onOwnersChanged, onLeft, layerKey = "reports.share" }: {
+  /** `title` is empty when the caller does not know it (a sheet Forward reopened): the owners answer names the report (D508). */
   reportId: string; title: string; onClose: () => void; reopen?: () => void;
   /** The report's URL (the Copy link row); none in tests. */ link?: string;
   /** The clipboard refused the Share click's copy: the field starts selected. */ copyFailed?: boolean; flash?: (message: string) => void;
@@ -115,6 +122,7 @@ export function ShareSheet({ reportId, title, onClose, reopen, link, copyFailed 
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ownersTitle, setOwnersTitle] = useState("");
   const name = useId();
   useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey });
 
@@ -166,11 +174,11 @@ export function ShareSheet({ reportId, title, onClose, reopen, link, copyFailed 
     }
   }
 
-  return <ModalDialog title={canShare ? "Share" : "Owners"} eyebrow={title} onClose={onClose} busy={busy} variant="sheet" className="reports-dialog report-edit-sheet report-share">
+  return <ModalDialog title={canShare ? "Share" : "Owners"} eyebrow={title || ownersTitle || undefined} onClose={onClose} busy={busy} variant="sheet" className="reports-dialog report-edit-sheet report-share">
     <div className="report-edit-sheet-body">
       {link && canShare && <CopyLinkRow url={link} selectFirst={copyFailed} flash={flash} />}
       {!loaded && !error && <p className="reports-loading" role="status">Loading…</p>}
-      {loaded && canManageOwners && <OwnersSection reportId={reportId} people={people} onChanged={onOwnersChanged} onLeft={() => { onClose(); onLeft?.(); }} />}
+      {loaded && canManageOwners && <OwnersSection reportId={reportId} people={people} onChanged={onOwnersChanged} onTitle={setOwnersTitle} onLeft={() => { onClose(); onLeft?.(); }} />}
       {loaded && canShare && <>
         <fieldset className="report-share-audience">
           <legend>Who can see it</legend>

@@ -157,7 +157,8 @@ export type ReportSharing = { visibility: ReportVisibility; shares: ReportShare[
 export type ReportOwnerState = "active" | "blocked" | "guest" | "viewer";
 export type ReportOwner = { id: string; name: string; primary: boolean; active: boolean; state: ReportOwnerState; addedBy: string | null; addedAt: string };
 /** The owners and what the caller may do with them (owners and admins manage; never the last owner). */
-export type ReportOwners = { owners: ReportOwner[]; canManage: boolean };
+/** `title`: on `GET /api/reports/:id/owners` only (D508), for the Owners sheet Forward reopens. */
+export type ReportOwners = { owners: ReportOwner[]; canManage: boolean; title?: string };
 /**
  * D500: Settings → Report owners (admins). `unmanaged`: live reports with no owner who can act (every owner
  * blocked, a guest or a viewer now, or gone); `unopenable`: live reports the admin cannot open. Title and

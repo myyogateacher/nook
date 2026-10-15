@@ -40,8 +40,15 @@ test("with accounts but no active admin, boot warns and the next registration be
   expect(result.bootWarnings[0]).toContain("bun server/team-admin.ts set-role <email> admin");
   expect(result.statuses).toEqual([201, 201]);
   // Only the first registration while nobody can manage the team is promoted; the next gets the
-  // SIGNUP_ROLE default, guest (D80).
-  expect(result.roles).toEqual(["admin", "guest"]);
+  // SIGNUP_ROLE default. The probe sets no SIGNUP_ROLE, so that account is a member.
+  expect(result.roles).toEqual(["admin", "member"]);
   expect(result.events).toEqual([{ via: "bootstrap", action: "bootstrap_admin", to_role: "admin", actor_id: null }]);
   expect(result.afterWarned).toBe(false);
+}, PROBE_TIMEOUT_MS);
+
+test("with no SIGNUP_ROLE set, an account registered after the admin is a member", () => {
+  const result = runProbe("signupDefaultProbe.ts");
+  expect(result.signupRole).toBe("member");
+  expect(result.statuses).toEqual([201, 201]);
+  expect(result.roles).toEqual(["admin", "member"]);
 }, PROBE_TIMEOUT_MS);

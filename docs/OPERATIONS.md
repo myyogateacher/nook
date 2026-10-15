@@ -23,7 +23,7 @@ The link carries its token in the URL fragment (`/register#invite=…`), which b
 
 ### Team admins and blocking
 
-Every account has a team role: **admin**, **member**, **viewer** (reads what is shared with them or with everyone, changes nothing), or **guest** (reads only what is shared with them by name, never "Everyone here" items; no API keys). The first account created on an empty database is the admin. Accounts registered after it get `SIGNUP_ROLE`, which defaults to `guest`: a new account sees nothing until someone shares with it by name or an admin changes its role. Set `SIGNUP_ROLE=member` to keep the behaviour of earlier releases, or `viewer`; `admin` is refused at startup. When an existing install upgrades to the release with Team (migration 017), every account becomes a member and the **oldest enabled account becomes the admin**; change it with the command below if that is wrong. Admins manage roles, block and unblock accounts, and sign accounts out everywhere from the **Team** app. Nook always keeps at least one active admin: the last one cannot be demoted or blocked, in the app or in the database.
+Every account has a team role: **admin**, **member**, **viewer** (reads what is shared with them or with everyone, changes nothing), or **guest** (reads only what is shared with them by name, never "Everyone here" items; no API keys). The first account created on an empty database is the admin. Accounts registered after it get `SIGNUP_ROLE`, which defaults to `member`. Set `SIGNUP_ROLE=guest` so a new account sees nothing until someone shares with it by name or an admin changes its role, or `viewer`; `admin` is refused at startup. When an existing install upgrades to the release with Team (migration 017), every account becomes a member and the **oldest enabled account becomes the admin**; change it with the command below if that is wrong. Admins manage roles, block and unblock accounts, and sign accounts out everywhere from the **Team** app. Nook always keeps at least one active admin: the last one cannot be demoted or blocked, in the app or in the database.
 
 Blocking an account signs it out on every device at once and removes its push subscriptions. Its MCP keys and calendar feeds pause and resume when it is unblocked; its content stays where it is and stays shared as before. A blocked user who enters the right password is told the account is blocked; a wrong password still gets the usual error.
 
@@ -377,7 +377,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `COOKIE_SECURE` | `true` (Compose and production) | `true` or `false`. Plain-HTTP access needs `false`. |
 | `ALLOW_REGISTRATION` | `false` | `true` allows additional accounts; the first account is always allowed on an empty database. Team invites work with `false` (see *Invites instead of ALLOW_REGISTRATION*). |
 | `ALLOWED_EMAILS` | empty | Comma-separated allowlist for registration, sign-in, and existing sessions. Empty allows any address. |
-| `SIGNUP_ROLE` | `guest` | Team role of accounts registered after the first: `guest`, `viewer`, or `member` (never `admin`). |
+| `SIGNUP_ROLE` | `member` | Team role of accounts registered after the first: `guest`, `viewer`, or `member` (never `admin`). |
 | `TOTP_POLICY` | `optional` | `optional` or `required`. |
 | `AUTH_METHODS` | `password` | Sign-in methods: `password`, `google`, or `both`. Enforced on the server (see *Google sign-in*). |
 | `GOOGLE_CLIENT_ID` | empty | OAuth client ID from Google Cloud Console. Required when `AUTH_METHODS` is `google` or `both`. |
@@ -609,6 +609,10 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+### Upgrading to the next release (unreleased)
+
+New accounts now default to the **member** team role: `SIGNUP_ROLE` defaults to `member` (registration and Google sign-in), and the Team → Invites form pre-selects Member. Existing accounts keep their roles; nothing is migrated. To keep the old behaviour, set `SIGNUP_ROLE=guest` in `.env` before starting the new image (and pick Guest on invites).
 
 ### Upgrading to 0.38.0 (analytics reports, migrations 050–053 and 055–059)
 

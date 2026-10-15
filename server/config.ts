@@ -43,7 +43,7 @@ if (!(["optional", "required"] as const).includes(totpPolicyValue as "optional" 
 const totpPolicy = totpPolicyValue as "optional" | "required";
 // D80: the team role of accounts registered after the first (the first is always admin, D76).
 // Never admin: promoting to admin needs an admin and re-authentication (Team plan §5.5).
-const signupRoleValue = process.env.SIGNUP_ROLE?.trim() || "guest";
+const signupRoleValue = process.env.SIGNUP_ROLE?.trim() || "member";
 if (!(["guest", "viewer", "member"] as const).includes(signupRoleValue as "guest")) {
   throw new Error("SIGNUP_ROLE must be guest, viewer, or member");
 }

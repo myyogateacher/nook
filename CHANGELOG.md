@@ -2,6 +2,12 @@
 
 Release notes for Nook, newest first. Upgrade steps for each release are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
+## Unreleased
+
+**Upgrading**
+
+- New accounts now default to the **member** role (`SIGNUP_ROLE`, Google sign-in, and the pre-selected role on a new invite). Existing accounts keep their roles. Operators who want the old behaviour set `SIGNUP_ROLE=guest` in `.env`. See [Upgrades](docs/OPERATIONS.md#upgrades).
+
 ## v0.38.0 — 2026-10-15
 
 **Analytics reports (new Reports app)**

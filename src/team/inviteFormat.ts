@@ -7,8 +7,8 @@ import type { InviteRole, InviteStatus, MailOutcome, TeamInvite } from "./teamAp
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "./teamRoles";
 
 export const INVITE_ROLES: readonly InviteRole[] = ["member", "viewer", "guest"];
-/** The create dialog's default (Q4): Guest, mirroring the SIGNUP_ROLE default. */
-export const DEFAULT_INVITE_ROLE: InviteRole = "guest";
+/** The create dialog's default: Member, mirroring the SIGNUP_ROLE default. */
+export const DEFAULT_INVITE_ROLE: InviteRole = "member";
 export const EXPIRY_DAYS = ["1", "3", "7"] as const;
 export type ExpiryDays = typeof EXPIRY_DAYS[number];
 export const DEFAULT_EXPIRY: ExpiryDays = "7";

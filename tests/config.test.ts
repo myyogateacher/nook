@@ -86,8 +86,8 @@ describe("sign-up role configuration (D80)", () => {
     return { ok: result.exitCode === 0, stdout: result.stdout.toString().trim(), stderr: result.stderr.toString() };
   }
 
-  test("defaults to guest and accepts guest, viewer, or member", () => {
-    expect(JSON.parse(loadSignupRole({}).stdout)).toBe("guest");
+  test("defaults to member and accepts guest, viewer, or member", () => {
+    expect(JSON.parse(loadSignupRole({}).stdout)).toBe("member");
     for (const role of ["guest", "viewer", "member"]) expect(JSON.parse(loadSignupRole({ SIGNUP_ROLE: role }).stdout)).toBe(role);
   });
 

@@ -14,12 +14,12 @@ const invite = (overrides: Partial<TeamInvite>): TeamInvite => ({
 const render = (data: TeamInviteList | null, error: string | null = null) => renderToStaticMarkup(<TeamInvites data={data} error={error} onBack={() => undefined} onReload={() => undefined} onOpenMember={() => undefined} flash={() => undefined} />);
 
 describe("Invite formatting", () => {
-  test("roles mirror the server (never admin), with Guest and 7 days as defaults", () => {
+  test("roles mirror the server (never admin), with Member and 7 days as defaults", () => {
     // The same list as server/team/invites.ts and the migration 018 CHECK.
     expect([...INVITE_ROLES]).toEqual(["member", "viewer", "guest"]);
     expect(inviteRoleOptions().map((option) => option.value)).toEqual(["member", "viewer", "guest"]);
     expect(inviteRoleOptions().every((option) => option.description.length > 0)).toBe(true);
-    expect(DEFAULT_INVITE_ROLE).toBe("guest");
+    expect(DEFAULT_INVITE_ROLE).toBe("member");
     expect(expiryOptions()).toEqual([{ value: "1", label: "1 day" }, { value: "3", label: "3 days" }, { value: "7", label: "7 days" }]);
     expect(DEFAULT_EXPIRY).toBe("7");
   });

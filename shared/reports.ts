@@ -7,6 +7,8 @@
  * Pure: no imports from server or client code, no zod, so the client bundle and tests load it as is.
  */
 
+import type { ReportParameter } from "./reportParams";
+
 // ------------------------------------------------------------------------------------------ limits
 
 export const REPORT_LIMITS = {
@@ -223,11 +225,13 @@ export type ReportSection = { id: string; title: string; summary?: string };
 export type ReportSpecV1 = { version: 1; blocks: ReportBlock[]; queries: ReportQuery[] };
 /**
  * Spec v2 (wave 48b): `version` stays 1 (the stored family), `specVersion: 2` marks the shape with
- * sections and the v2 block fields. Read every stored spec through `upgradeSpec`.
+ * sections and the v2 block fields. Spec v3 (D489) adds `parameters` (shared/reportParams.ts): the
+ * report's date range and filters, which its queries read as typed ClickHouse query parameters. Read
+ * every stored spec through `upgradeSpec`.
  */
-export type ReportSpec = { version: 1; specVersion: 2; sections: ReportSection[]; blocks: ReportBlock[]; queries: ReportQuery[] };
-export const SPEC_VERSION = 2;
-export const EMPTY_SPEC: ReportSpec = { version: 1, specVersion: 2, sections: [], blocks: [], queries: [] };
+export type ReportSpec = { version: 1; specVersion: 3; sections: ReportSection[]; parameters: ReportParameter[]; blocks: ReportBlock[]; queries: ReportQuery[] };
+export const SPEC_VERSION = 3;
+export const EMPTY_SPEC: ReportSpec = { version: 1, specVersion: 3, sections: [], parameters: [], blocks: [], queries: [] };
 export const SECTION_LIMITS = { sections: 10, title: 120, summary: 600 } as const;
 
 /** Every query key a spec's blocks reference (KPI comparisons and sparklines included). */
@@ -272,7 +276,7 @@ export const defaultWidth = (block: ReportBlock): BlockWidth => block.type === "
 const isObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 /**
- * The v1 → v2 upgrade on read (pure, D431). A v1 spec keeps its blocks, queries, and formats as they
+ * The upgrade on read (pure): v2 → v3 adds no parameters (D489); v1 → v2 (D431) as below. A v1 spec keeps its blocks, queries, and formats as they
  * are, gains `specVersion: 2` and no sections, and each block gains the intent and width its kind
  * implies (so it lays out as wave 47 drew it: charts in halves, tables and markdown full width). A
  * v1 KPI's `compareColumn` reads as `compareTo: {column}`. A v2 spec is returned as is (missing
@@ -281,7 +285,8 @@ const isObject = (value: unknown): value is Record<string, unknown> => Boolean(v
 export function upgradeSpec(raw: unknown): ReportSpec {
   if (!isObject(raw) || raw.version !== 1 || !Array.isArray(raw.blocks) || !Array.isArray(raw.queries)) return EMPTY_SPEC;
   const sections = Array.isArray(raw.sections) ? (raw.sections as ReportSection[]).filter((section) => isObject(section) && typeof section.id === "string") : [];
-  if (raw.specVersion === SPEC_VERSION) return { version: 1, specVersion: 2, sections, blocks: raw.blocks as ReportBlock[], queries: raw.queries as ReportQuery[] };
+  const parameters = raw.specVersion === SPEC_VERSION && Array.isArray(raw.parameters) ? (raw.parameters as ReportParameter[]).filter((param) => isObject(param) && typeof param.id === "string" && typeof param.type === "string") : [];
+  if (raw.specVersion === SPEC_VERSION || raw.specVersion === 2) return { version: 1, specVersion: 3, sections, parameters, blocks: raw.blocks as ReportBlock[], queries: raw.queries as ReportQuery[] };
   const blocks = (raw.blocks as ReportBlock[]).filter(isObject).map((block): ReportBlock => {
     const intent = block.intent ?? defaultIntent(block);
     const upgraded = { ...block, ...(intent ? { intent } : {}), width: block.width ?? defaultWidth(block), ...(block.type === "markdown" ? {} : { legacy: true }) } as ReportBlock;
@@ -291,7 +296,7 @@ export function upgradeSpec(raw: unknown): ReportSpec {
     }
     return upgraded;
   });
-  return { version: 1, specVersion: 2, sections: [], blocks, queries: raw.queries as ReportQuery[] };
+  return { version: 1, specVersion: 3, sections: [], parameters: [], blocks, queries: raw.queries as ReportQuery[] };
 }
 
 // ------------------------------------------------------------------------------------- the layout
@@ -541,6 +546,8 @@ export type ReportResult = {
   error: string | null;
   errorCode: string | null;
   createdAt: string;
+  /** Spec v3 (D489): the ClickHouse query parameters bound for this result (`name` → value as sent); absent when none. */
+  params?: Record<string, string> | null;
 };
 
 // -------------------------------------------------------------------------------- schedules (47)
@@ -629,6 +636,8 @@ export type QueryOutcome = {
   rowsRead: number | null;
   bytesRead: number | null;
   ms: number;
+  /** Spec v3 (D489): the query parameters sent with it (`param_<name>`), as sent. */
+  params?: Record<string, string>;
 };
 
 /** Every `code` the reports routes answer with (review L5). */

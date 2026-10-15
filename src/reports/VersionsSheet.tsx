@@ -96,7 +96,7 @@ const TYPE_LABEL = { chart: "Chart", kpi: "KPI", table: "Table", markdown: "Text
 
 /** The structured diff: blocks (changed fields, text), queries (SQL line diffs), and sections. */
 export function DiffView({ diff }: { diff: VersionDiff }) {
-  const empty = !diff.blocks.length && !diff.queries.length && !diff.sections.length;
+  const empty = !diff.blocks.length && !diff.queries.length && !diff.sections.length && !(diff.parameters ?? []).length;
   return <div className="report-vdiff">
     <p className="report-vdiff-summary" role="status">v{diff.from} → v{diff.to}: {diff.summary}</p>
     {diff.title && <section aria-label="Report title" className="report-vdiff-group">
@@ -133,6 +133,15 @@ export function DiffView({ diff }: { diff: VersionDiff }) {
       {diff.sections.map((section) => <article key={`${section.change}-${section.id}`} className={`report-vdiff-item is-${section.change}`}>
         <p className="report-vdiff-head"><span className={`reports-status report-vdiff-badge is-${section.change}`}>{CHANGE_LABEL[section.change]}</span><strong>{section.title}</strong></p>
         {section.fields.length > 0 && <dl className="report-vdiff-fields">{section.fields.map((field) => <div key={field.field}><dt>{field.field}</dt><dd>
+          {field.before !== null && <span className="report-vdiff-before">{field.before}</span>}{field.before !== null && field.after !== null && " → "}{field.after !== null && <span className="report-vdiff-after">{field.after}</span>}
+        </dd></div>)}</dl>}
+      </article>)}
+    </section>}
+    {(diff.parameters ?? []).length > 0 && <section aria-label="Filters" className="report-vdiff-group">
+      <h4>Filters</h4>
+      {diff.parameters.map((param) => <article key={`${param.change}-${param.id}`} className={`report-vdiff-item is-${param.change}`}>
+        <p className="report-vdiff-head"><span className={`reports-status report-vdiff-badge is-${param.change}`}>{CHANGE_LABEL[param.change]}</span><strong>{param.label}</strong> <code>{param.id}</code></p>
+        {param.fields.length > 0 && <dl className="report-vdiff-fields">{param.fields.map((field) => <div key={field.field}><dt>{field.field}</dt><dd>
           {field.before !== null && <span className="report-vdiff-before">{field.before}</span>}{field.before !== null && field.after !== null && " → "}{field.after !== null && <span className="report-vdiff-after">{field.after}</span>}
         </dd></div>)}</dl>}
       </article>)}

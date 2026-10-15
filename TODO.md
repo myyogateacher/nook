@@ -8,6 +8,7 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 **Current state (2026-10-15).**
 - **v0.39.0** is released (tag and GitHub release, 2026-10-15): report organization (favorites, filters, several owners, a shared folder tree), Files full-text search, and new accounts default to member.
 - Migrations:
+  - **063** (report parameters) is on `main`, unreleased.
   - **001–062** are released and immutable (045 and 054 unused; 054 is reserved for Messages).
 - Development happens directly on `main`, pushed as each change passes its gates.
 
@@ -18,14 +19,11 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 
 - [ ] Reports: measure chart-kind choice with a real model (left from the chart-kinds lane, D488): run `scripts/reportEval.ts` with `REPORT_EVAL_*` set on the five kind cases (`onboarding_funnel`, `cohort_retention`, `quota_attainment`, `latency_spread`, `plan_flow`) and compare against a run with the shape line and the kind check off; only the scripted golden/trap runs were done.
 
-- [ ] (Lane PARAMS) Reports: **interactive parameters** (requested 2026-10-15): a date range and filters on the report page that re-run the report.
-  - Spec v3 `parameters`: a date range (presets and custom; the default comes from the doc, e.g. last 30 days), single or multi-select dimension filters whose options come from a guarded query (e.g. distinct `route`), and number and text inputs.
-  - Queries reference parameters through ClickHouse's typed query parameters `{name:Type}`, which are bound server-side and never string-pasted. The guard and the EXPLAIN check must accept them.
-  - The control bar sits at the top of the report. Values live in the URL, so Back/Forward and shared links keep them. Results are cached per parameter set. The default set is what refresh and schedules use.
-  - Inspect shows the bound values and the SQL as sent.
-  - The generation and edit agents add parameters when the doc names time windows or dimensions ("by route", "last 30 days"), and Changes can add them ("add a route filter").
-  - MCP: `get_report` and `refresh_report` accept parameter values.
-  - Mobile: the controls fold into a filter sheet.
+- [ ] Reports parameters, left from lane PARAMS (D489, migration 063):
+  - [ ] The SQL console refuses a saved query with `{name:Type}` placeholders (Inspect → Open in console): bind the report's defaults there, or show the bound values beside it.
+  - [ ] Date presets resolve on UTC days; use the report's schedule time zone (or the viewer's) for "today" and "last 30 days".
+  - [ ] Measure parameter adoption with a real model (`scripts/reportEval.ts` with `REPORT_EVAL_*`): a doc that names a window or a dimension should get a date range or filter; only the scripted provider was run.
+  - [ ] A select's options are read per report (cached 6 h and after each default refresh); a very high-cardinality column still lists only the first 200 (no search-as-you-type against ClickHouse).
 
 ## Known LOW leftovers
 

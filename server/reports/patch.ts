@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { SECTION_LIMITS, type ReportBlock, type ReportQuery, type ReportSection, type ReportSpec } from "../../shared/reports";
-import { BLOCK_JSON_SCHEMA, SECTION_JSON_SCHEMA } from "./specValidate";
+import { BLOCK_JSON_SCHEMA, PARAMETER_JSON_SCHEMA, SECTION_JSON_SCHEMA } from "./specValidate";
+import { PARAM_LIMITS, placeholdersIn, type ReportParameter } from "../../shared/reportParams";
 import { INSTRUCTION_LIMITS, type BlockChange, type PatchOp, type QueryChange, type ReportPatch } from "../../shared/reportsEdit";
 
 /**
@@ -30,7 +31,11 @@ const opSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("remove_query"), key: name }),
   z.object({ op: z.literal("add_section"), section: z.object({ id: name, title: z.string().min(1).max(SECTION_LIMITS.title), summary: z.string().max(SECTION_LIMITS.summary).optional() }), after: name.nullish() }),
   z.object({ op: z.literal("update_section"), id: name, set: z.object({ title: z.string().min(1).max(SECTION_LIMITS.title).optional(), summary: z.string().max(SECTION_LIMITS.summary).nullable().optional() }) }),
-  z.object({ op: z.literal("remove_section"), id: name })
+  z.object({ op: z.literal("remove_section"), id: name }),
+  // Spec v3 (D489): parameters, validated with the whole spec after the patch.
+  z.object({ op: z.literal("add_parameter"), parameter: objectArg.refine((value) => typeof value.id === "string" && typeof value.type === "string", "a parameter needs a string id and type"), after: name.nullish() }),
+  z.object({ op: z.literal("update_parameter"), id: name, set: objectArg }),
+  z.object({ op: z.literal("remove_parameter"), id: name })
 ]);
 export const patchSchema = z.object({ ops: z.array(opSchema).min(1).max(INSTRUCTION_LIMITS.ops), summary: z.string().max(INSTRUCTION_LIMITS.summary).optional() });
 
@@ -63,7 +68,10 @@ export const PATCH_JSON_SCHEMA: Record<string, unknown> = {
           { type: "object", additionalProperties: false, required: ["op", "key"], properties: { op: { const: "remove_query" }, key: { type: "string" } } },
           { type: "object", additionalProperties: false, required: ["op", "section"], properties: { op: { const: "add_section" }, section: SECTION_JSON_SCHEMA, after: { type: ["string", "null"], description: "The section id to insert after; null for the first" } } },
           { type: "object", additionalProperties: false, required: ["op", "id", "set"], properties: { op: { const: "update_section" }, id: { type: "string" }, set: { type: "object", additionalProperties: false, properties: { title: { type: "string", maxLength: SECTION_LIMITS.title }, summary: { type: ["string", "null"], maxLength: SECTION_LIMITS.summary } } } } },
-          { type: "object", additionalProperties: false, required: ["op", "id"], properties: { op: { const: "remove_section" }, id: { type: "string" } } }
+          { type: "object", additionalProperties: false, required: ["op", "id"], properties: { op: { const: "remove_section" }, id: { type: "string" } } },
+          { type: "object", additionalProperties: false, required: ["op", "parameter"], properties: { op: { const: "add_parameter" }, parameter: PARAMETER_JSON_SCHEMA, after: { type: ["string", "null"], description: "The parameter id to insert after; null for the first" } } },
+          { type: "object", additionalProperties: false, required: ["op", "id", "set"], properties: { op: { const: "update_parameter" }, id: { type: "string" }, set: { type: "object", description: "Fields to change: label, default, optionsQuery, chType, min, max, maxLength" } } },
+          { type: "object", additionalProperties: false, required: ["op", "id"], properties: { op: { const: "remove_parameter" }, id: { type: "string" } } }
         ]
       }
     }
@@ -91,6 +99,9 @@ export type PatchResult = { ok: true; spec: ReportSpec } | { ok: false; errors: 
 export function applyPatch(spec: ReportSpec, patch: ReportPatch, author: ReportQuery["createdBy"]): PatchResult {
   const next = structuredClone(spec) as ReportSpec;
   next.sections = next.sections ?? [];
+  next.parameters = next.parameters ?? [];
+  const parameters = next.parameters as Array<ReportParameter & Record<string, unknown>>;
+  const parameterAt = (id: string) => parameters.findIndex((param) => param.id === id);
   const sections: ReportSection[] = next.sections;
   const sectionAt = (id: string) => sections.findIndex((section) => section.id === id);
   const blocks = next.blocks as Array<ReportBlock & Record<string, unknown>>;
@@ -199,6 +210,31 @@ export function applyPatch(spec: ReportSpec, patch: ReportPatch, author: ReportQ
         }
         break;
       }
+      case "add_parameter": {
+        if (parameterAt(op.parameter.id) >= 0) return fail(`a parameter with id ${op.parameter.id} already exists; use update_parameter`);
+        if (parameters.length >= PARAM_LIMITS.parameters) return fail(`a report has at most ${PARAM_LIMITS.parameters} parameters`);
+        let at = 0;
+        if (op.after) {
+          const found = parameterAt(op.after);
+          if (found < 0) return fail(`no parameter with id ${op.after} to insert after`);
+          at = found + 1;
+        }
+        parameters.splice(at, 0, { ...op.parameter } as ReportParameter & Record<string, unknown>);
+        break;
+      }
+      case "update_parameter": {
+        const at = parameterAt(op.id);
+        if (at < 0) return fail(`no parameter with id ${op.id}`);
+        const { id: _id, ...set } = op.set;
+        parameters[at] = { ...parameters[at]!, ...set } as ReportParameter & Record<string, unknown>;
+        break;
+      }
+      case "remove_parameter": {
+        const at = parameterAt(op.id);
+        if (at < 0) return fail(`no parameter with id ${op.id}`);
+        parameters.splice(at, 1);
+        break;
+      }
     }
   }
   return { ok: true, spec: next };
@@ -247,8 +283,18 @@ const withoutProvenance = (block: ReportBlock) => {
   return stableJson(rest);
 };
 
-/** Whether two specs' sections differ (ids, order, titles, or summaries). */
-export const sectionsChanged = (before: ReportSpec, after: ReportSpec) => stableJson(before.sections ?? []) !== stableJson(after.sections ?? []);
+/** Whether two specs' sections differ (ids, order, titles, or summaries), or (spec v3) their parameters. */
+export const sectionsChanged = (before: ReportSpec, after: ReportSpec) => stableJson(before.sections ?? []) !== stableJson(after.sections ?? []) || parametersChanged(before, after);
+
+/** Spec v3 (D489): whether two specs' parameters differ. */
+export const parametersChanged = (before: Pick<ReportSpec, "parameters">, after: Pick<ReportSpec, "parameters">) => stableJson(before.parameters ?? []) !== stableJson(after.parameters ?? []);
+
+/** The ids of the parameters that were added, removed, or changed between two specs. */
+function changedParameterIds(before: Pick<ReportSpec, "parameters">, after: Pick<ReportSpec, "parameters">): Set<string> {
+  const old = new Map((before.parameters ?? []).map((param) => [param.id, stableJson(param)]));
+  const now = new Map((after.parameters ?? []).map((param) => [param.id, stableJson(param)]));
+  return new Set([...old.keys(), ...now.keys()].filter((id) => old.get(id) !== now.get(id)));
+}
 
 /** What a patch changed: blocks added, updated (content or the SQL of their query), removed, or moved; queries added, updated, removed. */
 export function diffSpecs(before: ReportSpec, after: ReportSpec): { blocks: BlockChange[]; queries: QueryChange[] } {
@@ -261,6 +307,16 @@ export function diffSpecs(before: ReportSpec, after: ReportSpec): { blocks: Bloc
     else if (old.sql !== query.sql) queries.push({ key: query.key, change: "updated", before: old.sql, after: query.sql });
   }
   for (const query of before.queries) if (!newQueries.has(query.key)) queries.push({ key: query.key, change: "removed", before: query.sql, after: null });
+  // Spec v3: a query whose SQL stayed but which reads a parameter that changed (its default, its type) has new results.
+  const params = changedParameterIds(before, after);
+  if (params.size) {
+    for (const query of after.queries) {
+      const old = oldQueries.get(query.key);
+      if (!old || old.sql !== query.sql) continue;
+      const reads = placeholdersIn(query.sql).some((item) => params.has(item.name) || params.has(item.name.replace(/_(from|to)$/, "")));
+      if (reads) queries.push({ key: query.key, change: "updated", before: old.sql, after: query.sql });
+    }
+  }
   const changedKeys = new Set(queries.filter((item) => item.change !== "removed").map((item) => item.key));
 
   const blocks: BlockChange[] = [];

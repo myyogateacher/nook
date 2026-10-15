@@ -147,7 +147,8 @@ describe("spec v1 → v2 upgrade", () => {
 
   test("adds specVersion, no sections, and the intent and width each kind implies; keeps everything else", () => {
     const v2 = upgradeSpec(v1);
-    expect(v2.specVersion).toBe(2);
+    expect(v2.specVersion).toBe(3);
+    expect(v2.parameters).toEqual([]);
     expect(v2.version).toBe(1);
     expect(v2.sections).toEqual([]);
     expect(v2.queries).toEqual(v1.queries);

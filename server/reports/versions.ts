@@ -6,7 +6,7 @@ import type { QueryResultView } from "../../shared/reportsView";
 import { logger, shortId } from "../log";
 import { isReportOwner, ownedReport, readableReport } from "./access";
 import { ReportError } from "./errors";
-import { capRows, resultView, runningRun, runResults, startPreview, startRefresh, abandonExpiredReportRuns } from "./refresh";
+import { capRows, paramsJson, resultView, runningRun, runResults, startPreview, startRefresh, abandonExpiredReportRuns } from "./refresh";
 import { parseSpec } from "./service";
 import { usableDatasource } from "./datasources";
 import { assertRunnableNow } from "./specCheck";
@@ -26,7 +26,7 @@ import { nextVersion } from "./versionNumbers";
 /** A query result to save with a spec (a validated run's outcome, or a proposal's stored copy). */
 export type SavedOutcome = {
   columns: ResultColumn[]; rows: unknown[][]; truncated: boolean; sentSql: string | null; chQueryId: string | null;
-  rowsRead: number | null; bytesRead: number | null; ms: number | null;
+  rowsRead: number | null; bytesRead: number | null; ms: number | null; params?: Record<string, string> | null;
 };
 
 type VersionRow = { report_id: string; version: number; spec_json: string; source: VersionSource; instruction_id: string | null; restored_from: number | null; run_id: string | null; note: string | null; created_by: string | null; created_at: string; author: string | null };
@@ -41,7 +41,7 @@ export function pruneVersions(reportId: string) {
 }
 
 const INSERT_RESULT = () => db.query(`INSERT INTO report_results (id, run_id, report_id, query_key, sql, sent_sql, columns_json, rows_json, row_count, truncated,
-  rows_read, bytes_read, ch_query_id, ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  rows_read, bytes_read, ch_query_id, ms, created_at, params_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
 export type Commit = {
   reportId: string;
@@ -81,8 +81,9 @@ export function commitSpec(input: Commit): { version: number; spec: ReportSpec; 
     const spec: ReportSpec = {
       ...input.spec,
       version: 1,
-      specVersion: 2,
+      specVersion: 3,
       sections: input.spec.sections ?? [],
+      parameters: input.spec.parameters ?? [],
       blocks: input.spec.blocks.map((block) => input.stamp?.has(block.id) ? { ...block, provenance } : block)
     };
     const specJson = JSON.stringify(spec);
@@ -97,7 +98,7 @@ export function commitSpec(input: Commit): { version: number; spec: ReportSpec; 
         const rows = capRows(outcome.rows);
         db.query("DELETE FROM report_results WHERE run_id = ? AND query_key = ?").run(input.runId, key);
         INSERT_RESULT().run(crypto.randomUUID(), input.runId, input.reportId, key, query.sql, outcome.sentSql, JSON.stringify(outcome.columns).slice(0, 200_000), rows.json, rows.kept,
-          outcome.truncated || rows.cut ? 1 : 0, outcome.rowsRead, outcome.bytesRead, outcome.chQueryId?.slice(0, 128) ?? null, outcome.ms, at);
+          outcome.truncated || rows.cut ? 1 : 0, outcome.rowsRead, outcome.bytesRead, outcome.chQueryId?.slice(0, 128) ?? null, outcome.ms, at, paramsJson(outcome.params));
       }
     }
     const columnsOf = new Map((db.query("SELECT key, columns_json FROM report_queries WHERE report_id = ?").all(input.reportId) as Array<{ key: string; columns_json: string }>).map((row) => [row.key, row.columns_json]));

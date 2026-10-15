@@ -6,6 +6,8 @@ import {
   type AutoFix, type BlockIntent, type ChartBlock, type ChartKind, type QueryOutcome, type ReportBlock, type ReportSpec, type ResultColumn
 } from "../../shared/reports";
 import { MAX_FACETS, MAX_HEATMAP_SIDE, MAX_SCATTER_SERIES, MAX_SERIES } from "../../shared/reportTheme";
+import { bindValues, DATE_PRESETS, defaultValues, MULTI_SELECT_TYPES, NUMBER_TYPES, PARAM_ID, PARAM_LIMITS, SCALAR_SELECT_TYPES, todayUtc, validDay, type BoundParam, type ReportParameter } from "../../shared/reportParams";
+import { paramSetsToCheck, parameterErrors, runOptionsQuery } from "./params";
 import { findCycle, histogramBins } from "../../shared/reportStats";
 import { queryIdFor } from "./clickhouse";
 import type { DatasourceRow } from "./datasources";
@@ -81,12 +83,25 @@ const blockSchema = z.discriminatedUnion("type", [
   }).strict(),
   z.object({ ...base, type: z.literal("table"), queryKey, columns: z.array(column).max(REPORT_LIMITS.tableColumns).optional(), formats: z.record(z.string(), format).optional() }).strict()
 ]);
+// Spec v3 (D489): the parameters. Strict like blocks; a value is checked against its type in checkSpecShape.
+const paramBase = { id: z.string().regex(PARAM_ID, "must match [a-z][a-z0-9_]{0,29}"), label: z.string().trim().min(1).max(PARAM_LIMITS.label) };
+const presetRange = z.object({ preset: z.enum(DATE_PRESETS.filter((preset) => preset !== "custom") as ["today", "7d", "30d", "90d", "mtd", "qtd"]) }).strict();
+const customRange = z.object({ preset: z.literal("custom"), from: z.string().refine(validDay, "must be a day YYYY-MM-DD"), to: z.string().refine(validDay, "must be a day YYYY-MM-DD") }).strict();
+const optionsQuery = z.string().trim().min(1).max(PARAM_LIMITS.optionsSql);
+const parameterSchema = z.discriminatedUnion("type", [
+  z.object({ ...paramBase, type: z.literal("date_range"), chType: z.literal("Date").default("Date"), default: z.union([presetRange, customRange]) }).strict(),
+  z.object({ ...paramBase, type: z.literal("select"), chType: z.enum(SCALAR_SELECT_TYPES).default("String"), default: z.string().max(PARAM_LIMITS.optionChars), optionsQuery }).strict(),
+  z.object({ ...paramBase, type: z.literal("multi_select"), chType: z.enum(MULTI_SELECT_TYPES).default("Array(String)"), default: z.array(z.string().max(PARAM_LIMITS.optionChars)).max(PARAM_LIMITS.selected).default([]), optionsQuery }).strict(),
+  z.object({ ...paramBase, type: z.literal("number"), chType: z.enum(NUMBER_TYPES).default("Float64"), default: z.number().finite(), min: z.number().finite().optional(), max: z.number().finite().optional() }).strict(),
+  z.object({ ...paramBase, type: z.literal("text"), chType: z.literal("String").default("String"), default: z.string().max(PARAM_LIMITS.text).default(""), maxLength: z.number().int().min(1).max(PARAM_LIMITS.text).optional() }).strict()
+]);
 const querySchema = z.object({ key: queryKey, sql: z.string().trim().min(1).max(REPORT_LIMITS.sqlChars), purpose: z.string().max(REPORT_LIMITS.purpose).default(""), createdBy: z.enum(["agent", "user"]).optional() }).strict();
 const sectionSchema = z.object({ id: sectionId, title: z.string().trim().min(1).max(SECTION_LIMITS.title), summary: z.string().max(SECTION_LIMITS.summary).optional() }).strict();
 export const specSchema = z.object({
   version: z.literal(1).default(1),
-  specVersion: z.literal(2).optional(),
+  specVersion: z.union([z.literal(2), z.literal(3)]).optional(),
   sections: z.array(sectionSchema).max(SECTION_LIMITS.sections).default([]),
+  parameters: z.array(parameterSchema).max(PARAM_LIMITS.parameters).default([]),
   blocks: z.array(blockSchema).min(1).max(REPORT_LIMITS.blocks),
   queries: z.array(querySchema).max(REPORT_LIMITS.queries)
 }).strict();
@@ -145,6 +160,27 @@ export const BLOCK_JSON_SCHEMA: Record<string, unknown> = {
 /** One section as JSON Schema. */
 export const SECTION_JSON_SCHEMA: Record<string, unknown> = { type: "object", additionalProperties: false, required: ["id", "title"], properties: { id: { type: "string", pattern: BLOCK_ID.source }, title: { type: "string", maxLength: SECTION_LIMITS.title }, summary: { type: "string", maxLength: SECTION_LIMITS.summary } } };
 
+const paramIdProp = { type: "string", pattern: PARAM_ID.source };
+const paramLabelProp = { type: "string", maxLength: PARAM_LIMITS.label, description: "Shown on the control: Period, Route" };
+const optionsQueryProp = { type: "string", maxLength: PARAM_LIMITS.optionsSql, description: "A SELECT whose first column lists the choices (at most 200), e.g. SELECT DISTINCT route FROM db.t ORDER BY route LIMIT 200; no parameters in it" };
+/** One parameter as JSON Schema (submit_report's parameters, submit_patch's add_parameter). */
+export const PARAMETER_JSON_SCHEMA: Record<string, unknown> = {
+  anyOf: [
+    {
+      type: "object", additionalProperties: false, required: ["id", "label", "type", "default"],
+      properties: {
+        id: paramIdProp, label: paramLabelProp, type: { const: "date_range" }, chType: { const: "Date" },
+        default: { type: "object", additionalProperties: false, required: ["preset"], properties: { preset: { enum: [...DATE_PRESETS] }, from: { type: "string", description: "custom only: YYYY-MM-DD" }, to: { type: "string", description: "custom only: YYYY-MM-DD" } }, description: "The window the doc names: {\"preset\":\"30d\"} for last 30 days" }
+      },
+      description: "A date range: the SQL reads {<id>_from:Date} and {<id>_to:Date} (both days included)"
+    },
+    { type: "object", additionalProperties: false, required: ["id", "label", "type", "default", "optionsQuery"], properties: { id: paramIdProp, label: paramLabelProp, type: { const: "select" }, chType: { enum: [...SCALAR_SELECT_TYPES] }, default: { type: "string" }, optionsQuery: optionsQueryProp }, description: "One value: the SQL reads {<id>:<chType>}" },
+    { type: "object", additionalProperties: false, required: ["id", "label", "type", "default", "optionsQuery"], properties: { id: paramIdProp, label: paramLabelProp, type: { const: "multi_select" }, chType: { enum: [...MULTI_SELECT_TYPES] }, default: { type: "array", maxItems: PARAM_LIMITS.selected, items: { type: "string" }, description: "[] is All" }, optionsQuery: optionsQueryProp }, description: "Several values, [] meaning All: the SQL reads (empty({<id>:Array(String)}) OR col IN {<id>:Array(String)})" },
+    { type: "object", additionalProperties: false, required: ["id", "label", "type", "default"], properties: { id: paramIdProp, label: paramLabelProp, type: { const: "number" }, chType: { enum: [...NUMBER_TYPES] }, default: { type: "number" }, min: { type: "number" }, max: { type: "number" } }, description: "A number: the SQL reads {<id>:<chType>}" },
+    { type: "object", additionalProperties: false, required: ["id", "label", "type", "default"], properties: { id: paramIdProp, label: paramLabelProp, type: { const: "text" }, chType: { const: "String" }, default: { type: "string" }, maxLength: { type: "integer", minimum: 1, maximum: PARAM_LIMITS.text } }, description: "Free text (one line): the SQL reads {<id>:String}" }
+  ]
+};
+
 /** submit_report's parameters: spec v2 of shared/reports.ts as JSON Schema (the model fills it; no colours, sizes, CSS, or formatters). */
 export const SPEC_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -152,8 +188,9 @@ export const SPEC_JSON_SCHEMA: Record<string, unknown> = {
   required: ["blocks", "queries"],
   properties: {
     version: { type: "integer", enum: [1] },
-    specVersion: { type: "integer", enum: [2] },
+    specVersion: { type: "integer", enum: [3] },
     sections: { type: "array", maxItems: SECTION_LIMITS.sections, items: SECTION_JSON_SCHEMA },
+    parameters: { type: "array", maxItems: PARAM_LIMITS.parameters, items: PARAMETER_JSON_SCHEMA, description: "The report's date range and filters (only when the doc names a time window or a dimension to filter by)" },
     queries: {
       type: "array", maxItems: REPORT_LIMITS.queries,
       items: { type: "object", additionalProperties: false, required: ["key", "sql", "purpose"], properties: { key: { type: "string", pattern: QUERY_KEY.source }, sql: { type: "string", maxLength: REPORT_LIMITS.sqlChars }, purpose: { type: "string", maxLength: REPORT_LIMITS.purpose } } }
@@ -161,6 +198,20 @@ export const SPEC_JSON_SCHEMA: Record<string, unknown> = {
     blocks: { type: "array", minItems: 1, maxItems: REPORT_LIMITS.blocks, items: BLOCK_JSON_SCHEMA }
   }
 };
+
+/**
+ * run_sql's `parameters` (D489): the declared list the SQL's placeholders read, bound with their
+ * defaults; absent, `fallback` (the edit agent's current spec). Refused (400) when the list is not valid.
+ */
+export function runSqlParams(raw: unknown, fallback: readonly ReportParameter[] = []): BoundParam[] {
+  if (raw === undefined || raw === null) return bindValues(fallback, defaultValues(fallback), todayUtc());
+  const parsed = z.array(parameterSchema).max(PARAM_LIMITS.parameters).safeParse(raw);
+  if (!parsed.success) throw new ReportError(400, "INVALID", `parameters: ${parsed.error.issues.slice(0, 5).map(issueText).join("; ")}`);
+  const list = parsed.data as ReportParameter[];
+  const problems = parameterErrors(list, []).filter((line) => !line.includes("no query reads it"));
+  if (problems.length) throw new ReportError(400, "INVALID", `parameters: ${problems.slice(0, 5).join("; ")}`);
+  return bindValues(list, defaultValues(list), todayUtc());
+}
 
 /** Whether a ClickHouse type is a number (re-exported from shared/reports.ts). */
 export { isNumericType };
@@ -214,11 +265,15 @@ export function checkSpecShape(raw: unknown): { ok: true; spec: ReportSpec } | {
     if (block.type === "chart") errors.push(...kindFieldErrors(block as Omit<ChartBlock, "x"> & { x?: string }));
     if (block.section !== undefined && !sections.has(block.section)) errors.push(`block ${block.id}: section ${block.section} is not one of the spec's sections`);
   }
+  // Spec v3: parameters (unique ids, defaults of their type) and every placeholder a query holds.
+  const parameters = parsed.data.parameters as ReportParameter[];
+  errors.push(...parameterErrors(parameters, parsed.data.queries));
   if (errors.length) return { ok: false, errors: errors.slice(0, MAX_ERRORS) };
   const spec: ReportSpec = {
     version: 1,
-    specVersion: 2,
+    specVersion: 3,
     sections: parsed.data.sections.map((section) => ({ id: section.id, title: section.title, ...(section.summary ? { summary: section.summary } : {}) })),
+    parameters,
     queries: parsed.data.queries.map((query) => ({ key: query.key, sql: query.sql, purpose: query.purpose, createdBy: query.createdBy ?? "agent" })),
     blocks: parsed.data.blocks.map((raw) => {
       const { autoFixes: _ignored, ...block } = raw as ReportBlock;
@@ -633,19 +688,43 @@ export async function validateSpec(row: DatasourceRow, raw: unknown, context: { 
   const results = new Map<string, QueryOutcome>();
   const errors: string[] = [];
   const maxRows = Math.min(row.max_rows, REPORT_LIMITS.storedRows);
+  const failure = (error: unknown) => {
+    const known = reportErrorOf(error);
+    const guard = typeof known.details.guard === "string" ? ` ${known.details.guard}` : "";
+    const hint = typeof known.details.hint === "string" ? ` Hint: ${known.details.hint.slice(0, 600)}` : "";
+    return `${known.code}${guard}: ${known.message.slice(0, 300)}${hint}`;
+  };
+  // Spec v3 (D489): each select's options query runs through the guard first (its values pick the
+  // second set below); then every query runs with the default set, and once more with one non-default set.
+  const options = new Map<string, string[]>();
+  for (const param of spec.parameters) {
+    if (param.type !== "select" && param.type !== "multi_select") continue;
+    try {
+      options.set(param.id, (await runOptionsQuery(row, param.optionsQuery, { userId: context.userId, queryId: queryIdFor("genopt", context.runId.replace(/-/g, "").slice(0, 12), param.id), signal: context.signal })).options);
+    } catch (error) {
+      if (context.signal?.aborted) throw error;
+      errors.push(`parameter ${param.id}: its optionsQuery failed: ${failure(error)}`);
+    }
+  }
+  const sets = paramSetsToCheck(spec.parameters, options);
   for (const query of spec.queries) {
     if (!used.has(query.key)) {
       errors.push(`query ${query.key}: no block uses it; remove it or add a block`);
       continue;
     }
     try {
-      results.set(query.key, await runGuarded(row, query.sql, { classes: ["select"], maxRows, queryId: queryIdFor("gen", context.runId.replace(/-/g, "").slice(0, 12), query.key), userId: context.userId, signal: context.signal }));
+      results.set(query.key, await runGuarded(row, query.sql, { classes: ["select"], maxRows, queryId: queryIdFor("gen", context.runId.replace(/-/g, "").slice(0, 12), query.key), userId: context.userId, signal: context.signal, params: sets.defaults }));
     } catch (error) {
       if (context.signal?.aborted) throw error;
-      const known = reportErrorOf(error);
-      const guard = typeof known.details.guard === "string" ? ` ${known.details.guard}` : "";
-      const hint = typeof known.details.hint === "string" ? ` Hint: ${known.details.hint.slice(0, 600)}` : "";
-      errors.push(`query ${query.key}: ${known.code}${guard}: ${known.message.slice(0, 300)}${hint}`);
+      errors.push(`query ${query.key}: ${failure(error)}`);
+      continue;
+    }
+    if (!sets.other || !query.sql.includes("{")) continue;
+    try {
+      await runGuarded(row, query.sql, { classes: ["select"], maxRows, queryId: queryIdFor("gen2", context.runId.replace(/-/g, "").slice(0, 12), query.key), userId: context.userId, signal: context.signal, params: sets.other.bound });
+    } catch (error) {
+      if (context.signal?.aborted) throw error;
+      errors.push(`query ${query.key} with parameters ${sets.other.label}: ${failure(error)} (every query must also run when a reader changes the parameters)`);
     }
   }
   errors.push(...checkColumns(spec, results));
@@ -707,21 +786,21 @@ export function persistGenerated(input: { reportId: string; runId: string; docSn
     backfillVersion(input.reportId);
     const version = nextVersion(input.reportId, parseSpec(current.spec_json));
     const provenance = { runId: input.runId, version, docSnapshotId: input.docSnapshotId, ...(input.model ? { model: input.model.slice(0, 200) } : {}) };
-    const spec: ReportSpec = { version: 1, specVersion: 2, sections: input.spec.sections, queries: input.spec.queries, blocks: input.spec.blocks.map((block) => ({ ...block, provenance })) };
+    const spec: ReportSpec = { version: 1, specVersion: 3, sections: input.spec.sections, parameters: input.spec.parameters ?? [], queries: input.spec.queries, blocks: input.spec.blocks.map((block) => ({ ...block, provenance })) };
     const specJson = JSON.stringify(spec);
     if (specJson.length > 524_288) throw new Error("SPEC_TOO_LARGE");
     const at = now();
     db.query("DELETE FROM report_queries WHERE report_id = ?").run(input.reportId);
     const insertQuery = db.query("INSERT INTO report_queries (id, report_id, key, sql, purpose, columns_json, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'agent', ?, ?)");
-    const insertResult = db.query(`INSERT INTO report_results (id, run_id, report_id, query_key, sql, sent_sql, columns_json, rows_json, row_count, truncated, rows_read, bytes_read, ch_query_id, ms, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insertResult = db.query(`INSERT INTO report_results (id, run_id, report_id, query_key, sql, sent_sql, columns_json, rows_json, row_count, truncated, rows_read, bytes_read, ch_query_id, ms, created_at, params_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const query of spec.queries) {
       const result = input.results.get(query.key);
       insertQuery.run(crypto.randomUUID(), input.reportId, query.key, query.sql, query.purpose, JSON.stringify(result?.columns ?? []), at, at);
       if (!result) continue;
       const rows = storedRows(result.rows);
       insertResult.run(crypto.randomUUID(), input.runId, input.reportId, query.key, query.sql, result.sentSql, JSON.stringify(result.columns), rows.json, rows.count,
-        result.truncated || rows.cut ? 1 : 0, result.rowsRead, result.bytesRead, result.chQueryId.slice(0, 128), result.ms, at);
+        result.truncated || rows.cut ? 1 : 0, result.rowsRead, result.bytesRead, result.chQueryId.slice(0, 128), result.ms, at, result.params && Object.keys(result.params).length ? JSON.stringify(result.params) : null);
     }
     const ran = db.query("UPDATE report_runs SET status = 'succeeded', finished_at = ?, lease_until = NULL, error = NULL WHERE id = ? AND status = 'running'").run(at, input.runId);
     if (ran.changes !== 1) throw new PersistRefused("RUN_NOT_RUNNING");

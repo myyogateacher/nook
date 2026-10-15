@@ -18,6 +18,7 @@ export function forValidation(spec: ReportSpec): unknown {
     version: spec.version,
     specVersion: spec.specVersion,
     sections: spec.sections,
+    parameters: spec.parameters ?? [],
     queries: spec.queries.map(({ key, sql, purpose }) => ({ key, sql, purpose })),
     blocks: spec.blocks.map((block) => {
       const { provenance: _provenance, ...rest } = block as ReportBlock & Record<string, unknown>;
@@ -32,8 +33,9 @@ export function reattach(validated: ReportSpec, source: ReportSpec): ReportSpec 
   const authors = new Map(source.queries.map((query) => [query.key, query.createdBy]));
   return {
     version: 1,
-    specVersion: 2,
+    specVersion: 3,
     sections: validated.sections,
+    parameters: validated.parameters ?? [],
     queries: validated.queries.map((query): ReportQuery => ({ ...query, createdBy: authors.get(query.key) ?? "agent" })),
     blocks: validated.blocks.map((block) => {
       const stamped = provenance.get(block.id);
@@ -80,7 +82,7 @@ export function assertRunnableNow(datasource: DatasourceRow, spec: ReportSpec, c
   const allowlist = allowlistOf(datasource);
   for (const query of spec.queries) {
     try {
-      const classified = classify(query.sql);
+      const classified = classify(query.sql, { params: true });
       if (classified.class !== "select") throw new GuardError("NOT_SELECT", "Only a SELECT can be saved in a report");
       assertTablesAllowed(classified.tables, allowlist, datasource.database);
     } catch (error) {

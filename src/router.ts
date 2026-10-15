@@ -43,6 +43,37 @@ export function formatReportsFilter(filter: ReportsFilter | undefined) {
   return text ? `?${text}` : "";
 }
 
+/**
+ * Spec v3 (D489): a report page's parameter values in its query (`?p.period=7d&p.route=%2Fapi`), raw
+ * strings by parameter id (a multi-select repeats its key). The report reads them against its spec
+ * (shared/reportParams.ts valuesFromSearch); anything it does not know is ignored.
+ */
+export type ReportParamsSearch = Record<string, string[]>;
+const PARAM_KEY = /^p\.([a-z][a-z0-9_]{0,29})$/;
+
+export function parseReportParams(search: string): ReportParamsSearch | undefined {
+  const out: ReportParamsSearch = {};
+  let count = 0;
+  for (const [key, value] of new URLSearchParams(search)) {
+    const match = PARAM_KEY.exec(key);
+    if (!match || count >= 200) continue;
+    count += 1;
+    (out[match[1]!] ??= []).push(value.slice(0, 200));
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+export function formatReportParams(params: ReportParamsSearch | undefined) {
+  if (!params) return "";
+  const query = new URLSearchParams();
+  for (const id of Object.keys(params).sort()) {
+    if (!/^[a-z][a-z0-9_]{0,29}$/.test(id)) continue;
+    for (const value of params[id] ?? []) query.append(`p.${id}`, value);
+  }
+  const text = query.toString();
+  return text ? `?${text}` : "";
+}
+
 export type Route =
   | { app: "home" }
   | { app: "notes"; folder: "all" | "shared" | string; noteId: string | null }
@@ -90,7 +121,7 @@ export type Route =
   // (the Schema browser, a new report) are history layers on that entry, not URLs.
   // Lane I: the list's folder: /reports/folder/:folderId, /reports/unfiled, /reports/shared (none: All).
   // Phase 1: /reports/favorites, and the list's filters in its query (`filter`, never on a report).
-  | { app: "reports"; reportId: string | null; folder?: ReportsFolderView; filter?: ReportsFilter }
+  | { app: "reports"; reportId: string | null; folder?: ReportsFolderView; filter?: ReportsFilter; /** A report page's parameter values (D489). */ params?: ReportParamsSearch }
   // The Settings hub (Wave 37): a page at /settings (the section list on phones), and one account
   // section at /settings/:section. Team sections are `team` routes under /settings/team/… (above).
   // Wave 40: Settings → Agents has an editor below it at /settings/agents/:agentId (or /settings/agents/new).
@@ -247,7 +278,10 @@ export function parseRoute(pathname: string, search = ""): Route {
   if (app === "chat") return parseChat(rest, search);
   if (app === "reports") {
     const [reportId, folderId] = rest;
-    if (rest.length === 1 && reportId !== undefined && isRouteId(reportId)) return { app: "reports", reportId: reportId.toLowerCase() };
+    if (rest.length === 1 && reportId !== undefined && isRouteId(reportId)) {
+      const params = parseReportParams(search);
+      return { app: "reports", reportId: reportId.toLowerCase(), ...(params ? { params } : {}) };
+    }
     const filter = parseReportsFilter(search);
     const list = (folder?: ReportsFolderView): Route => ({ app: "reports", reportId: null, ...(folder ? { folder } : {}), ...(filter ? { filter } : {}) });
     if (rest.length === 1 && (reportId === "unfiled" || reportId === "shared" || reportId === "favorites")) return list(reportId);
@@ -399,7 +433,7 @@ export function formatRoute(route: Route): string {
   }
   if (route.app === "whiteboards") return formatCollection("/whiteboards", route.folder, route.boardId);
   if (route.app === "reports") {
-    if (route.reportId && isRouteId(route.reportId)) return `/reports/${route.reportId.toLowerCase()}`;
+    if (route.reportId && isRouteId(route.reportId)) return `/reports/${route.reportId.toLowerCase()}${formatReportParams(route.params)}`;
     const query = formatReportsFilter(route.filter);
     if (route.folder === "unfiled" || route.folder === "shared" || route.folder === "favorites") return `/reports/${route.folder}${query}`;
     return `${route.folder && isRouteId(route.folder) ? `/reports/folder/${route.folder.toLowerCase()}` : "/reports"}${query}`;
@@ -521,10 +555,13 @@ export const routeFromLocation = (location: { pathname: string; search: string }
  * on Tasks URLs (the only app whose URLs carry one).
  */
 const REPORTS_LIST_PATH = /^\/reports(\/(unfiled|shared|favorites|folder\/[^/]+))?\/?$/;
+const REPORT_PAGE_PATH = /^\/reports\/[0-9a-f-]{36}$/i;
 
 export function locationUrl(location: { pathname: string; search: string }) {
+  // A report page keeps only its parameter values (D489), in the order formatRoute writes them.
+  if (REPORT_PAGE_PATH.test(location.pathname)) return `${location.pathname}${formatReportParams(parseReportParams(location.search))}`;
   // Tasks URLs carry the board query; /chat/new carries the preselected agent (Wave 40); the Audit log its filters (Wave 42);
-  // the Reports list its filters (report organization phase 1).
+  // the Reports list its filters (report organization phase 1); a report page its parameter values (D489).
   return /^\/tasks(\/|$)/.test(location.pathname) || location.pathname === "/chat/new" || /^\/chat\/audit(\/|$)/.test(location.pathname) || REPORTS_LIST_PATH.test(location.pathname)
     ? `${location.pathname}${location.search}` : location.pathname;
 }

@@ -1,0 +1,44 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    d Date
+    n UInt64
+  PROJECTION
+    LIST id: 1, nodes: 2
+      COLUMN id: 2, column_name: d, result_type: Date, source_id: 3
+      FUNCTION id: 4, function_name: count, function_type: aggregate, result_type: UInt64
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: myt.events
+  WHERE
+    FUNCTION id: 5, function_name: and, function_type: ordinary, result_type: UInt8
+      ARGUMENTS
+        LIST id: 6, nodes: 2
+          FUNCTION id: 7, function_name: greaterOrEquals, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 8, nodes: 2
+                COLUMN id: 2, column_name: d, result_type: Date, source_id: 3
+                CONSTANT id: 9, constant_value: UInt64_20697, constant_value_type: Date
+                  EXPRESSION
+                    FUNCTION id: 10, function_name: _CAST, function_type: ordinary, result_type: Date
+                      ARGUMENTS
+                        LIST id: 11, nodes: 2
+                          CONSTANT id: 12, constant_value: UInt64_20697, constant_value_type: UInt16
+                          CONSTANT id: 13, constant_value: 'Date', constant_value_type: String
+          FUNCTION id: 14, function_name: lessOrEquals, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 15, nodes: 2
+                COLUMN id: 2, column_name: d, result_type: Date, source_id: 3
+                CONSTANT id: 16, constant_value: UInt64_20726, constant_value_type: Date
+                  EXPRESSION
+                    FUNCTION id: 17, function_name: _CAST, function_type: ordinary, result_type: Date
+                      ARGUMENTS
+                        LIST id: 18, nodes: 2
+                          CONSTANT id: 19, constant_value: UInt64_20726, constant_value_type: UInt16
+                          CONSTANT id: 20, constant_value: 'Date', constant_value_type: String
+  GROUP BY
+    LIST id: 21, nodes: 1
+      COLUMN id: 2, column_name: d, result_type: Date, source_id: 3
+  ORDER BY
+    LIST id: 22, nodes: 1
+      SORT id: 23, sort_direction: ASCENDING, with_fill: 0
+        EXPRESSION d
+          COLUMN id: 2, column_name: d, result_type: Date, source_id: 3

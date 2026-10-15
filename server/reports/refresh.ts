@@ -1,6 +1,7 @@
 import { audit, db, now } from "../db";
 import { REPORT_LIMITS, type ReportQuery, type ReportResult, type ReportRun, type ReportSpec, type ResultColumn, type RunTrigger } from "../../shared/reports";
 import type { QueryResultView, ReportResultsView } from "../../shared/reportsView";
+import { bindValues, defaultValues, todayUtc, type BoundParam } from "../../shared/reportParams";
 import { ownedReport, readableReport, type ReportRow } from "./access";
 import { queryIdFor } from "./clickhouse";
 import { datasourceRow, usableDatasource, type DatasourceRow } from "./datasources";
@@ -46,7 +47,7 @@ export type RunRow = {
 type ResultRow = {
   id: string; run_id: string; report_id: string; query_key: string; sql: string; sent_sql: string | null; columns_json: string; rows_json: string;
   row_count: number; truncated: number; rows_read: number | null; bytes_read: number | null; ch_query_id: string | null; ms: number | null;
-  error: string | null; error_code: string | null; created_at: string;
+  error: string | null; error_code: string | null; created_at: string; params_json?: string | null;
 };
 
 function parseKeys(json: string | null): string[] | null {
@@ -64,6 +65,23 @@ export const runView = (row: RunRow): ReportRun => ({
   docSnapshotId: row.doc_snapshot_id, queryKeys: parseKeys(row.query_keys_json), startedAt: row.started_at, finishedAt: row.finished_at, error: row.error
 });
 
+/** Spec v3: a stored result's bound parameters (`name` → value as sent), or null. */
+export function parseParams(json: string | null | undefined): Record<string, string> | null {
+  if (!json) return null;
+  try {
+    const value: unknown = JSON.parse(json);
+    return value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string")) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The default set's bound parameters on `today` (Refresh all, schedules, generation, and version previews run these, D489). */
+export const defaultBound = (spec: Pick<ReportSpec, "parameters">, today = todayUtc()): BoundParam[] => bindValues(spec.parameters ?? [], defaultValues(spec.parameters ?? []), today);
+
+/** Bound parameters as stored with a result: null when there are none. */
+export const paramsJson = (params: Record<string, string> | undefined | null) => params && Object.keys(params).length ? JSON.stringify(params) : null;
+
 function parseJsonArray<T>(json: string): T[] {
   try {
     const value: unknown = JSON.parse(json);
@@ -76,7 +94,7 @@ function parseJsonArray<T>(json: string): T[] {
 export const resultView = (row: ResultRow): ReportResult => ({
   runId: row.run_id, queryKey: row.query_key, sql: row.sql, sentSql: row.sent_sql, columns: parseJsonArray<ResultColumn>(row.columns_json),
   rows: parseJsonArray<unknown[]>(row.rows_json), rowCount: row.row_count, truncated: row.truncated === 1, rowsRead: row.rows_read, bytesRead: row.bytes_read,
-  chQueryId: row.ch_query_id, ms: row.ms, error: row.error, errorCode: row.error_code, createdAt: row.created_at
+  chQueryId: row.ch_query_id, ms: row.ms, error: row.error, errorCode: row.error_code, createdAt: row.created_at, params: parseParams(row.params_json)
 });
 
 /** The query id a run's query carries: `nook-<run>-<key>` (the inspect panel shows it; KILL QUERY names it). */
@@ -162,7 +180,7 @@ export function abandonExpiredReportRuns(nowMs = Date.now(), reportId?: string, 
 
 // ------------------------------------------------------------------------------------- running
 
-type ActiveRun = { controller: AbortController; datasource: DatasourceRow; inFlight: Set<string> };
+type ActiveRun = { controller: AbortController; datasource: DatasourceRow; inFlight: Set<string>; /** Spec v3: the default set's bound parameters. */ params?: readonly BoundParam[] };
 const active = new Map<string, ActiveRun>();
 
 /** Test hook: runs this process is working on. */
@@ -205,7 +223,7 @@ export function capRows(rows: unknown[][]): { json: string; kept: number; cut: b
 }
 
 const INSERT_RESULT = () => db.query(`INSERT INTO report_results (id, run_id, report_id, query_key, sql, sent_sql, columns_json, rows_json, row_count, truncated,
-  rows_read, bytes_read, ch_query_id, ms, error, error_code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  rows_read, bytes_read, ch_query_id, ms, error, error_code, created_at, params_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
 const sleep = (ms: number, signal: AbortSignal) => new Promise<void>((resolve) => {
   const timer = setTimeout(resolve, ms);
@@ -222,7 +240,7 @@ async function runQuery(run: RunRow, report: ReportRow, query: ReportQuery, user
     let outcome;
     for (;;) {
       try {
-        outcome = await runGuarded(state.datasource, query.sql, { classes: ["select"], maxRows, queryId, userId, signal: state.controller.signal });
+        outcome = await runGuarded(state.datasource, query.sql, { classes: ["select"], maxRows, queryId, userId, signal: state.controller.signal, params: state.params ?? [] });
         break;
       } catch (error) {
         // The person's two query slots are busy (their console, another report): wait for one.
@@ -235,7 +253,7 @@ async function runQuery(run: RunRow, report: ReportRow, query: ReportQuery, user
     }
     const capped = capRows(outcome.rows);
     INSERT_RESULT().run(crypto.randomUUID(), run.id, report.id, query.key, query.sql, outcome.sentSql, JSON.stringify(outcome.columns).slice(0, 200_000), capped.json, capped.kept,
-      outcome.truncated || capped.cut ? 1 : 0, outcome.rowsRead, outcome.bytesRead, outcome.chQueryId.slice(0, 128), outcome.ms, null, null, now());
+      outcome.truncated || capped.cut ? 1 : 0, outcome.rowsRead, outcome.bytesRead, outcome.chQueryId.slice(0, 128), outcome.ms, null, null, now(), paramsJson(outcome.params));
     return true;
   } catch (error) {
     let code = "CLICKHOUSE";
@@ -253,7 +271,7 @@ async function runQuery(run: RunRow, report: ReportRow, query: ReportQuery, user
       }
     }
     try {
-      INSERT_RESULT().run(crypto.randomUUID(), run.id, report.id, query.key, query.sql, null, "[]", "[]", 0, 0, null, null, queryId, Date.now() - started, message.slice(0, 2000), code.slice(0, 40), now());
+      INSERT_RESULT().run(crypto.randomUUID(), run.id, report.id, query.key, query.sql, null, "[]", "[]", 0, 0, null, null, queryId, Date.now() - started, message.slice(0, 2000), code.slice(0, 40), now(), null);
     } catch { /* the run was purged meanwhile */ }
     return false;
   } finally {
@@ -262,7 +280,7 @@ async function runQuery(run: RunRow, report: ReportRow, query: ReportQuery, user
 }
 
 /** Runs `work` over `items`, `limit` at a time. */
-async function pool<T>(items: readonly T[], limit: number, work: (item: T) => Promise<void>) {
+export async function pool<T>(items: readonly T[], limit: number, work: (item: T) => Promise<void>) {
   let next = 0;
   const lanes = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {
@@ -357,7 +375,7 @@ export function startRefresh(userId: string, reportId: string, options: { trigge
   if (!queries.length) throw new ReportError(404, "NOT_FOUND", "This report has no query with that key");
   const run = takeRunLock({ reportId, kind: "refresh", trigger: options.trigger, userId, queryKeys: options.queryKey ? [options.queryKey] : null, nowMs: options.nowMs });
   audit(userId, null, "reports.refresh.start", { reportId, runId: run.id, trigger: options.trigger, queryKey: options.queryKey ?? null });
-  const state: ActiveRun = { controller: new AbortController(), datasource, inFlight: new Set() };
+  const state: ActiveRun = { controller: new AbortController(), datasource, inFlight: new Set(), params: defaultBound(spec) };
   active.set(run.id, state);
   const done = withLogContext({ ...currentLogContext(), run: shortId(run.id), report: shortId(reportId) }, () => execute(run, report, spec, queries, userId, state)).catch((error: unknown) => {
     slog.error("Report refresh failed", error);
@@ -398,7 +416,7 @@ export function startPreview(userId: string, reportId: string, version: number, 
   const queries = spec.queries.map((query) => ({ ...query, key: keys.get(query.key)! }));
   const run = takeRunLock({ reportId, kind: "refresh", trigger: "user", userId, queryKeys: [previewMarker(version), ...keys.values()] });
   audit(userId, null, "reports.version.preview.start", { reportId, runId: run.id, version });
-  const state: ActiveRun = { controller: new AbortController(), datasource, inFlight: new Set() };
+  const state: ActiveRun = { controller: new AbortController(), datasource, inFlight: new Set(), params: defaultBound(spec) };
   active.set(run.id, state);
   const done = withLogContext({ ...currentLogContext(), run: shortId(run.id), report: shortId(reportId) }, () => execute(run, report, spec, queries, userId, state, version)).catch((error: unknown) => {
     slog.error("Report version preview failed", error);

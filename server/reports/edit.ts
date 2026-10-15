@@ -26,7 +26,8 @@ import { adHocQueryId, runGuarded } from "./runner";
 import { describeTablesTool, estimateTool, listTablesTool, runSchemaQueryTool, sampleRowsTool, searchSchemaTool } from "./schemaTools";
 import { parseSpec } from "./service";
 import { BANNED_FUNCTIONS } from "./sqlGuard";
-import { reportErrorOf, validateSpec } from "./specValidate";
+import { reportErrorOf, runSqlParams, validateSpec } from "./specValidate";
+import { PARAMETER_RULES, PLACEHOLDER_GUARD_LINE } from "./paramPrompt";
 import { forValidation, knownSpec, reattach, specHash } from "./specCheck";
 import type { SavedOutcome } from "./versions";
 import { currentLogContext, logger, shortId, withLogContext } from "../log";
@@ -143,7 +144,7 @@ export function editPrompt(input: { datasource: DatasourceRow; report: ReportRow
     "",
     "## ClickHouse dialect and the guard",
     `- Data source: default database \`${input.datasource.database}\`. Only these tables can be read (allowlist patterns): ${allowlistOf(input.datasource).slice(0, 50).join(", ") || "(none)"}.`,
-    "- One statement per query: SELECT or WITH â€¦ SELECT. No INTO, OUTFILE, INFILE, SETTINGS, FORMAT, no DDL or writes, no `#` comments, no `{}` parameters, no `$` heredocs.",
+    PLACEHOLDER_GUARD_LINE,
     `- Table functions and functions that reach outside or other tables are refused, for example ${[...BANNED_FUNCTIONS].slice(0, 16).join(", ")}.`,
     `- Every query runs read-only with a ${input.datasource.timeout_s} s limit and at most ${input.datasource.max_rows} rows. Aggregate in SQL so results stay small.`,
     "",
@@ -158,6 +159,8 @@ export function editPrompt(input: { datasource: DatasourceRow; report: ReportRow
     "",
     "## How the report looks: you choose intent and layout, Nook draws it",
     ...SPEC_V2_RULES(),
+    "",
+    ...PARAMETER_RULES("change"),
     "",
     `The result must still be a valid report: at most ${REPORT_LIMITS.queries} queries and ${REPORT_LIMITS.blocks} blocks, every queryKey names a query, every query is used by a block (remove queries you stop using), every section a block names exists, and named columns exist in the query's result. Nook runs the changed report's queries before proposing it; if anything fails (SQL or a design rule) you get the errors and may submit again (two more tries).`,
     ...(input.docTools?.length ? ["## Doc tools", ...docToolsLines(input.docTools)] : []),
@@ -217,7 +220,7 @@ const preview = (text: string) => text.length > 1024 ? `${text.slice(0, 1023)}â€
 export function proposalResults(outcomes: ReadonlyMap<string, SavedOutcome>, keys: ReadonlySet<string>): Record<string, SavedOutcome> {
   const picked = Object.fromEntries([...outcomes].filter(([key]) => keys.has(key)).map(([key, outcome]) => [key, {
     columns: outcome.columns, rows: outcome.rows.slice(0, REPORT_LIMITS.storedRows), truncated: outcome.truncated || outcome.rows.length > REPORT_LIMITS.storedRows,
-    sentSql: outcome.sentSql, chQueryId: outcome.chQueryId, rowsRead: outcome.rowsRead, bytesRead: outcome.bytesRead, ms: outcome.ms
+    sentSql: outcome.sentSql, chQueryId: outcome.chQueryId, rowsRead: outcome.rowsRead, bytesRead: outcome.bytesRead, ms: outcome.ms, ...(outcome.params ? { params: outcome.params } : {})
   }])) as Record<string, SavedOutcome>;
   while (JSON.stringify(picked).length > EDIT_LIMITS.proposalBytes) {
     let largest: SavedOutcome | null = null;
@@ -498,7 +501,7 @@ async function executeEdit(run: Execution) {
         const queryId = adHocQueryId("editsql");
         const sha256 = createHash("sha256").update(sql).digest("hex");
         try {
-          const outcome = await runGuarded(datasource, sql, { classes: ["select"], maxRows: Math.min(datasource.max_rows, REPORT_LIMITS.storedRows), queryId, userId, signal: controller.signal });
+          const outcome = await runGuarded(datasource, sql, { classes: ["select"], maxRows: Math.min(datasource.max_rows, REPORT_LIMITS.storedRows), queryId, userId, signal: controller.signal, params: runSqlParams(args.parameters, run.spec.parameters ?? []) });
           audit(userId, null, "reports.instruction.run_sql", { reportId, instructionId: instruction.id, runId, queryId, sha256, purpose: purpose.slice(0, 120), ok: true, rows: outcome.rows.length, ms: outcome.ms });
           // D488: the data-shape advisor's line rides on every result.
           const shape = adviseShape(outcome.columns, outcome.rows);

@@ -200,25 +200,25 @@ describe("editing an old (v1) report", () => {
     expect(system).not.toContain("\"legacy\"");
     const proposal = (await send(owner, "GET", `/reports/${reportId}/instructions/${id}/proposal`)).body.proposal as Json;
     expect(proposal.blocks.map((change: Json) => [change.blockId, change.change])).toEqual([["country-bar", "updated"]]);
-    expect(proposal.spec.specVersion).toBe(2);
+    expect(proposal.spec.specVersion).toBe(3);
 
     const applied = await send(owner, "POST", `/reports/${reportId}/instructions/${id}/apply`, {});
     expect(applied.status).toBe(200);
     const saved = specOf(reportId);
-    expect(saved).toMatchObject({ version: 1, specVersion: 2, sections: [] });
+    expect(saved).toMatchObject({ version: 1, specVersion: 3, sections: [], parameters: [] });
     const byId = new Map((saved.blocks as Json[]).map((block) => [block.id, block]));
     expect(byId.get("country-bar")).toMatchObject({ kind: "stacked_bar", title: "Top countries" });
     expect(byId.get("country-bar")!.legacy).toBeUndefined();
     expect(byId.get("untitled")).toMatchObject({ legacy: true, intent: "trend", width: "half" });
     expect(byId.get("untitled")!.title).toBeUndefined();
     const version = db.query("SELECT spec_json FROM report_versions WHERE report_id = ? ORDER BY version DESC LIMIT 1").get(reportId) as { spec_json: string };
-    expect(JSON.parse(version.spec_json).specVersion).toBe(2);
+    expect(JSON.parse(version.spec_json).specVersion).toBe(3);
 
     // Versions read back as v2 (the backfilled v1 version too).
     const versions = (await send(owner, "GET", `/reports/${reportId}/versions`)).body.versions as Json[];
     const first = versions.at(-1)!;
     const old = (await send(owner, "GET", `/reports/${reportId}/versions/${first.version}`)).body.spec as Json;
-    expect(old).toMatchObject({ specVersion: 2, sections: [] });
+    expect(old).toMatchObject({ specVersion: 3, sections: [], parameters: [] });
   });
 
   test("a manual edit adds a section and moves a v1 block into it; a changed block that breaks a rule is refused", async () => {
@@ -252,7 +252,7 @@ describe("editing an old (v1) report", () => {
     const key = { keyId: `key-${owner.userId.slice(0, 8)}`, userId: owner.userId, name: "k", scopes: ["reports:read" as const] };
     const tool = (name: string) => reportTools.find((item) => item.name === name)!;
     const report = await tool("get_report").handler({ reportId }, key) as Json;
-    expect(report).toMatchObject({ specVersion: 2, sections: [] });
+    expect(report).toMatchObject({ specVersion: 3, sections: [], parameters: [] });
     const block = await tool("get_report_block").handler({ reportId, blockId: "country-bar" }, key) as Json;
     expect(block.block).toMatchObject({ id: "country-bar", intent: "compare", width: "half" });
   });
@@ -300,7 +300,7 @@ describe("final review L3 and M3", () => {
     // The release it names is this one.
     expect(section).not.toMatch(/\b0\.39\.\d/);
     const { registeredMigrationIds } = await import("../server/migrations");
-    expect(registeredMigrationIds.filter((id) => id >= 50)).toEqual([50, 51, 52, 53, 55, 56, 57, 58, 59, 60, 61, 62]);
+    expect(registeredMigrationIds.filter((id) => id >= 50)).toEqual([50, 51, 52, 53, 55, 56, 57, 58, 59, 60, 61, 62, 63]);
   });
 
   test("docs/OPERATIONS.md has the 0.39.0 upgrade section: 060–062, backup, the background index, the folder rebuild, and SIGNUP_ROLE", async () => {
@@ -316,6 +316,6 @@ describe("final review L3 and M3", () => {
     expect(runner).toContain('"Migration failed"');
     expect(section).not.toMatch(/next release|unreleased/i);
     const { registeredMigrationIds } = await import("../server/migrations");
-    expect(registeredMigrationIds.filter((id) => id >= 60)).toEqual([60, 61, 62]);
+    expect(registeredMigrationIds.filter((id) => id >= 60)).toEqual([60, 61, 62, 63]);
   });
 });

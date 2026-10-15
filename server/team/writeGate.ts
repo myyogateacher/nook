@@ -93,7 +93,9 @@ export const ROLE_READ_ONLY_ALLOWED_WRITES: readonly AllowedWrite[] = [
   { method: "POST", path: "/api/knowledge/:kbId/search", roles: ["viewer"], why: "a read sent as POST (Try it on a readable knowledge base)" },
   // Report organization phase 1 (D486): a viewer stars the reports they can open (their own shortcut, never a grant).
   { method: "PUT", path: "/api/reports/:reportId/favorite", roles: ["viewer"], why: "own favorite on a readable report" },
-  { method: "DELETE", path: "/api/reports/:reportId/favorite", roles: ["viewer"], why: "own favorite" }
+  { method: "DELETE", path: "/api/reports/:reportId/favorite", roles: ["viewer"], why: "own favorite" },
+  // D489: read access runs a report with other parameter values (a date range, a filter); nothing is changed.
+  { method: "POST", path: "/api/reports/:reportId/param-runs", roles: ["viewer"], why: "run a readable report with other parameter values (reads only)" }
 ];
 
 /**

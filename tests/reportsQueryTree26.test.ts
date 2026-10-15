@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { assertQueryTreeAllowed, classify, GuardError, qualifiedColumnHint, queryTreeTables } from "../server/reports/sqlGuard";
+import { assertPlaceholdersDeclared, assertQueryTreeAllowed, classify, GuardError, qualifiedColumnHint, queryTreeTables } from "../server/reports/sqlGuard";
 import { fakeQueryTree } from "./support/fakeClickhouse";
 
 /**
@@ -50,6 +50,13 @@ const EXPECTED: Record<string, { tables: string[]; functions?: string[]; verdict
   format_string: { tables: ["myt.events"], verdict: "ok" },
   format_table: { tables: [], functions: ["format"], verdict: "BANNED_FUNCTION" },
   user_q2: { tables: ["myt.myt_chat_escalation"], verdict: "ok" },
+  // Spec v3 (D489): typed query parameters, bound over HTTP (`<name>.params.json`): the analyzer folds them into CONSTANT nodes.
+  params_date_range: { tables: ["myt.events"], verdict: "ok" },
+  params_multi_select: { tables: ["myt.myt_chat_escalation"], verdict: "ok" },
+  params_multi_select_all: { tables: ["myt.myt_chat_escalation"], verdict: "ok" },
+  params_number: { tables: ["myt.events"], verdict: "ok" },
+  // A bound String that spells tree fields stays on its CONSTANT line (escaped), which then names a field twice: refused, never read as a table.
+  params_text_injection: { tables: [], verdict: "UNSUPPORTED_SYNTAX" },
   user_q3: { tables: ["myt.myt_chat_escalation"], verdict: "ok" }
 };
 
@@ -61,6 +68,10 @@ describe("EXPLAIN QUERY TREE from ClickHouse 26.6 (real fixtures)", () => {
 
   for (const [name, expected] of Object.entries(EXPECTED)) {
     test(`${name}: tables, table functions, and the verdict`, () => {
+      if (expected.verdict !== "ok" && expected.tables.length === 0 && !expected.functions) {
+        expect(verdict(name)).toBe(expected.verdict);
+        return;
+      }
       const parsed = queryTreeTables(tree(name));
       expect(parsed.tables.map((ref) => `${ref.db}.${ref.table}`).sort()).toEqual([...expected.tables].sort());
       expect(parsed.functions).toEqual(expected.functions ?? []);
@@ -140,5 +151,49 @@ describe("tree-check errors that name a qualified column (ClickHouse 26.6 error 
 
   test("backticked parts are the same name", () => {
     expect(qualifiedColumnHint(error("error_alias_column"), "SELECT `e`.`route` FROM myt.events AS e", withColumn)).toContain("route is a column of myt.myt_chat_escalation");
+  });
+});
+
+describe("typed query parameters (spec v3, D489; ClickHouse 26.6 fixtures)", () => {
+  const sql = (name: string) => readFileSync(new URL(`${name}.sql`, DIR), "utf8").trim();
+  const params = (name: string) => JSON.parse(readFileSync(new URL(`${name}.params.json`, DIR), "utf8")) as Record<string, string>;
+  const names = ["params_date_range", "params_multi_select", "params_multi_select_all", "params_number", "params_text_injection"];
+
+  test("each fixture's statement lexes with params on, and every placeholder it holds was bound when it was captured", () => {
+    for (const name of names) {
+      const classified = classify(sql(name), { params: true });
+      expect(classified.class).toBe("select");
+      expect(classified.placeholders.map((item) => item.name).sort()).toEqual([...new Set(Object.keys(params(name)))].sort().flatMap((key) => classified.placeholders.filter((item) => item.name === key).map(() => key)));
+    }
+  });
+
+  test("the bound values are CONSTANT nodes in the tree, never TABLE lines", () => {
+    expect(tree("params_date_range")).toContain("constant_value_type: Date");
+    expect(tree("params_multi_select")).toContain("Array_['/api/a', '/api/b']");
+    expect(queryTreeTables(tree("params_multi_select")).tables).toEqual([{ db: "myt", table: "myt_chat_escalation" }]);
+    // All (an empty array) folds empty(...) to 1 and keeps the IN.
+    expect(tree("params_multi_select_all")).toContain("constant_value: Array_[], constant_value_type: Array(String)");
+  });
+
+  test("without params on, a placeholder is refused as before (the console, schema tools)", () => {
+    expect(() => classify(sql("params_date_range"))).toThrow(expect.objectContaining({ code: "UNSUPPORTED_SYNTAX" }));
+  });
+
+  test("only the supported types: Identifier (a table or column name) and others are refused", () => {
+    expect(() => classify("SELECT count() FROM {t:Identifier}", { params: true })).toThrow(expect.objectContaining({ code: "UNSUPPORTED_SYNTAX" }));
+    expect(() => classify("SELECT {x:Map(String, String)}", { params: true })).toThrow(/not supported/);
+    expect(() => classify("SELECT {x}", { params: true })).toThrow(/written \{name:Type\}/);
+    expect(classify("SELECT {r:Array( String )} AS r", { params: true }).placeholders).toEqual([{ name: "r", type: "Array(String)" }]);
+    // A placeholder in a string is text, not a parameter.
+    expect(classify("SELECT '{x:Date}' AS s", { params: true }).placeholders).toEqual([]);
+    // Metadata statements never take them.
+    expect(() => classify("EXPLAIN SELECT {d:Date}", { params: true })).toThrow(expect.objectContaining({ code: "UNSUPPORTED_SYNTAX" }));
+  });
+
+  test("undeclared and mistyped placeholders are refused before anything is sent", () => {
+    const declared = new Map([["period_from", { type: "Date" }], ["period_to", { type: "Date" }]]);
+    expect(() => assertPlaceholdersDeclared(classify(sql("params_date_range"), { params: true }).placeholders, declared)).not.toThrow();
+    expect(() => assertPlaceholdersDeclared([{ name: "routes", type: "Array(String)" }], declared)).toThrow(/not one of this report's parameters/);
+    expect(() => assertPlaceholdersDeclared([{ name: "period_from", type: "DateTime" }], declared)).toThrow(/write \{period_from:Date\}/);
   });
 });

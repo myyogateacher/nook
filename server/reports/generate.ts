@@ -32,10 +32,12 @@ import { parseNookRef } from "../../shared/nookDocRef";
 import { PAGE_METRICS_RUN_MARKER, type CatalogMetric } from "../../shared/reportsMetrics";
 import { BLOCK_INTENTS, CHART_KINDS, SECTION_LIMITS } from "../../shared/reports";
 import { MAX_SCATTER_SERIES } from "../../shared/reportTheme";
-import { DESIGN_LIMITS, persistGenerated, PersistRefused, reportErrorOf, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
+import { DESIGN_LIMITS, PARAMETER_JSON_SCHEMA, persistGenerated, PersistRefused, reportErrorOf, runSqlParams, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
+import { PARAM_LIMITS } from "../../shared/reportParams";
 import { currentLogContext, logger, shortId, withLogContext } from "../log";
 import { BEFORE_PLAN_TOOLS, Planner, plannerTools } from "./planner";
 import { adviseShape, kindHints } from "./shapeAdvisor";
+import { PARAMETER_RULES, PLACEHOLDER_GUARD_LINE } from "./paramPrompt";
 
 const slog = logger("reports");
 
@@ -290,7 +292,7 @@ export function systemPrompt(row: DatasourceRow, doc: { title: string | null; ma
     "",
     "## ClickHouse dialect and the guard",
     `- Data source: default database \`${row.database}\`. Only these tables can be read (allowlist patterns): ${allowlistOf(row).slice(0, 50).join(", ") || "(none)"}.`,
-    "- One statement per query: SELECT or WITH … SELECT. No INTO, OUTFILE, INFILE, SETTINGS, FORMAT, no DDL or writes, no `#` comments, no `{}` parameters, no `$` heredocs.",
+    PLACEHOLDER_GUARD_LINE,
     `- Table functions and functions that reach outside or other tables are refused, for example ${banned}, and anything starting with ${BANNED_PREFIXES.slice(0, 12).join(", ")}.`,
     `- Every query runs read-only with a ${row.timeout_s} s limit and at most ${row.max_rows} rows; the result is cut there. Aggregate in SQL (GROUP BY, toStartOfDay/Week/Month, uniq, sumIf, quantile) so results stay small.`,
     "- Qualify tables as db.table. Prefer the partition and sorting keys in WHERE, and estimate before scanning a large table.",
@@ -306,6 +308,8 @@ export function systemPrompt(row: DatasourceRow, doc: { title: string | null; ma
     "",
     "## How the report looks: you choose intent and layout, Nook draws it",
     ...SPEC_V2_RULES(),
+    "",
+    ...PARAMETER_RULES("report"),
     "- A good report: one or two markdown sentences of narrative first, then 2–6 KPIs, then sections of charts, then detail tables. Cover the document's metrics: a KPI strip for the headline numbers, then one block per distinct metric or question, each in the chart kind its intent routes to. A table is for detail or lists, never the only block when the data supports a chart.",
     "",
     "## How to work: plan, then work through the plan",
@@ -347,7 +351,7 @@ export const GENERATE_TOOLS: ModelTool[] = [
   { name: "sample_rows", description: "Up to 5 rows of one allowlisted table.", parameters: { type: "object", required: ["table"], properties: { table: { type: "string" }, n: { type: "integer", minimum: 1, maximum: 5 } } } },
   { name: "run_schema_query", description: "Runs one metadata statement: SHOW, DESCRIBE, EXISTS, EXPLAIN, or a SELECT on system.tables/columns/parts. At most 200 rows.", parameters: { type: "object", required: ["sql"], properties: { sql: sqlProp } } },
   { name: "estimate", description: "EXPLAIN ESTIMATE of a SELECT: the rows, parts, and marks it would read.", parameters: { type: "object", required: ["sql"], properties: { sql: sqlProp } } },
-  { name: "run_sql", description: "Runs one guarded SELECT on the report's data source. Returns its columns, up to 20 rows, the row count, and the time. Give it the key the spec will use for this query.", parameters: { type: "object", required: ["sql", "purpose"], properties: { sql: sqlProp, purpose: { type: "string", maxLength: REPORT_LIMITS.purpose }, key: { type: "string", pattern: "^[a-z][a-z0-9_]{0,39}$" } } } },
+  { name: "run_sql", description: "Runs one guarded SELECT on the report's data source. Returns its columns, up to 20 rows, the row count, and the time. Give it the key the spec will use for this query.", parameters: { type: "object", required: ["sql", "purpose"], properties: { sql: sqlProp, purpose: { type: "string", maxLength: REPORT_LIMITS.purpose }, key: { type: "string", pattern: "^[a-z][a-z0-9_]{0,39}$" }, parameters: { type: "array", maxItems: PARAM_LIMITS.parameters, items: PARAMETER_JSON_SCHEMA, description: "The report's parameters when the SQL has {name:Type} placeholders: bound to their defaults" } } } },
   { name: "read_doc_section", description: "Reads part of the document Nook already fetched: by heading (the section under it) or by byte offset from the outline. Read-only; at most 16 KB a call.", parameters: { type: "object", properties: { heading: { type: "string", maxLength: 200 }, offset: { type: "integer", minimum: 0 }, length: { type: "integer", minimum: 256, maximum: 16384 } } } },
   ...plannerTools("report"),
   { name: "submit_report", description: "Submits the report spec (its title, queries, sections, and blocks). Nook checks and runs every query; errors come back for another try.", parameters: { ...SPEC_JSON_SCHEMA, required: [...(SPEC_JSON_SCHEMA.required as string[]), "title"], properties: { ...(SPEC_JSON_SCHEMA.properties as Record<string, unknown>), title: { type: "string", minLength: 1, maxLength: REPORT_TITLE_MAX, description: "The report's name: plain text, at most 80 characters, what it shows (e.g. \"Weekly revenue and refunds\")." } } } }
@@ -659,7 +663,7 @@ async function executeGeneration(run: Execution) {
         const queryId = adHocQueryId("gensql");
         const sha256 = createHash("sha256").update(sql).digest("hex");
         try {
-          const outcome = await runGuarded(datasource, sql, { classes: ["select"], maxRows: Math.min(datasource.max_rows, REPORT_LIMITS.storedRows), queryId, userId, signal: controller.signal });
+          const outcome = await runGuarded(datasource, sql, { classes: ["select"], maxRows: Math.min(datasource.max_rows, REPORT_LIMITS.storedRows), queryId, userId, signal: controller.signal, params: runSqlParams(args.parameters) });
           audit(userId, null, "reports.generate.run_sql", { reportId, runId, agentRunId, queryId, sha256, purpose: purpose.slice(0, 120), ok: true, rows: outcome.rows.length, ms: outcome.ms });
           // D488: the data-shape advisor's line (the kinds this data fits) rides on every result.
           const shape = adviseShape(outcome.columns, outcome.rows);
@@ -678,13 +682,13 @@ async function executeGeneration(run: Execution) {
         const { title: rawTitle, ...raw } = { ...given, title: given.title ?? args.title };
         const aiTitle = reportTitle(rawTitle);
         // A submit without one (a spec recovered from text) keeps the title the report has: the doc's or the person's.
-        const shape = raw as { blocks?: unknown; sections?: unknown };
+        const shape = raw as { blocks?: unknown; sections?: unknown; parameters?: unknown };
         const blocks = Array.isArray(shape.blocks) ? shape.blocks as Array<{ type?: string; queryKey?: string; section?: string }> : [];
         // 2c: the plan first (these never use up a try): every todo closed, each done one on a block in its section.
         // Open todos are refused once; a second submit closes them as skipped (a forced last step can still finish).
         if (planner.plan && planner.openTodos().length && planner.openRefused) planner.closeOpen("Left open when the report was submitted");
         if (planner.plan && planner.openTodos().length) planner.openRefused = true;
-        const planErrors = planner.submitErrors({ blocks: blocks as never, sections: Array.isArray(shape.sections) ? shape.sections as never : [] });
+        const planErrors = planner.submitErrors({ blocks: blocks as never, sections: Array.isArray(shape.sections) ? shape.sections as never : [], parameters: Array.isArray(shape.parameters) ? shape.parameters as never : [] });
         if (planErrors.length) return { text: `The spec was not saved:\n- ${planErrors.join("\n- ")}\nFix these and call submit_report again (this did not use a try).`, ok: false };
         // 2b: a thin report of a rich doc gets one warning before it is checked.
         const data = blocks.filter((block) => block.type && block.type !== "markdown");

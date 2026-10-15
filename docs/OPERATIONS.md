@@ -610,6 +610,10 @@ curl http://localhost:2026/api/health
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
 
+### Upgrading past 0.39.0 (report parameters, migration 063)
+
+Migration **063** `report_parameters` adds the column `report_results.params_json` (the bound parameter values of a stored result) and three tables: `report_param_sets`, `report_param_results` (the cached results of the parameter sets readers asked for), and `report_param_options` (a select's choices). It copies nothing and rewrites no table, so it is quick at any size. Stored report specs read as spec v3 with no parameters; nothing about an existing report changes until it gains parameters. Back up first as always (`./scripts/backup.sh --force`). If the migration fails, the server logs `Migration failed` with id 63 and does not start; restore the backup or fix the cause and start again (it is transactional, so nothing is half applied).
+
 ### Upgrading to 0.39.0 (report organization and Files search, migrations 060–062)
 
 0.39.0 adds the Files full-text index, report favorites and filters, several owners per report, and one shared report folder tree, and changes the default role of new accounts. Its three migrations run once, in order, on the first boot, before the HTTP server answers; each is recorded in `schema_migrations` and none can be undone except by restoring a backup.

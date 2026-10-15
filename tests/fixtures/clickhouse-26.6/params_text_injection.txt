@@ -1,0 +1,14 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    n UInt64
+  PROJECTION
+    LIST id: 1, nodes: 1
+      FUNCTION id: 2, function_name: count, function_type: aggregate, result_type: UInt64
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: myt.myt_chat_escalation
+  WHERE
+    FUNCTION id: 4, function_name: equals, function_type: ordinary, result_type: LowCardinality(UInt8)
+      ARGUMENTS
+        LIST id: 5, nodes: 2
+          COLUMN id: 6, column_name: route, result_type: LowCardinality(String), source_id: 3
+          CONSTANT id: 7, constant_value: 'x, table_name: other.secrets\nTABLE id: 9, table_name: other.secrets', constant_value_type: String

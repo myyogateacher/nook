@@ -11,11 +11,13 @@ import { parseJson, uuid } from "../validation";
 import { QUERY_KEY, type ReportRun } from "../../shared/reports";
 import type { DocSnapshotInfo, ProvenanceView } from "../../shared/reportsView";
 import { isReportOwner, readableReport } from "./access";
+import { ReportError } from "./errors";
 import { listRuns, reportResults, reportRun, runRow, runView, startRefresh } from "./refresh";
 import { handle, id } from "./routes";
 import { getSchedule, saveSchedule } from "./scheduler";
 import { runHistory, runLog } from "./runHistory";
 import { storedPlan } from "./planner";
+import { paramResults, reportParamOptions, runParamSet } from "./params";
 
 /**
  * docs/plan/API_CONTRACTS.md § Analytics reports (Wave 47): what the viewer reads (each query's last
@@ -26,6 +28,19 @@ import { storedPlan } from "./planner";
  */
 
 const refreshSchema = z.object({ queryKey: z.string().regex(QUERY_KEY).nullish() }).strict();
+/** Spec v3 (D489): a reader's parameter values (checked against the report's parameters by params.ts). */
+const valuesSchema = z.record(z.string().max(40), z.unknown()).refine((value) => Object.keys(value).length <= 16, "at most 16 values");
+const paramRunSchema = z.object({ values: valuesSchema, force: z.boolean().optional() }).strict();
+
+/** `?values=<JSON object>` on GET …/results; absent is the default set. */
+function queryValues(raw: string | undefined): Record<string, unknown> | null {
+  if (raw === undefined) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw.slice(0, 16_384)); } catch { throw new ReportError(400, "INVALID", "values must be a JSON object"); }
+  const checked = valuesSchema.safeParse(parsed);
+  if (!checked.success) throw new ReportError(400, "INVALID", "values must be a JSON object of parameter values");
+  return checked.data;
+}
 const scheduleSchema = z.object({
   cadence: z.string().max(20),
   atTime: z.string().max(5).nullable(),
@@ -82,8 +97,23 @@ export function registerReportViewRoutes(app: Hono<AppEnv>) {
   app.get("/api/reports/:reportId/results", handle((c) => {
     const reportId = id(c, "reportId");
     const userId = c.get("user").id;
-    const view = reportResults(reportId, userId);
+    // Spec v3 (D489): with `values`, the results of that parameter set (cached; `set.missing` names what a run fills).
+    const values = queryValues(c.req.query("values"));
+    const view = values ? paramResults(reportId, userId, values) : reportResults(reportId, userId);
     return isOwner(reportId, userId) || !view.running ? view : { ...view, running: forReader(view.running) };
+  }));
+  // D489: read access is enough to run a report with other parameter values (a viewer too: writeGate allowlist).
+  app.post("/api/reports/:reportId/param-runs", handle(async (c) => {
+    const reportId = id(c, "reportId");
+    const userId = c.get("user").id;
+    const input = await parseJson(c.req.raw, paramRunSchema);
+    const view = await runParamSet(userId, reportId, input.values, { trigger: "user", force: input.force });
+    return isOwner(reportId, userId) || !view.running ? view : { ...view, running: forReader(view.running) };
+  }));
+  app.get("/api/reports/:reportId/parameters/:paramId/options", handle(async (c) => {
+    const paramId = c.req.param("paramId") ?? "";
+    if (!/^[a-z][a-z0-9_]{0,29}$/.test(paramId)) throw new ReportError(404, "NOT_FOUND", "Not found");
+    return { options: await reportParamOptions(id(c, "reportId"), c.get("user").id, paramId) };
   }));
   app.post("/api/reports/:reportId/refresh", handle(async (c) => {
     const reportId = id(c, "reportId");

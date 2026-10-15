@@ -55,9 +55,15 @@ export type PatchOp =
   | { op: "add_section"; section: { id: string; title: string; summary?: string }; after?: string | null }
   | { op: "update_section"; id: string; set: { title?: string; summary?: string | null } }
   /** Removes the section; its blocks stay, out of any section. */
-  | { op: "remove_section"; id: string };
+  | { op: "remove_section"; id: string }
+  /** Spec v3 parameters (D489): a whole parameter (validated with the spec), inserted after `after` (null or absent: first). */
+  | { op: "add_parameter"; parameter: { id: string; type: string } & Record<string, unknown>; after?: string | null }
+  /** Merges `set` into the parameter (its id stays). */
+  | { op: "update_parameter"; id: string; set: Record<string, unknown> }
+  /** Removes the parameter; queries that still read it are refused until they stop. */
+  | { op: "remove_parameter"; id: string };
 export type PatchOpName = PatchOp["op"];
-export const PATCH_OPS: readonly PatchOpName[] = ["add_block", "update_block", "remove_block", "move_block", "add_query", "update_query", "remove_query", "add_section", "update_section", "remove_section"];
+export const PATCH_OPS: readonly PatchOpName[] = ["add_block", "update_block", "remove_block", "move_block", "add_query", "update_query", "remove_query", "add_section", "update_section", "remove_section", "add_parameter", "update_parameter", "remove_parameter"];
 
 export type ReportPatch = { ops: PatchOp[]; summary?: string };
 

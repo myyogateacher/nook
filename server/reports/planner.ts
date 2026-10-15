@@ -4,6 +4,7 @@ import { BLOCK_INTENTS, type ReportSpec } from "../../shared/reports";
 import { PLAN_LIMITS, PLAN_TODO_KINDS, type PlanTodo, type PlanTodoKind, type RunPlan } from "../../shared/reportsGenerate";
 import { ReportError } from "./errors";
 import type { Shape } from "./shapeAdvisor";
+import { PARAM_ID, PARAM_LIMITS, PARAM_TYPES } from "../../shared/reportParams";
 
 /**
  * The report agents' planner (generate.ts: plan_report; edit.ts: plan_change). The agent reads the
@@ -145,13 +146,25 @@ export class Planner {
     if (rawTodos.length < 1 || rawTodos.length > PLAN_LIMITS.todos) errors.push(`todos: 1–${PLAN_LIMITS.todos} todos, one per metric or question`);
     const ids = new Set(sections.map((section) => section.id));
     const todos = rawTodos.slice(0, PLAN_LIMITS.todos).map((raw, index) => this.todoOf(raw, index, ids, errors)).filter((todo): todo is PlanTodo => todo !== null);
+    // Spec v3 (D489): the parameters the report will have (the doc's time window, its filter dimensions).
+    const parameters: NonNullable<RunPlan["parameters"]> = [];
+    if (args.parameters !== undefined && !Array.isArray(args.parameters)) errors.push("parameters must be a list of {id, type, label}");
+    for (const raw of Array.isArray(args.parameters) ? args.parameters.slice(0, PARAM_LIMITS.parameters + 1) : []) {
+      const item = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+      const id = text(item.id, 30);
+      const type = text(item.type, 20);
+      if (!PARAM_ID.test(id) || !(PARAM_TYPES as readonly string[]).includes(type)) { errors.push(`parameter ${parameters.length + 1}: needs an id ([a-z][a-z0-9_]*) and a type (${PARAM_TYPES.join(", ")})`); continue; }
+      if (parameters.some((param) => param.id === id)) { errors.push(`parameter ${id}: the id is used twice`); continue; }
+      parameters.push({ id, type, label: text(item.label, PARAM_LIMITS.label) || id });
+    }
+    if (parameters.length > PARAM_LIMITS.parameters) errors.push(`at most ${PARAM_LIMITS.parameters} parameters`);
     const seen = new Set<string>();
     for (const todo of todos) {
       if (seen.has(todo.id)) errors.push(`todo ${todo.id}: the id is used twice`);
       seen.add(todo.id);
     }
     if (errors.length) throw invalid(`The plan was not accepted:\n- ${errors.slice(0, 20).join("\n- ")}\nFix these and call ${this.options.mode === "change" ? "plan_change" : "plan_report"} again.`);
-    this.plan = { goal, sections, todos, added: 0 };
+    this.plan = { goal, sections, todos, added: 0, ...(parameters.length ? { parameters } : {}) };
     this.save();
     plog.info("Plan made", { mode: this.options.mode, todos: todos.length, sections: sections.length });
     return `Plan saved: ${todos.length} ${todos.length === 1 ? "todo" : "todos"}${sections.length ? ` in ${sections.length} sections` : ""}. Work through them: for each, run_sql with a key, then update_todo {id, status: "done", queryKey}. Mark a todo skipped or blocked with a note when the data cannot answer it.`;
@@ -250,7 +263,7 @@ export class Planner {
   }
 
   /** What a submit must satisfy: a plan, every todo closed, each done data todo's key on a block, its section kept. */
-  submitErrors(spec: Pick<ReportSpec, "blocks" | "sections">): string[] {
+  submitErrors(spec: Pick<ReportSpec, "blocks" | "sections"> & { parameters?: ReadonlyArray<{ id?: unknown }> }): string[] {
     if (!this.plan) return [`Make the plan first: call ${this.options.mode === "change" ? "plan_change" : "plan_report"}, then work through it`];
     const errors: string[] = [];
     const open = this.openTodos();
@@ -270,6 +283,9 @@ export class Planner {
       }
     }
     if (this.options.mode === "report") {
+      // D489: every planned parameter is declared in the spec.
+      const declared = new Set((spec.parameters ?? []).map((param) => param?.id));
+      for (const param of this.plan.parameters ?? []) if (!declared.has(param.id)) errors.push(`plan: parameter ${param.id} (${param.type}) is planned but not in the spec's parameters; declare it and read it in the queries, or revise the plan`);
       const planned = new Set(this.plan.todos.filter((todo) => todo.status === "done" && todo.section).map((todo) => todo.section!));
       for (const section of this.plan.sections) {
         if (planned.has(section.id) && !specSections.has(section.id)) errors.push(`plan: section ${section.id} ("${section.title}") has done todos but is not in the spec's sections`);
@@ -317,7 +333,8 @@ export function plannerTools(mode: PlannerMode) {
   return [
     mode === "change"
       ? { name: planName, description: "Plans the change before you edit: the todos it takes (one per block or query to add or change). Call it once, first.", parameters: { type: "object", required: ["todos"], properties: { goal: { type: "string", maxLength: PLAN_LIMITS.goal }, todos: { type: "array", minItems: 1, maxItems: PLAN_LIMITS.todos, items: todoSchema } } } }
-      : { name: planName, description: "Plans the report after reading the doc: its goal, sections, and todos (one per metric or question in the doc: kpi, chart, table, markdown, or explore), each with the tables it needs. Call it once, before run_sql.", parameters: { type: "object", required: ["goal", "todos"], properties: { goal: { type: "string", maxLength: PLAN_LIMITS.goal }, sections: { type: "array", maxItems: PLAN_LIMITS.sections, items: { type: "object", required: ["id", "title"], properties: { id: { type: "string", maxLength: 40 }, title: { type: "string", maxLength: 120 } } } }, todos: { type: "array", minItems: 1, maxItems: PLAN_LIMITS.todos, items: todoSchema } } } },
+      : { name: planName, description: "Plans the report after reading the doc: its goal, sections, and todos (one per metric or question in the doc: kpi, chart, table, markdown, or explore), each with the tables it needs. Call it once, before run_sql.", parameters: { type: "object", required: ["goal", "todos"], properties: { goal: { type: "string", maxLength: PLAN_LIMITS.goal }, sections: { type: "array", maxItems: PLAN_LIMITS.sections, items: { type: "object", required: ["id", "title"], properties: { id: { type: "string", maxLength: 40 }, title: { type: "string", maxLength: 120 } } } }, todos: { type: "array", minItems: 1, maxItems: PLAN_LIMITS.todos, items: todoSchema },
+        parameters: { type: "array", maxItems: PARAM_LIMITS.parameters, description: "The date range and filters the doc names (\"last 30 days\", \"by route\"); none when it names none", items: { type: "object", required: ["id", "type", "label"], properties: { id: { type: "string", pattern: PARAM_ID.source }, type: { enum: [...PARAM_TYPES] }, label: { type: "string", maxLength: PARAM_LIMITS.label } } } } } } },
     { name: "update_todo", description: "Marks a todo in_progress, done (a kpi, chart, or table todo needs the queryKey of a run_sql that worked), skipped, or blocked (both need a note saying why).", parameters: { type: "object", required: ["id", "status"], properties: { id: { type: "string" }, status: { type: "string", enum: ["in_progress", "done", "skipped", "blocked"] }, note: { type: "string", maxLength: PLAN_LIMITS.note }, queryKey: { type: "string", maxLength: 40 }, blockId: { type: "string", maxLength: 40 } } } },
     { name: "add_todo", description: `Adds one todo you found you need (at most ${PLAN_LIMITS.added} in a run).`, parameters: { type: "object", required: ["todo"], properties: { todo: todoSchema } } },
     { name: "revise_plan", description: "Small changes mid-run: add or rename sections, or drop open todos (they become skipped with your note).", parameters: { type: "object", required: ["note"], properties: { note: { type: "string", maxLength: PLAN_LIMITS.note }, sections: { type: "array", items: { type: "object", required: ["id", "title"], properties: { id: { type: "string" }, title: { type: "string" } } } }, drop: { type: "array", items: { type: "string" } } } } }

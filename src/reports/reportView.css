@@ -234,3 +234,35 @@ ul.report-block-problem { display: block; padding-left: 18px; }
 /* The report page uses the content width up to 1280 px, centred (the 12-column grid needs the room). */
 .reports-body.report-body { width: min(1280px, 100%); }
 .report-autofix-at-save { color: var(--report-muted); font-style: normal; }
+
+/* Spec v3 (D489): the control bar (date range and filters) at the top of the report. Pills from 761 px
+   (the shared Select's chip; a changed one in the accent), the Filters button and its sheet on a phone. */
+.report-params { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--report-border); }
+.report-params-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.report-param { display: inline-flex; min-width: 0; max-width: 100%; }
+.report-param .ui-select-chip { max-width: 260px; min-height: 36px; padding: 0 12px; border-color: var(--report-border); background: var(--report-surface); color: var(--report-text); }
+.report-param .ui-select-chip .ui-select-chevron { color: var(--report-muted); }
+.report-param.active .ui-select-chip, .report-param.active .report-param-input { border-color: var(--report-accent-line); background: var(--report-accent-bg); color: var(--report-text); }
+.report-param-multi { width: auto; text-align: left; }
+.report-param-input { min-height: 36px; width: 160px; max-width: 100%; border: 1px solid var(--report-border); border-radius: 8px; padding: 0 10px; background: var(--report-surface); color: var(--report-text); font: inherit; font-size: .84rem; }
+.report-param-input:focus-visible { outline: 2px solid var(--report-accent); outline-offset: 1px; }
+.report-param-input.invalid { border-color: var(--report-bad); }
+.report-params-busy { display: inline-flex; align-items: center; gap: 6px; color: var(--report-accent); font-size: .82rem; }
+.report-params-busy svg, .report-params-spinner { width: 15px; height: 15px; color: var(--report-accent); }
+.report-params-narrow { display: none; align-items: center; gap: 10px; min-width: 0; }
+.report-params-open b { min-width: 20px; height: 20px; display: inline-grid; place-items: center; border-radius: 999px; padding: 0 6px; background: var(--report-accent-bg); color: var(--report-accent); font-size: .74rem; }
+.report-params-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--report-muted); font-size: .82rem; }
+.report-params-fields { display: grid; gap: 14px; padding: 4px 16px 16px; }
+.report-param-field { display: grid; gap: 6px; min-width: 0; }
+.report-param-field .report-param-input { width: 100%; min-height: 44px; }
+.report-param-label { color: var(--report-muted); font-size: .8rem; font-weight: 600; }
+.report-param-checks { display: grid; gap: 2px; max-height: 50vh; overflow: auto; }
+.report-param-check { min-height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 4px; font-size: .9rem; cursor: pointer; overflow-wrap: anywhere; }
+.report-param-check input { width: 18px; height: 18px; flex: none; accent-color: var(--report-accent); }
+.report-param-problem { margin: 0; color: var(--report-bad); font-size: .82rem; }
+.report-block-pending .report-block-body { opacity: .45; transition: opacity .15s; }
+.report-inspect-params dd code { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .report-params-chips { display: none; }
+  .report-params-narrow { display: flex; }
+}

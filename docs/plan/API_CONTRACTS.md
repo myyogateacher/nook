@@ -2730,6 +2730,22 @@ Patch ops (`submit_patch` and `spec/edit`): `add_block {block, after?}`, `update
 
 MCP: `reports:read` adds `get_report`, `get_report_block` (the inspect data, 50 rows), `get_report_run`, `get_report_instruction`, `list_report_versions` (redacted as the route, plus `sourceLabel` and `who`), `get_report_version_diff` (the owner's), `get_report_metrics` (the owner's metric catalog, lane E); `reports:write` has `create_report`, `refresh_report`, `set_report_schedule`, `add_report_instruction`, `apply_report_proposal`, `reject_report_proposal`, `update_report_query`, `update_report_metric` (changes or adds one catalog metric, re-checked, a new catalog version; never removes), each counted against `report_write` (100 a day per key, 200 per person) and audited with `via: "mcp"` and the key. No tool runs ad-hoc SQL; nothing is deleted but through the Bin.
 
+## Analytics reports: interactive parameters (spec v3, D489)
+
+Migration **063** (`report_parameters`). Wire types: `shared/reportParams.ts`. Every `spec` a route answers with is spec v3: `{ version: 1, specVersion: 3, sections, parameters, queries, blocks }`; a stored v2 spec reads with `parameters: []`. `submit_report` and `submit_patch` take parameters (docs/plan/REPORT_THEME.md § Parameters). A result (`ReportResult`) may carry `params`: the bound values as sent (`name` → value), shown by Inspect.
+
+Parameter values (`values`) are an object by parameter id: a date range `{ preset }` or `{ preset: "custom", from, to }`; a multi-select a list (`[]` is All); a select a string; a number a number; text a string. A value that does not fit is **400 `INVALID`** naming it, as is an unknown id or a select value that is not one of its options. Read access is enough for all three routes (a Team viewer too: `POST …/param-runs` is on the read-only roles' write allowlist); anyone else gets 404.
+
+| Route | Body | Returns |
+| --- | --- | --- |
+| `GET /api/reports/:id/results?values=<JSON>` | | `{ results, running, set: { isDefault, values, bound, missing } }`: the default set's stored results, or another set's cached results with the query keys a run would fill (`missing`). Nothing runs. Without `values` the answer is as before. |
+| `POST /api/reports/:id/param-runs` | `{ values, force? }` (strict) | The same shape, after running the set's missing queries (or all with `force`). Takes the report's one-run lock (**409 `RUN_IN_PROGRESS`** while another run holds it; the client retries) and the caller's query slots; **429 `BUSY`** past 20 runs a minute per person. The default set never runs here. |
+| `GET /api/reports/:id/parameters/:paramId/options` | | `{ options: { paramId, options: string[] ≤ 200, truncated, error, at } }`: a select's choices from its guarded options query, cached per report (re-read after a default refresh or 6 h). |
+
+The report page keeps the values in its URL as `?p.<id>=<value>` (a multi-select repeats its key; a custom range is `from..to`; only values that differ from the defaults).
+
+**MCP.** `get_report` takes `parameters` and answers with the spec's `parameters` and `parameterSet: { isDefault, values, bound, notYetRun }`. `get_report_block` takes `parameters` and answers with that set's result (running it first when it has none yet) and its `params`. `refresh_report` with non-default `parameters` runs that set (read access is enough), waits, and answers `{ run: null, parameterSet, queries: [{ key, ok, rows, error }] }`; with none (or the defaults) it is the owner's refresh as before.
+
 ## Changes to existing note endpoints (Wave 4)
 
 - `DELETE /api/notes/:id`:

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, CircleCheck, CircleX, Clock3, ExternalLink, LoaderCircle, MoreHorizontal, RefreshCw, ScanSearch, TriangleAlert } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { Markdown, type RenderContext } from "../chat/markdown/render";
@@ -15,7 +15,9 @@ import { useLayerOpener } from "../historyDialogs";
 import { KpiTile, type ResultLookup } from "./KpiTile";
 import { ResultTable } from "./ResultTable";
 import { PAGE_METRICS_RUN_MARKER } from "../../shared/reportsMetrics";
-import { previewVersionOf, getResults, getRun, listRuns, refreshReport, RUN_STATUS_TEXT, timeAgo } from "./reportViewApi";
+import { previewVersionOf, getParamResults, getResults, getRun, listRuns, refreshReport, runParamSet, RUN_STATUS_TEXT, timeAgo } from "./reportViewApi";
+import { ReportParamsBar, ReportParamsContext } from "./ReportParamsBar";
+import { canonicalValues, isDefaultSet, valuesFromSearch, valuesToSearch, type ParamValues } from "../../shared/reportParams";
 import { codeOf, messageOf } from "./reportsApi";
 import { scheduleBadge, ScheduleSheet } from "./ScheduleSheet";
 import { CommentOnBlockButton } from "./reportComment";
@@ -115,18 +117,68 @@ export function ReportView({ report, canWrite, generating = false, initial, read
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
+  // Spec v3 (D489): the report's parameter values come from the URL (ReportParamsContext); the default
+  // set reads the stored results, any other set its cached results, running what is missing first.
+  const paramsContext = useContext(ReportParamsContext);
+  const parameters = report.spec.parameters ?? [];
+  const withParams = parameters.length > 0 && !readOnly && !initial && paramsContext !== null;
+  const values = useMemo(() => valuesFromSearch(parameters, paramsContext?.search), [parameters, paramsContext?.search]);
+  const setKey = withParams && !isDefaultSet(parameters, values) ? canonicalValues(parameters, values) : "";
+  const valuesRef = useRef<ParamValues>(values);
+  valuesRef.current = values;
+  /** The queries a parameter set is still running (their blocks show spinners); null when none. */
+  const [pending, setPending] = useState<string[] | null>(null);
+  const ticket = useRef(0);
+
   const loadResults = useCallback(async () => {
+    const mine = ++ticket.current;
+    const current = () => alive.current && mine === ticket.current;
     try {
-      const next = await getResults(report.id);
-      if (!alive.current) return null;
-      setView(next);
-      setLoadError(null);
-      return next;
+      if (!setKey) {
+        const next = await getResults(report.id);
+        if (!current()) return null;
+        setView(next);
+        setPending(null);
+        setLoadError(null);
+        return next;
+      }
+      const shown = valuesRef.current;
+      const first = await getParamResults(report.id, shown);
+      if (!current()) return null;
+      if (!first.set.missing.length) {
+        setView(first);
+        setPending(null);
+        setLoadError(null);
+        return first;
+      }
+      setPending(first.set.missing);
+      // Another run (a refresh, another reader's set) holds the report: wait for it, then run this set.
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          const ran = await runParamSet(report.id, shown);
+          if (!current()) return null;
+          setView(ran);
+          setPending(null);
+          setLoadError(null);
+          return ran;
+        } catch (reason) {
+          if (codeOf(reason).code !== "RUN_IN_PROGRESS" || attempt >= 80) throw reason;
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          if (!current()) return null;
+        }
+      }
     } catch (reason) {
-      if (alive.current) setLoadError(messageOf(reason, "Could not load the results"));
+      if (current()) {
+        setPending(null);
+        setLoadError(messageOf(reason, "Could not load the results"));
+      }
       return null;
     }
-  }, [report.id]);
+  }, [report.id, setKey]);
+  const changeParams = useCallback((next: ParamValues) => {
+    const search = valuesToSearch(parameters, next);
+    paramsContext?.onChange(Object.keys(search).length ? search : undefined);
+  }, [parameters, paramsContext]);
   const loadRuns = useCallback(async () => {
     try {
       const history = await listRuns(report.id);
@@ -140,8 +192,11 @@ export function ReportView({ report, canWrite, generating = false, initial, read
   useEffect(() => {
     if (initial) return;
     void loadResults().then((next) => { if (next?.running) setRunning(next.running); });
+  }, [initial, loadResults, loadKey]);
+  useEffect(() => {
+    if (initial) return;
     void loadRuns();
-  }, [initial, loadResults, loadRuns, loadKey]);
+  }, [initial, loadRuns, loadKey]);
 
   // While a run goes: poll it, then reload the results and say how it went.
   useEffect(() => {
@@ -213,11 +268,12 @@ export function ReportView({ report, canWrite, generating = false, initial, read
   }, readOnly ? [] : ["refreshAll", "schedule"]);
 
   const card = (block: DataBlock) => <DataBlockCard key={block.id} block={block} view={results.get(block.queryKey)} hasQuery={queries.has(block.queryKey)} palette={palette}
-    running={running} loaded={view !== null} lookup={lookup} readOnly={readOnly}
+    running={running} loaded={view !== null} lookup={lookup} readOnly={readOnly} pending={Boolean(pending?.includes(block.queryKey))} filtered={withParams}
     onInspect={() => setInspect({ blockId: block.id, tab: "query" })} onMenu={() => setMenuBlock(block.id)} />;
 
   if (!blocks.length) return null;
   return <section className={`report-view report-theme-${palette.mode}`} style={cssVars} aria-label="Report">
+    {withParams && <ReportParamsBar reportId={report.id} parameters={parameters} values={values} busy={Boolean(pending)} onChange={changeParams} />}
     {!readOnly && <div className="report-view-toolbar">
       <p className="report-view-status" role="status">
         {busy ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{!running || running.kind === "generate" ? "Generating…" : previewVersionOf(running.queryKeys) !== null ? `Running v${previewVersionOf(running.queryKeys)} on today's data…` : running.queryKeys?.[0] === PAGE_METRICS_RUN_MARKER ? "Re-reading metrics…" : running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>
@@ -279,15 +335,19 @@ type CardProps = {
   onMenu: () => void;
   /** Lane J: a past version's view: no inspect or menu buttons, and this text where a query has no stored result. */
   readOnly?: { emptyText: string };
+  /** D489: its query is running for the parameter set on show (the block keeps its last rows, dimmed). */
+  pending?: boolean;
+  /** D489: the report has parameters (an empty result is "no rows for these filters"). */
+  filtered?: boolean;
 };
 
 /** One chart, KPI, or table: its title, stale/error badges, the inspect and menu buttons, and the body. */
-export function DataBlockCard({ block, view, hasQuery, palette, running, loaded, lookup, onInspect, onMenu, readOnly }: CardProps) {
+export function DataBlockCard({ block, view, hasQuery, palette, running, loaded, lookup, onInspect, onMenu, readOnly, pending = false, filtered = false }: CardProps) {
   const result = view?.result ?? null;
   const failed = view?.failed ?? null;
-  const rerunning = Boolean(running && (!running.queryKeys || running.queryKeys.includes(block.queryKey)));
+  const rerunning = pending || Boolean(running && (!running.queryKeys || running.queryKeys.includes(block.queryKey)));
   const title = block.title ?? (block.type === "kpi" ? block.label ?? block.column : block.queryKey);
-  return <article className={`report-block report-block-${block.type} ${widthClass(block)}${block.type === "kpi" && block.hero ? " report-block-hero" : ""}`} aria-label={title}>
+  return <article className={`report-block report-block-${block.type} ${widthClass(block)}${block.type === "kpi" && block.hero ? " report-block-hero" : ""}${pending ? " report-block-pending" : ""}`} aria-label={title} aria-busy={pending || undefined}>
     <header className="report-block-head">
       <h3 className="report-block-title">{title}</h3>
       <span className="report-block-badges">
@@ -302,6 +362,8 @@ export function DataBlockCard({ block, view, hasQuery, palette, running, loaded,
     </header>
     <div className="report-block-body">
       {!hasQuery ? <p className="report-block-problem">This block names a query the report does not have ({block.queryKey}).</p>
+        // D489: a chart or table with no rows for the chosen filters says so (not a mapping problem).
+        : result && filtered && !result.rows.length && block.type !== "kpi" ? <p className="report-block-empty">No rows for these filters.</p>
         : result ? <BlockBody block={block} result={result} palette={palette} lookup={lookup} />
           : failed ? <p className="report-block-problem"><TriangleAlert aria-hidden="true" />{failed.error ?? "The query failed"}</p>
             : <p className="report-block-empty">{readOnly ? readOnly.emptyText : loaded ? "No results yet. Refresh the report to run its queries." : "Loading…"}</p>}

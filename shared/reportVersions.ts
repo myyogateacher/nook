@@ -57,6 +57,8 @@ export type BlockDiff = {
 };
 export type QueryDiff = { key: string; change: "added" | "removed" | "changed"; lines: DiffLine[]; purpose?: FieldChange };
 export type SectionDiff = { id: string; change: "added" | "removed" | "changed" | "moved"; title: string; fields: FieldChange[] };
+/** Spec v3 (D489): a parameter added, removed, or changed (its label, type, default, options query, …). */
+export type ParameterDiff = { id: string; change: "added" | "removed" | "changed"; label: string; fields: FieldChange[] };
 export type VersionDiff = {
   from: number;
   to: number;
@@ -66,6 +68,8 @@ export type VersionDiff = {
   blocks: BlockDiff[];
   queries: QueryDiff[];
   sections: SectionDiff[];
+  /** Spec v3: the report's parameters (date range and filters). */
+  parameters: ParameterDiff[];
   /** Some diff lines or entries were cut at the caps. */
   truncated: boolean;
 };
@@ -373,16 +377,28 @@ export function diffSpecVersions(before: ReportSpec, after: ReportSpec, options:
   }
   for (const section of before.sections ?? []) if (!newSectionIds.has(section.id)) sections.push({ id: section.id, change: "removed", title: section.title, fields: fieldChanges(sectionFields(section), null) });
 
-  const summary = diffSummary(blocks, queries, sections);
+  const parameters: ParameterDiff[] = [];
+  const oldParams = new Map((before.parameters ?? []).map((param) => [param.id, param]));
+  const newParamIds = new Set((after.parameters ?? []).map((param) => param.id));
+  const paramFields = (param: Record<string, unknown> | null) => param ? Object.fromEntries(Object.entries(param).filter(([key]) => key !== "id")) : null;
+  for (const param of after.parameters ?? []) {
+    const old = oldParams.get(param.id);
+    if (!old) { parameters.push({ id: param.id, change: "added", label: param.label, fields: fieldChanges(null, paramFields(param as unknown as Record<string, unknown>)) }); continue; }
+    const fields = fieldChanges(paramFields(old as unknown as Record<string, unknown>), paramFields(param as unknown as Record<string, unknown>));
+    if (fields.length) parameters.push({ id: param.id, change: "changed", label: param.label, fields });
+  }
+  for (const param of before.parameters ?? []) if (!newParamIds.has(param.id)) parameters.push({ id: param.id, change: "removed", label: param.label, fields: fieldChanges(paramFields(param as unknown as Record<string, unknown>), null) });
+
+  const summary = diffSummary(blocks, queries, sections, parameters);
   const cap = <T,>(list: T[]) => {
     if (list.length > DIFF_LIMITS.entries) { truncated = true; return list.slice(0, DIFF_LIMITS.entries); }
     return list;
   };
-  return { from: options.from, to: options.to, summary, blocks: cap(blocks), queries: cap(queries), sections: cap(sections), truncated };
+  return { from: options.from, to: options.to, summary, blocks: cap(blocks), queries: cap(queries), sections: cap(sections), parameters: cap(parameters), truncated };
 }
 
 /** "+2 charts, −1 table, 1 query changed, title changed": the diff in one short line. */
-export function diffSummary(blocks: readonly BlockDiff[], queries: readonly QueryDiff[], sections: readonly SectionDiff[]): string {
+export function diffSummary(blocks: readonly BlockDiff[], queries: readonly QueryDiff[], sections: readonly SectionDiff[], parameters: readonly ParameterDiff[] = []): string {
   const parts: string[] = [];
   for (const [change, sign] of [["added", "+"], ["removed", "−"]] as const) {
     const byType = new Map<ReportBlock["type"], number>();
@@ -404,5 +420,9 @@ export function diffSummary(blocks: readonly BlockDiff[], queries: readonly Quer
     if (count) parts.push(`${plural(count, "query", "queries")} ${change}`);
   }
   if (sections.length) parts.push(sections.length === 1 ? "1 section changed" : `${sections.length} sections changed`);
+  for (const change of ["added", "changed", "removed"] as const) {
+    const count = parameters.filter((param) => param.change === change).length;
+    if (count) parts.push(`${plural(count, "filter", "filters")} ${change}`);
+  }
   return parts.length ? parts.join(", ") : "No changes";
 }

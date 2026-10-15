@@ -180,6 +180,13 @@ function QueryTab({ block, query, result, failed, canRerun, busy, onRerun }: { b
     <pre className="report-code"><code>{query?.sql ?? "—"}</code></pre>
     <div className="report-inspect-head"><h3>SQL as sent</h3>{latest?.sentSql && <CopyButton text={latest.sentSql} label="Copy" />}</div>
     {latest?.sentSql ? <pre className="report-code"><code>{latest.sentSql}</code></pre> : <p className="report-inspect-empty">{latest ? "Nothing was sent: the guard refused it, or it never reached ClickHouse." : "Not run yet."}</p>}
+    {/* D489: the typed query parameters sent with it (param_<name>, never pasted into the SQL). */}
+    {latest?.params && Object.keys(latest.params).length > 0 && <>
+      <div className="report-inspect-head"><h3>Parameters as bound</h3><CopyButton text={Object.entries(latest.params).map(([name, value]) => `param_${name}=${value}`).join("\n")} label="Copy" /></div>
+      <dl className="report-facts-list report-inspect-params">
+        {Object.entries(latest.params).map(([name, value]) => <Fact key={name} term={`{${name}}`}><code>{value}</code></Fact>)}
+      </dl>
+    </>}
     {latest && <dl className="report-facts-list">
       <Fact term="ClickHouse query id"><code>{latest.chQueryId ?? "—"}</code></Fact>
       <Fact term="Run time">{latest.ms === null ? "—" : `${latest.ms.toLocaleString()} ms`}</Fact>

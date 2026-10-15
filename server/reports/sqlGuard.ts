@@ -1,6 +1,7 @@
 import type { GuardCode, StatementClass } from "../../shared/reports";
 import { clickhouseRegex, databaseAllowed, tableAllowed } from "./allowlist";
 import { logger } from "../log";
+import { normalizeType, PLACEHOLDER_TYPES } from "../../shared/reportParams";
 
 /**
  * The SQL guard for report queries (plan wave 45, D411, D412, T357). Defence in depth in front of the
@@ -10,7 +11,11 @@ import { logger } from "../log";
  * 1. **Lex** the text: strings, quoted identifiers, and comments are recognised the way ClickHouse
  *    reads them, and anything this lexer is not sure ClickHouse reads the same way is refused rather
  *    than interpreted: `#` comments, nested block comments, heredocs and `$`, `{}` query parameters,
- *    backslashes, and any non-ASCII character outside a string or a quoted identifier.
+ *    backslashes, and any non-ASCII character outside a string or a quoted identifier. A report's
+ *    saved query (spec v3, D489) may hold typed placeholders `{name:Type}` (`params: true`): exactly
+ *    that form, with a type from shared/reportParams.ts (never Identifier, so a parameter can never
+ *    name a table or a column); the caller checks each against the declared parameters and binds the
+ *    values over HTTP (`param_<name>`), so a value is never SQL text.
  * 2. **One statement**: a `;` is allowed only at the very end.
  * 3. **Classify** (`select | metadata`): SELECT or WITH is the select class; SHOW DATABASES, SHOW TABLES,
  *    SHOW CREATE TABLE, DESCRIBE [TABLE], EXISTS [TABLE], and EXPLAIN [PLAN|SYNTAX|ESTIMATE] <select>
@@ -41,8 +46,12 @@ export class GuardError extends Error {
 
 export const MAX_SQL_CHARS = 20_000;
 
-type TokenKind = "word" | "quoted" | "string" | "number" | "punct";
-export type Token = { kind: TokenKind; text: string; /** words: lower case; quoted: the unescaped name; strings: the unescaped value. */ value: string; start: number; end: number };
+type TokenKind = "word" | "quoted" | "string" | "number" | "punct" | "param";
+export type Token = { kind: TokenKind; text: string; /** words: lower case; quoted: the unescaped name; strings: the unescaped value; params: the name. */ value: string; start: number; end: number; /** params: the ClickHouse type, spaces removed. */ paramType?: string };
+
+/** Lexer options: `params` accepts typed query parameters `{name:Type}` (a report's saved queries, D489). */
+export type LexOptions = { params?: boolean };
+const PLACEHOLDER = /^\{([A-Za-z_][A-Za-z0-9_]{0,59})\s*:\s*([A-Za-z0-9_(), ]{1,60}?)\s*\}/;
 
 const WORD_START = /[A-Za-z_]/;
 const WORD = /[A-Za-z0-9_]/;
@@ -86,7 +95,7 @@ function readQuoted(sql: string, start: number, quote: string): { end: number; v
  * Tokens of `sql` and the text with every comment replaced by spaces (the text that is sent). Throws
  * GuardError for anything ambiguous (see the module comment).
  */
-export function lex(sql: string): { tokens: Token[]; stripped: string } {
+export function lex(sql: string, options: LexOptions = {}): { tokens: Token[]; stripped: string } {
   if (sql.length > MAX_SQL_CHARS) throw new GuardError("TOO_LONG", `A query may be at most ${MAX_SQL_CHARS} characters`);
   // C0 controls other than tab and line breaks, DEL, and the Unicode line and paragraph separators, anywhere.
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u2028\u2029]/.test(sql)) throw new GuardError("UNSUPPORTED_SYNTAX", "The query contains control characters");
@@ -144,7 +153,17 @@ export function lex(sql: string): { tokens: Token[]; stripped: string } {
     }
     if (char === "#") throw new GuardError("UNSUPPORTED_SYNTAX", "Use -- for comments; # comments are not supported");
     if (char === "$") throw new GuardError("UNSUPPORTED_SYNTAX", "$ (heredoc strings and parameters) is not supported");
-    if (char === "{" || char === "}") throw new GuardError("UNSUPPORTED_SYNTAX", "Query parameters ({name:Type}) are not supported");
+    if (char === "{" && options.params) {
+      const match = PLACEHOLDER.exec(sql.slice(index, index + 140));
+      if (!match) throw new GuardError("UNSUPPORTED_SYNTAX", "A query parameter is written {name:Type}, for example {period_from:Date} or {routes:Array(String)}");
+      const type = normalizeType(match[2]!);
+      if (!PLACEHOLDER_TYPES.has(type)) throw new GuardError("UNSUPPORTED_SYNTAX", `The query parameter type ${type.slice(0, 40)} is not supported; use ${[...PLACEHOLDER_TYPES].join(", ")}`);
+      tokens.push({ kind: "param", text: match[0], value: match[1]!, start: index, end: index + match[0].length, paramType: type });
+      stripped += match[0];
+      index += match[0].length;
+      continue;
+    }
+    if (char === "{" || char === "}") throw new GuardError("UNSUPPORTED_SYNTAX", "Query parameters ({name:Type}) are not supported here; they belong to a report's saved queries");
     if (char === "\\") throw new GuardError("UNSUPPORTED_SYNTAX", "A backslash is allowed only inside a string");
     if (char.charCodeAt(0) > 0x7e) throw new GuardError("NON_ASCII", "Characters outside ASCII are allowed only inside strings and quoted names");
     if (PUNCT.has(char)) {
@@ -302,6 +321,8 @@ export type Classified = {
   /** Allowed system tables this statement reads (metadata class only). */
   systemRefs: SystemRef[];
   metadata: MetadataForm | null;
+  /** Spec v3: the typed placeholders the statement holds (select class only; `params: true`). */
+  placeholders: Array<{ name: string; type: string }>;
 };
 
 /** `db.table` or `table` starting at `index`; the index after it. */
@@ -319,7 +340,7 @@ function classifyMetadata(tokens: Token[], sql: string): Classified {
   const first = tokens[0]!;
   const done = (metadata: MetadataForm, rest: number): Classified => {
     if (rest !== tokens.length) throw new GuardError("UNSUPPORTED_SYNTAX", "This form of the statement is not supported");
-    return { class: "metadata", sql, tokens, tables: [], systemRefs: [], metadata };
+    return { class: "metadata", sql, tokens, tables: [], systemRefs: [], metadata, placeholders: [] };
   };
   const target = (index: number) => {
     const read = readTableName(tokens, index);
@@ -382,7 +403,7 @@ function classifyMetadata(tokens: Token[], sql: string): Classified {
   const innerSql = sql.slice(innerTokens[0]!.start);
   const checked = checkSelect(innerTokens);
   if (checked.systemRefs.length) throw new GuardError("BANNED_TABLE", "EXPLAIN works on report queries, not on system tables");
-  return { class: "metadata", sql, tokens, tables: checked.tables, systemRefs: [], metadata: { kind: "explain", mode, inner: innerSql } };
+  return { class: "metadata", sql, tokens, tables: checked.tables, systemRefs: [], metadata: { kind: "explain", mode, inner: innerSql }, placeholders: [] };
 }
 
 /**
@@ -390,8 +411,8 @@ function classifyMetadata(tokens: Token[], sql: string): Classified {
  * the metadata class (`system_select`); one that mixes them with other tables is refused, since its
  * rows could not be filtered.
  */
-export function classify(raw: string): Classified {
-  const { tokens: all, stripped } = lex(raw);
+export function classify(raw: string, options: LexOptions = {}): Classified {
+  const { tokens: all, stripped } = lex(raw, options);
   let tokens = all;
   while (tokens.length && isPunct(tokens.at(-1), ";")) tokens = tokens.slice(0, -1);
   if (!tokens.length) throw new GuardError("EMPTY", "Write a query");
@@ -399,16 +420,33 @@ export function classify(raw: string): Classified {
   const sql = stripped.slice(tokens[0]!.start, tokens.at(-1)!.end);
   const first = tokens[0]!;
   if (first.kind !== "word") throw new GuardError("NOT_SELECT", "A report query starts with SELECT or WITH");
-  if (["show", "describe", "desc", "exists", "explain"].includes(first.value)) return classifyMetadata(tokens, sql);
+  const placeholders = tokens.filter((token) => token.kind === "param").map((token) => ({ name: token.value, type: token.paramType! }));
+  if (["show", "describe", "desc", "exists", "explain"].includes(first.value)) {
+    if (placeholders.length) throw new GuardError("UNSUPPORTED_SYNTAX", "Query parameters belong to a report's SELECT queries");
+    return { ...classifyMetadata(tokens, sql), placeholders: [] };
+  }
   if (first.value !== "select" && first.value !== "with") throw new GuardError("NOT_SELECT", "Only SELECT (or WITH … SELECT) and the metadata statements are allowed");
   const { systemRefs, tables } = checkSelect(tokens);
-  if (!systemRefs.length) return { class: "select", sql, tokens, tables, systemRefs: [], metadata: null };
+  if (!systemRefs.length) return { class: "select", sql, tokens, tables, systemRefs: [], metadata: null, placeholders };
+  if (placeholders.length) throw new GuardError("UNSUPPORTED_SYNTAX", "Query parameters belong to a report's SELECT queries, not system table reads");
   for (const ref of systemRefs) {
     if (!Object.hasOwn(ALLOWED_SYSTEM_TABLES, ref.table)) throw new GuardError("BANNED_TABLE", `system.${ref.table} is not readable from reports`);
   }
   const others = tables.filter((ref) => !(ref.db && ref.db.toLowerCase() === "system"));
   if (others.length) throw new GuardError("BANNED_TABLE", "A query on system tables cannot also read other tables");
-  return { class: "metadata", sql, tokens, tables: [], systemRefs, metadata: { kind: "system_select" } };
+  return { class: "metadata", sql, tokens, tables: [], systemRefs, metadata: { kind: "system_select" }, placeholders: [] };
+}
+
+/**
+ * Spec v3 (D489): every placeholder a statement holds must be a declared parameter with exactly its
+ * type; an undeclared name or another type is refused before anything is sent.
+ */
+export function assertPlaceholdersDeclared(placeholders: ReadonlyArray<{ name: string; type: string }>, declared: ReadonlyMap<string, { type: string }>) {
+  for (const placeholder of placeholders) {
+    const known = declared.get(placeholder.name);
+    if (!known) throw new GuardError("UNSUPPORTED_SYNTAX", `{${placeholder.name}:${placeholder.type}} is not one of this report's parameters`);
+    if (known.type !== placeholder.type) throw new GuardError("UNSUPPORTED_SYNTAX", `{${placeholder.name}:${placeholder.type}} has the wrong type: write {${placeholder.name}:${known.type}}`);
+  }
 }
 
 /** Wraps a select for its row cap: one more than `maxRows`, so the caller can say "truncated". */

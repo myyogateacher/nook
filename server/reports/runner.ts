@@ -6,7 +6,8 @@ import { allowlistOf, datasourceTarget, type DatasourceRow } from "./datasources
 import { ReportError } from "./errors";
 import { repairHint } from "./repairHints";
 import { tablesWithColumn } from "./schemaCatalog";
-import { assertMetadataAllowed, assertQueryTreeAllowed, assertTablesAllowed, classify, filterSystemRefs, GuardError, qualifiedColumnHint, queryTreeTables, sqlString, wrapSelect, type Classified } from "./sqlGuard";
+import type { BoundParam } from "../../shared/reportParams";
+import { assertMetadataAllowed, assertPlaceholdersDeclared, assertQueryTreeAllowed, assertTablesAllowed, classify, filterSystemRefs, GuardError, qualifiedColumnHint, queryTreeTables, sqlString, wrapSelect, type Classified } from "./sqlGuard";
 
 /**
  * Running a statement through the guard (plan wave 45, D411, D412): classify, check what the lexer
@@ -33,6 +34,12 @@ export type RunOptions = {
   maxRowsToRead?: number;
   breakOnReadLimit?: boolean;
   signal?: AbortSignal;
+  /**
+   * Spec v3 (D489): a report query's bound parameters. Given (even empty), the statement may hold
+   * typed placeholders; each must be one of these with the same type, and only the ones it uses are
+   * sent (`param_<name>`), with the tree check and with the run.
+   */
+  params?: readonly BoundParam[];
 };
 
 const PER_USER = 2;
@@ -88,12 +95,12 @@ export function errorNamesOutside(message: string, allowlist: readonly string[],
 }
 
 /** Runs EXPLAIN QUERY TREE on a select and checks what it resolved. */
-async function checkQueryTree(row: DatasourceRow, select: string, statementClass: StatementClass, queryId: string, signal?: AbortSignal) {
+async function checkQueryTree(row: DatasourceRow, select: string, statementClass: StatementClass, queryId: string, signal?: AbortSignal, params?: readonly BoundParam[]) {
   const allowlist = allowlistOf(row);
   let result: ChResult;
   try {
     result = await chQuery(datasourceTarget(row), `EXPLAIN QUERY TREE ${select}`, {
-      queryId: `${queryId}-tree`.slice(0, 120), maxResultRows: TREE_MAX_ROWS, throwOnResultOverflow: true, responseBytes: TREE_MAX_BYTES, signal
+      queryId: `${queryId}-tree`.slice(0, 120), maxResultRows: TREE_MAX_ROWS, throwOnResultOverflow: true, responseBytes: TREE_MAX_BYTES, signal, params
     });
   } catch (error) {
     if (!(error instanceof ChError)) throw error;
@@ -113,10 +120,11 @@ async function checkQueryTree(row: DatasourceRow, select: string, statementClass
   assertQueryTreeAllowed(tree, allowlist, row.database, statementClass);
 }
 
-function outcome(classified: Classified, result: ChResult, rows: unknown[][], maxRows: number, sentSql: string, started: number, cutShort = false): QueryOutcome {
+function outcome(classified: Classified, result: ChResult, rows: unknown[][], maxRows: number, sentSql: string, started: number, cutShort = false, params?: readonly BoundParam[]): QueryOutcome {
   return {
     class: classified.class, columns: result.columns, rows: rows.slice(0, maxRows), truncated: cutShort || rows.length > maxRows, sentSql,
-    chQueryId: result.queryId, rowsRead: result.rowsRead, bytesRead: result.bytesRead, ms: Date.now() - started
+    chQueryId: result.queryId, rowsRead: result.rowsRead, bytesRead: result.bytesRead, ms: Date.now() - started,
+    ...(params?.length ? { params: Object.fromEntries(params.map((param) => [param.name, param.value])) } : {})
   };
 }
 
@@ -167,7 +175,11 @@ async function runGuardedUnlogged(row: DatasourceRow, sql: string, options: RunO
 }
 
 async function runGuardedChecked(row: DatasourceRow, sql: string, options: RunOptions): Promise<QueryOutcome> {
-  const classified = classify(sql);
+  const classified = classify(sql, { params: options.params !== undefined });
+  // Spec v3: the placeholders it holds, each declared with its type; only those are sent.
+  assertPlaceholdersDeclared(classified.placeholders, new Map((options.params ?? []).map((param) => [param.name, param])));
+  const used = new Set(classified.placeholders.map((placeholder) => placeholder.name));
+  const params = (options.params ?? []).filter((param) => used.has(param.name));
   if (!options.classes.includes(classified.class)) {
     throw new GuardError(classified.class === "metadata" ? "METADATA_FORBIDDEN" : "NOT_SELECT", classified.class === "metadata" ? "Only a SELECT runs here" : "Only metadata statements (SHOW, DESCRIBE, EXISTS, EXPLAIN, system tables) run here");
   }
@@ -178,17 +190,17 @@ async function runGuardedChecked(row: DatasourceRow, sql: string, options: RunOp
     const target = datasourceTarget(row);
     const run = async (text: string, resultRows = maxRows + 1) => {
       try {
-        return await chQuery(target, text, { queryId: options.queryId, maxResultRows: resultRows, maxRowsToRead: options.maxRowsToRead, breakOnReadLimit: options.breakOnReadLimit, signal: options.signal });
+        return await chQuery(target, text, { queryId: options.queryId, maxResultRows: resultRows, maxRowsToRead: options.maxRowsToRead, breakOnReadLimit: options.breakOnReadLimit, signal: options.signal, params });
       } catch (error) {
         throw shownError(error, allowlist, row.database);
       }
     };
     if (classified.class === "select") {
       assertTablesAllowed(classified.tables, allowlist, row.database);
-      await checkQueryTree(row, classified.sql, "select", options.queryId, options.signal);
+      await checkQueryTree(row, classified.sql, "select", options.queryId, options.signal, params);
       const sent = wrapSelect(classified.sql, maxRows);
       const result = await run(sent);
-      return outcome(classified, result, result.rows, maxRows, sent, started);
+      return outcome(classified, result, result.rows, maxRows, sent, started, false, params);
     }
     assertMetadataAllowed(classified, allowlist, row.database);
     const form = classified.metadata!;

@@ -1,5 +1,6 @@
 import { logger } from "../log";
 import { REPORT_LIMITS, type ResultColumn } from "../../shared/reports";
+import type { BoundParam } from "../../shared/reportParams";
 import { egressFetch, EgressError, readEgressText } from "../agents/egress";
 
 /**
@@ -66,6 +67,11 @@ export type ChOptions = {
    * it; only Nook's fixed statements ever run this way).
    */
   profileSettings?: boolean;
+  /**
+   * Spec v3 (D489): typed query parameters, sent as `param_<name>` URL parameters (never in the SQL
+   * text); ClickHouse parses each value as its placeholder's type.
+   */
+  params?: readonly BoundParam[];
 };
 
 /** A query id ClickHouse accepts and the inspect panel can show: `nook-` plus letters, digits, `-`, `_`. */
@@ -101,6 +107,7 @@ export function requestUrl(target: ChTarget, options: ChOptions): string {
   url.searchParams.set("query_id", options.queryId);
   url.searchParams.set("default_format", "JSONCompact");
   for (const [name, value] of Object.entries(querySettings(target, options))) url.searchParams.set(name, value);
+  for (const param of options.params ?? []) url.searchParams.set(`param_${param.name}`, param.value);
   return url.toString();
 }
 

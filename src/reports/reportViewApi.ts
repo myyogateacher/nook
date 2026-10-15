@@ -2,10 +2,17 @@ import { api } from "../api";
 import type { ReportRun } from "../../shared/reports";
 import { PAGE_METRICS_RUN_MARKER } from "../../shared/reportsMetrics";
 import type { ProvenanceView, ReportResultsView, RunHistoryView, ScheduleInput, ScheduleView } from "../../shared/reportsView";
+import type { ParamOptions, ParamSetInfo, ParamValues } from "../../shared/reportParams";
 
 /** The Wave 47 report routes (server/reports/viewRoutes.ts): results, refresh, runs, provenance, and the schedule. */
 
 export const getResults = (id: string) => api<ReportResultsView>(`/reports/${id}/results`);
+/** Spec v3 (D489): one parameter set's results (cached; `set.missing` names what a run fills). */
+export type ParamResultsView = ReportResultsView & { set: ParamSetInfo };
+export const getParamResults = (id: string, values: ParamValues) => api<ParamResultsView>(`/reports/${id}/results?values=${encodeURIComponent(JSON.stringify(values))}`);
+/** Runs a parameter set's missing queries (read access is enough) and answers with its results. */
+export const runParamSet = (id: string, values: ParamValues, force = false) => api<ParamResultsView>(`/reports/${id}/param-runs`, { method: "POST", body: JSON.stringify(force ? { values, force } : { values }) });
+export const getParamOptions = (id: string, paramId: string) => api<{ options: ParamOptions }>(`/reports/${id}/parameters/${paramId}/options`);
 export const refreshReport = (id: string, queryKey?: string) => api<{ run: ReportRun }>(`/reports/${id}/refresh`, { method: "POST", body: JSON.stringify(queryKey ? { queryKey } : {}) });
 export const getRun = (id: string, runId: string) => api<{ run: ReportRun }>(`/reports/${id}/runs/${runId}`);
 export const listRuns = (id: string) => api<RunHistoryView>(`/reports/${id}/runs`);
@@ -34,6 +41,8 @@ export function runLabel(run: Pick<ReportRun, "kind" | "trigger" | "queryKeys">)
   if (run.queryKeys?.[0] === PAGE_METRICS_RUN_MARKER) return "Re-read metrics from changed linked pages";
   const preview = previewVersionOf(run.queryKeys);
   if (preview !== null) return `Ran v${preview} on today's data`;
+  // D489: a reader's run with other parameter values (its keys start with `~p:<set>`).
+  if (run.queryKeys?.[0]?.startsWith("~p:")) return "Ran with other filters";
   const kind = run.kind === "edit" ? "Edited" : run.queryKeys?.length ? `Re-ran ${run.queryKeys.join(", ")}` : "Refreshed";
   const by = run.trigger === "schedule" ? "on schedule" : run.trigger === "mcp" ? "over MCP" : "by hand";
   return `${kind} ${by}`;

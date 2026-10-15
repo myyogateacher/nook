@@ -1,0 +1,20 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    n UInt64
+  PROJECTION
+    LIST id: 1, nodes: 1
+      FUNCTION id: 2, function_name: count, function_type: aggregate, result_type: UInt64
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: myt.events
+  WHERE
+    FUNCTION id: 4, function_name: greater, function_type: ordinary, result_type: UInt8
+      ARGUMENTS
+        LIST id: 5, nodes: 2
+          COLUMN id: 6, column_name: v, result_type: Float64, source_id: 3
+          CONSTANT id: 7, constant_value: Float64_1.5, constant_value_type: Float64
+            EXPRESSION
+              FUNCTION id: 8, function_name: _CAST, function_type: ordinary, result_type: Float64
+                ARGUMENTS
+                  LIST id: 9, nodes: 2
+                    CONSTANT id: 10, constant_value: Float64_1.5, constant_value_type: Float64
+                    CONSTANT id: 11, constant_value: 'Float64', constant_value_type: String

@@ -108,6 +108,8 @@ describe("filters", () => {
     expect(parseRoute(`/reports/${REVENUE}`, "?status=ready")).toEqual({ app: "reports", reportId: REVENUE });
     expect(locationUrl({ pathname: "/reports/favorites", search: "?status=ready" })).toBe("/reports/favorites?status=ready");
     expect(locationUrl({ pathname: `/reports/${REVENUE}`, search: "?x=1" })).toBe(`/reports/${REVENUE}`);
+    // D489: a report page keeps only its parameter values.
+    expect(locationUrl({ pathname: `/reports/${REVENUE}`, search: "?x=1&p.period=7d" })).toBe(`/reports/${REVENUE}?p.period=7d`);
     const query = listQueryFor("unfiled", { status: ["ready"], owner: BEN, datasource: DS, schedule: "off" }, " rev ", false);
     expect(reportListSearch(query)).toBe(`?q=rev&owner=${BEN}&status=ready&datasource=${DS}&scheduled=0&folder=unfiled`);
     expect(reportListSearch(listQueryFor("unfiled", undefined, "rev", true))).toBe("?q=rev");

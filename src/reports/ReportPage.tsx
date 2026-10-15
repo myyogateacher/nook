@@ -26,6 +26,8 @@ import { ReportRunsContext, RunsSheet } from "./RunsSheet";
 import { newVersionsMemory, VersionsSheet } from "./VersionsSheet";
 import { MetricsSheet } from "./MetricsSheet";
 import { ReportCommandsContext, ReportOverflowMenu, type MenuItem, type ReportCommands } from "./reportCommands";
+import { ReportParamsContext } from "./ReportParamsBar";
+import type { ReportParamsSearch } from "../router";
 
 type PageProps = {
   reportId: string;
@@ -36,6 +38,9 @@ type PageProps = {
   onSignOut: () => void;
   /** The report is gone (deleted here, or no longer readable): its entry is replaced by the list. */
   onGone: () => void;
+  /** D489: the parameter values in the URL, and a change to them (a new history entry; `replace` for a cleanup). */
+  params?: ReportParamsSearch;
+  onParams?: (params: ReportParamsSearch | undefined, options?: { replace?: boolean }) => void;
 };
 
 const CONSOLE_DRAFT = (id: string) => `mynotes:reports-console:${id}`;
@@ -51,7 +56,8 @@ function saveDraft(id: string, sql: string) {
  * metadata statements: SHOW, DESCRIBE, EXISTS, EXPLAIN, and the allowed system tables), and the
  * Schema browser sheet. Charts and the spec arrive with waves 46 and 47.
  */
-export function ReportPage({ reportId, displayName, flash, onBack, onSettings, onSignOut, onGone }: PageProps) {
+export function ReportPage({ reportId, displayName, flash, onBack, onSettings, onSignOut, onGone, params, onParams }: PageProps) {
+  const paramsContext = useMemo(() => ({ search: params, onChange: onParams ?? (() => undefined) }), [params, onParams]);
   const { canWrite } = useRole();
   const [report, setReport] = useState<ReportDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -260,7 +266,9 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
         <ReportCommentContext.Provider value={rights?.canComment ? openChanges : null}>
           <ReportRunsContext.Provider value={report.isOwner ? openRuns : null}>
             <ReportConsoleContext.Provider value={consoleInPanel(report) ? openConsole : null}>
-              <ReportGeneration report={report} canWrite={ownerWrite} onChanged={() => { void load(); }} />
+              <ReportParamsContext.Provider value={paramsContext}>
+                <ReportGeneration report={report} canWrite={ownerWrite} onChanged={() => { void load(); }} />
+              </ReportParamsContext.Provider>
             </ReportConsoleContext.Provider>
           </ReportRunsContext.Provider>
         </ReportCommentContext.Provider>

@@ -33,7 +33,7 @@ const nameOf = (token: Token | undefined) => token ? token.kind === "quoted" ? t
 /** Normalised expression text: one space, lower case outside strings (for comparing two expressions). */
 export function normaliseExpr(expr: string): string {
   try {
-    return lex(expr).tokens.map((token) => token.kind === "string" ? token.text : token.kind === "quoted" ? token.value.toLowerCase() : token.value).join(" ")
+    return lex(expr, { params: true }).tokens.map((token) => token.kind === "string" ? token.text : token.kind === "quoted" ? token.value.toLowerCase() : token.value).join(" ")
       .replace(/ ?([(),.]) ?/g, "$1").trim();
   } catch {
     return expr.replace(/\s+/g, " ").trim().toLowerCase();
@@ -44,7 +44,7 @@ export function queryShape(sql: string): QueryShape {
   const empty: QueryShape = { items: [], from: null, fromSubquery: false, joins: [], where: "", groupBy: "", limited: false };
   let tokens: Depthed[];
   try {
-    tokens = withDepth(lex(sql).tokens);
+    tokens = withDepth(lex(sql, { params: true }).tokens);
   } catch {
     return empty;
   }

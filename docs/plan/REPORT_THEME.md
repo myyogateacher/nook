@@ -228,3 +228,25 @@ The routing table alone left reports mostly bar and line, so the agents also rea
 
 ### Tokens added
 `sequentialRamp(mode, n)` (low end toward the surface), `ordinalRamp(mode, n)` (≥ 2:1: from step 250 on light, to step 600 on dark), `divergingRamp(mode)`, `METER` (fill `#3987e5` / `#2a78d6`, track `#184f95` / `#cde2fb`), `BULLET_BANDS` (dark `#2f2f35 #25252a #1c1c20`, light `#d6d5cc #e4e3dc #efeee9`), `waterfallColors` (diverging poles, total = muted ink), `inkOn(fill)` (black or white), `MARKS.stackedAreaOpacity` 0.24, heights per kind. Texture fills under forced colours apply to every ECharts kind through the aria decal; the HTML meter hatches its fill.
+
+## Parameters: the date range and filters (spec v3, 2026-10-15, D489)
+
+A report may declare **parameters**: a date range and filters a reader changes on the report page, which re-run every block with the new values. Spec v3 is spec v2 plus `parameters` (`shared/reportParams.ts`); a stored v2 spec reads as v3 with none. The schema is strict, like blocks.
+
+| Type | Fields | Placeholders the SQL reads |
+| --- | --- | --- |
+| `date_range` | `default: { preset }`: `today`, `7d`, `30d`, `90d`, `mtd`, `qtd`, or `{ preset: "custom", from, to }` (YYYY-MM-DD) | `{<id>_from:Date}` and `{<id>_to:Date}`, both days included (UTC days) |
+| `select` | `chType` String, Int32, Int64, UInt32, UInt64; `default`; `optionsQuery` | `{<id>:<chType>}` |
+| `multi_select` | `chType` Array(String) and the integer arrays; `default` (`[]` is All); `optionsQuery` | `{<id>:Array(String)}`, written `(empty({id:Array(String)}) OR col IN {id:Array(String)})` so All keeps every row |
+| `number` | `chType` Int32, Int64, UInt32, UInt64, Float64; `default`; `min?`, `max?` | `{<id>:<chType>}` |
+| `text` | `default`; `maxLength?` (≤ 200; one line) | `{<id>:String}` |
+
+Every parameter has an `id` (`[a-z][a-z0-9_]{0,29}`), a `label`, a `type`, a `default`, and its ClickHouse type. At most 8 per report. An options query is a guarded SELECT whose first column lists the choices (at most 200), with no placeholders.
+
+**Binding, never pasting.** Queries read parameters only as ClickHouse typed query parameters. The server binds the values over HTTP (`param_<name>`); nothing a reader picks is ever written into the SQL text. The guard accepts exactly `{name:Type}` with a type above (never `Identifier`, so a parameter can never name a table or a column) only in a report's saved queries; every placeholder must be declared with exactly its type, and every parameter must be read by a query. `EXPLAIN QUERY TREE` runs with the same bound values (ClickHouse 26.6 folds them into CONSTANT nodes: `tests/fixtures/clickhouse-26.6/params_*`).
+
+**Which set runs where.** The **default set** is what Refresh all, schedules, generation, and "Run with today's data" use; its results stay the report's stored results. Any other set is run on demand by whoever reads the report (read access is enough), under the report's one-run lock and the data source's limits, rate-limited per person, and cached per set (the sha256 of the canonical bound values), shared by every reader. A cached set is fresh until the report's next default refresh or a change to its SQL. The 20 most recently used sets per report are kept, none unused for 7 days.
+
+**The control bar** sits at the top of the report: from 761 px one row of pills (the shared Select's chip, 36 px; a changed pill in the accent), a multi-select opening a checkbox sheet, a custom range opening two day fields, and **Reset to defaults** (a `.secondary-button`, D472) once anything differs. On a phone it folds into one **Filters** button (with the count of changed values and a one-line summary) that opens every parameter in a bottom sheet over a draft, applied with **Show results**. The values live in the URL (`?p.period=7d&p.country=DE&p.country=US`, only the ones that differ from the defaults), so Back, Forward, and a shared link reproduce them. While a set runs, each block that waits for it keeps its last rows dimmed with its own spinner. Inspect's Query tab lists the **parameters as bound** under the SQL as sent.
+
+**The agents.** Generation adds parameters when the doc names a time window or a dimension to filter by ("last 30 days", "by route"); `plan_report` lists them and the submit must declare them. The edit agent changes them with `add_parameter`, `update_parameter`, and `remove_parameter` patch ops ("add a route filter" is `add_parameter` plus `update_query` on each query that should follow it). `run_sql` binds the defaults of its `parameters`. Validation runs every query with the default set and once with one other set (another preset, a select's first other option, a multi-select's first option or All). Versions diff the parameters ("1 filter added").

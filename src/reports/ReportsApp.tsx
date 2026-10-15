@@ -63,7 +63,10 @@ export function ReportsApp({ displayName, role, navigate, flash, onHome, onSetti
 
   const account = { displayName, onSettings, onSignOut };
   if (route.reportId) {
+    // D489: the report's parameter values live in its URL; each change is a history entry, so Back and
+    // Forward step through them and a shared link reproduces them.
     return <ReportPage key={route.reportId} reportId={route.reportId} {...account} flash={flash} onBack={back}
+      params={route.params} onParams={(params, options) => { const next: ReportsRoute = { app: "reports", reportId: route.reportId, ...(params ? { params } : {}) }; if (formatRoute(next) !== formatRoute(route)) go(next, options); }}
       onGone={() => go(reportsRoute(), { replace: true, removed: true })} />;
   }
   // Lane I: each folder view is its own entry, so Back and Forward step between folders.

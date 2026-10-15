@@ -105,5 +105,5 @@ export type PlanTodo = {
   /** E4: the metric catalog's id for this todo's metric (absent on plans made before the catalog). */
   metricId?: string | null;
 };
-export type RunPlan = { goal: string; sections: Array<{ id: string; title: string }>; todos: PlanTodo[]; added: number };
+export type RunPlan = { goal: string; sections: Array<{ id: string; title: string }>; todos: PlanTodo[]; added: number; /** Spec v3 (D489): the parameters the plan adds (the date range and filters the doc names). */ parameters?: Array<{ id: string; type: string; label: string }> };
 export const PLAN_LIMITS = { todos: 24, added: 8, title: 160, note: 300, goal: 300, sections: 10 } as const;

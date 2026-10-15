@@ -520,7 +520,9 @@ describe("the report page after waves 46 and 47 merged", () => {
     expect(resultsLoadKey(report)).toBe(resultsLoadKey({ ...report, title: "Renamed" } as typeof report));
     const view = await Bun.file(new URL("../src/reports/ReportView.tsx", import.meta.url)).text();
     expect(view).toMatch(/const loadKey = resultsLoadKey\(report\);\n\s+useEffect\(\(\) => \{\n\s+if \(initial\) return;\n\s+void loadResults\(\)/);
-    expect(view).toContain("[initial, loadResults, loadRuns, loadKey]");
+    // D489: results reload on the key (and the parameter set); the run history on the key alone.
+    expect(view).toContain("[initial, loadResults, loadKey]");
+    expect(view).toContain("[initial, loadRuns, loadKey]");
     // ReportGeneration reloads the report when the run ends, so the page passes the new revision down.
     const generation = await Bun.file(new URL("../src/reports/ReportGeneration.tsx", import.meta.url)).text();
     expect(generation).toMatch(/const finished = [^]*?void load\(\);\s+onChanged\(\);/);

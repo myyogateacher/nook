@@ -1,4 +1,4 @@
-import type { ReportsFolderView, Route } from "./router";
+import type { ReportsFilter, ReportsFolderView, Route } from "./router";
 
 export type ReportsRoute = Extract<Route, { app: "reports" }>;
 
@@ -7,9 +7,9 @@ export function reportsRoute(reportId: string | null = null): ReportsRoute {
   return { app: "reports", reportId };
 }
 
-/** Lane I: the list in one view: All (null), Unfiled, Shared with me, or a folder by id. */
-export function reportsFolderRoute(folder: ReportsFolderView | null): ReportsRoute {
-  return folder ? { app: "reports", reportId: null, folder } : { app: "reports", reportId: null };
+/** Lane I: the list in one view: All (null), Unfiled, Shared with me, Favorites, or a folder by id; with the list's filters (phase 1). */
+export function reportsFolderRoute(folder: ReportsFolderView | null, filter?: ReportsFilter): ReportsRoute {
+  return { app: "reports", reportId: null, ...(folder ? { folder } : {}), ...(filter && Object.keys(filter).length ? { filter } : {}) };
 }
 
 /**

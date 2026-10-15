@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
-import { EMPTY_SPEC, REPORT_LIMITS, upgradeSpec, type QueryOutcome, type ReportDetail, type ReportSpec, type ReportSummary } from "../../shared/reports";
+import { EMPTY_SPEC, REPORT_LIMITS, REPORT_PAGE_SIZE, upgradeSpec, type QueryOutcome, type ReportDetail, type ReportListFilter, type ReportListPage, type ReportSpec, type ReportSummary } from "../../shared/reports";
 import { ownedReport, readableReport, readableReportSql, type ReportRow } from "./access";
 import { usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
@@ -23,7 +23,7 @@ const slog = logger("reports");
 
 export const REPORTS_PER_USER = 500;
 
-type SummaryRow = ReportRow & { owner_name: string; datasource_name: string | null; folder_id: string | null; schedule_cadence: string | null };
+type SummaryRow = ReportRow & { owner_name: string; datasource_name: string | null; folder_id: string | null; schedule_cadence: string | null; favorite: number };
 
 /** A stored spec, upgraded to v2 on read (wave 48b, `upgradeSpec`); anything unreadable is the empty spec. */
 export function parseSpec(json: string): ReportSpec {
@@ -39,27 +39,104 @@ function summaryOf(row: SummaryRow, userId: string): ReportSummary {
     id: row.id, title: row.title, datasourceId: row.datasource_id, datasourceName: row.datasource_name, status: row.status, isOwner: row.owner_id === userId,
     ownerName: row.owner_name, blockCount: parseSpec(row.spec_json).blocks.length, lastRunAt: row.last_run_at, createdAt: row.created_at, updatedAt: row.updated_at, revision: row.revision,
     // Lane I: the folder is the owner's organisation; a reader sees the report under "Shared with me".
-    folderId: row.owner_id === userId ? row.folder_id ?? null : null, scheduleCadence: row.schedule_cadence ?? null
+    folderId: row.owner_id === userId ? row.folder_id ?? null : null, scheduleCadence: row.schedule_cadence ?? null,
+    ownerId: row.owner_id, favorite: row.favorite === 1
   };
 }
 
-const SUMMARY_SELECT = `SELECT r.*, u.display_name AS owner_name, d.name AS datasource_name,
-  (SELECT s.cadence FROM report_schedules s WHERE s.report_id = r.id AND s.enabled = 1 AND s.cadence <> 'manual') AS schedule_cadence
+/** A live schedule that runs on its own (not `manual`): the list's badge and the Scheduled filter. */
+const SCHEDULED_SQL = "(SELECT s.cadence FROM report_schedules s WHERE s.report_id = r.id AND s.enabled = 1 AND s.cadence <> 'manual')";
+/** The caller ($userId) starred the report `r` (061). */
+export const FAVORITE_SQL = "EXISTS (SELECT 1 FROM report_favorites f WHERE f.user_id = $userId AND f.report_id = r.id)";
+
+const SUMMARY_SELECT = `SELECT r.*, u.display_name AS owner_name, d.name AS datasource_name, ${SCHEDULED_SQL} AS schedule_cadence, ${FAVORITE_SQL} AS favorite
   FROM reports r JOIN users u ON u.id = r.owner_id LEFT JOIN report_datasources d ON d.id = r.datasource_id`;
 
-/** The reports a person can open, newest change first; `q` filters by title (title-only search). */
-export function listReports(userId: string, options: { q?: string; ids?: readonly string[] | null; limit?: number } = {}): ReportSummary[] {
+export type ReportListOptions = ReportListFilter & { ids?: readonly string[] | null; limit?: number; cursor?: string | null };
+
+/** The opaque cursor of the row after which the next page starts: its `(updated_at, id)`. */
+export function encodeCursor(row: { updatedAt: string; id: string }) {
+  return Buffer.from(JSON.stringify([row.updatedAt, row.id])).toString("base64url");
+}
+
+function decodeCursor(cursor: string): { at: string; id: string } {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown;
+    if (Array.isArray(value) && value.length === 2 && typeof value[0] === "string" && typeof value[1] === "string" && value[0].length <= 40 && value[1].length <= 64) return { at: value[0], id: value[1] };
+  } catch { /* refused below */ }
+  throw new ReportError(400, "INVALID", "That list position is not valid; load the list again");
+}
+
+/**
+ * The SQL of the Reports list (report organization phase 1): the readable set (`readableReportSql`,
+ * so a favorite, a filter, or a cursor never reaches a report the caller cannot open, T393) narrowed by
+ * each filter in use. Only the clauses in use are written, so SQLite picks the index that fits
+ * (reports_owner, reports_status, reports_live_recent, the favorites' primary key).
+ */
+export function reportListSql(options: ReportListOptions) {
+  const where = [readableReportSql("r")];
+  const params: Record<string, string | number | null> = {};
   const q = options.q?.trim().toLowerCase().slice(0, 200) ?? "";
-  const limit = Math.min(Math.max(1, options.limit ?? REPORTS_PER_USER), REPORTS_PER_USER);
-  const rows = db.query(`${SUMMARY_SELECT} WHERE ${readableReportSql("r")} AND ($q = '' OR instr(lower(r.title), $q) > 0)
-    AND ($ids IS NULL OR r.id IN (SELECT value FROM json_each($ids))) ORDER BY r.updated_at DESC, r.id LIMIT $limit`)
-    .all({ userId, q, ids: options.ids ? JSON.stringify(options.ids) : null, limit }) as SummaryRow[];
-  return rows.map((row) => summaryOf(row, userId));
+  if (q) { where.push("instr(lower(r.title), $q) > 0"); params.q = q; }
+  if (options.ids) { where.push("r.id IN (SELECT value FROM json_each($ids))"); params.ids = JSON.stringify(options.ids); }
+  if (options.ownerId) { where.push("r.owner_id = $ownerId"); params.ownerId = options.ownerId; }
+  if (options.statuses?.length) { where.push("r.status IN (SELECT value FROM json_each($statuses))"); params.statuses = JSON.stringify(options.statuses); }
+  if (options.datasourceId) { where.push("r.datasource_id = $datasourceId"); params.datasourceId = options.datasourceId; }
+  if (options.scheduled !== undefined) where.push(`${SCHEDULED_SQL} IS ${options.scheduled ? "NOT NULL" : "NULL"}`);
+  if (options.favorites) where.push(FAVORITE_SQL);
+  if (options.shared) where.push("r.owner_id <> $userId");
+  if (options.folderId === "unfiled") where.push("r.owner_id = $userId AND r.folder_id IS NULL");
+  else if (options.folderId && options.subtree) {
+    where.push(`r.owner_id = $userId AND r.folder_id IN (WITH RECURSIVE sub(id, depth) AS (
+      SELECT f.id, 1 FROM report_folders f WHERE f.id = $folderId AND f.owner_id = $userId AND f.deleted_at IS NULL
+      UNION SELECT f.id, sub.depth + 1 FROM report_folders f JOIN sub ON f.parent_id = sub.id WHERE f.deleted_at IS NULL AND sub.depth < 8) SELECT id FROM sub)`);
+    params.folderId = options.folderId;
+  } else if (options.folderId) { where.push("r.owner_id = $userId AND r.folder_id = $folderId"); params.folderId = options.folderId; }
+  if (options.cursor) {
+    const { at, id } = decodeCursor(options.cursor);
+    where.push("(r.updated_at < $cursorAt OR (r.updated_at = $cursorAt AND r.id > $cursorId))");
+    params.cursorAt = at;
+    params.cursorId = id;
+  }
+  return { sql: `${SUMMARY_SELECT} WHERE ${where.join("\n  AND ")} ORDER BY r.updated_at DESC, r.id LIMIT $limit`, params };
+}
+
+/** One page of the reports a person can open, newest change first, with the filters in use (keyset paged). */
+export function listReportsPage(userId: string, options: ReportListOptions = {}): ReportListPage {
+  const limit = Math.min(Math.max(1, Math.floor(options.limit ?? REPORT_PAGE_SIZE)), REPORT_PAGE_SIZE);
+  const { sql, params } = reportListSql(options);
+  const rows = db.query(sql).all({ ...params, userId, limit: limit + 1 }) as SummaryRow[];
+  const more = rows.length > limit;
+  const reports = rows.slice(0, limit).map((row) => summaryOf(row, userId));
+  return { reports, nextCursor: more ? encodeCursor(reports[reports.length - 1]!) : null };
+}
+
+/** The first page of the reports a person can open (at most REPORT_PAGE_SIZE), for callers that need no cursor. */
+export function listReports(userId: string, options: ReportListOptions = {}): ReportSummary[] {
+  return listReportsPage(userId, options).reports;
+}
+
+/**
+ * Report organization phase 1 (D486): stars a report for the caller, who must be able to open it (else
+ * the same 404 as a missing one). A favorite is never a grant: lists read it through readableReportSql.
+ */
+export function setFavorite(userId: string, id: string, favorite: boolean, via: { keyId?: string } = {}): { favorite: boolean } {
+  const meta = { id, ...(via.keyId ? { via: "mcp", keyId: via.keyId } : {}) };
+  if (favorite) {
+    readableReport(id, userId);
+    const added = db.query("INSERT OR IGNORE INTO report_favorites (user_id, report_id, created_at) VALUES (?, ?, ?)").run(userId, id, now()).changes > 0;
+    if (added) audit(userId, null, "reports.report.star", meta);
+    return { favorite: true };
+  }
+  // Unstarring needs no access: it only removes the caller's own row, and says nothing about the report.
+  const removed = db.query("DELETE FROM report_favorites WHERE user_id = ? AND report_id = ?").run(userId, id).changes > 0;
+  if (removed) audit(userId, null, "reports.report.unstar", meta);
+  return { favorite: false };
 }
 
 export function reportDetail(id: string, userId: string): ReportDetail {
   readableReport(id, userId);
-  const row = db.query(`${SUMMARY_SELECT} WHERE r.id = ?`).get(id) as SummaryRow;
+  const row = db.query(`${SUMMARY_SELECT} WHERE r.id = $id`).get({ id, userId }) as SummaryRow;
   return {
     ...summaryOf(row, userId),
     spec: parseSpec(row.spec_json),

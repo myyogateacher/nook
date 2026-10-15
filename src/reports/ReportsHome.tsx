@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import { Archive, CalendarClock, ChartColumn, Check, ChevronDown, Copy, Database, ExternalLink, FolderInput, House, Pencil, Plus, RotateCcw, Search, Sparkles, Trash2, TriangleAlert } from "lucide-react";
+import { Archive, CalendarClock, ChartColumn, Check, ChevronDown, Copy, Database, ExternalLink, FolderInput, House, ListFilter, LoaderCircle, Pencil, Plus, RotateCcw, Search, Sparkles, Star, Trash2, TriangleAlert } from "lucide-react";
 import { AccountActions, AppPageName } from "../AppShell";
 import { appName } from "../appName";
 import { notifyBinned, onBinRestored } from "../bin/binUndo";
@@ -7,7 +7,7 @@ import { ModalDialog } from "../files/Dialog";
 import { NameDialog } from "../files/RenameDialog";
 import { relativeTime } from "../files/format";
 import { useLayerOpener, whenHistorySettled } from "../historyDialogs";
-import type { ReportsFolderView } from "../router";
+import type { ReportsFilter, ReportsFolderView } from "../router";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { errorText, notify } from "../ui/notify";
 import { useConfirm } from "../ui/useConfirm";
@@ -19,9 +19,11 @@ import { ReportMoveSheet } from "./ReportMoveSheet";
 import { ReportFolderMoveSheet } from "./ReportFolderMoveSheet";
 import { RenameSheet } from "./ReportPage";
 import { ReportOverflowMenu, type MenuItem } from "./reportCommands";
-import { CADENCE_LABELS, folderPath, orderedFolders, placeOf, REPORT_DRAG_TYPE, reportsInView, viewTitle, type FolderPlace } from "./reportFolderTree";
+import { CADENCE_LABELS, folderPath, orderedFolders, placeOf, REPORT_DRAG_TYPE, viewTitle, type FolderPlace } from "./reportFolderTree";
+import { activeFilterCount, ReportFilterBar, ReportFilterSheet } from "./ReportFilters";
+import { StarButton } from "./StarButton";
 import { copyReportLink, LinkSheet, reportLink } from "./reportLink";
-import { createFolder, datasourceChoices, deleteFolder, deleteReport, fileReport, listFolders, listReports, messageOf, updateFolder } from "./reportsApi";
+import { createFolder, datasourceChoices, deleteFolder, deleteReport, fileReport, listFolders, listReports, messageOf, updateFolder, type ReportListQuery } from "./reportsApi";
 
 export const STATUS_LABELS: Record<ReportStatus, string> = { draft: "Draft", ready: "Ready", stale: "Stale", error: "Error" };
 
@@ -38,8 +40,21 @@ type HomeProps = {
   /** Lane I: the view in the URL (null: All reports) and the move to another (a history entry). */
   folder?: ReportsFolderView | null;
   onFolder?: (view: ReportsFolderView | null, options?: { replace?: boolean }) => void;
+  /** Phase 1: the list's filters in the URL, and the move to others (a history entry). */
+  filter?: ReportsFilter;
+  onFilter?: (filter: ReportsFilter | undefined) => void;
   flash?: (message: string) => void;
 };
+
+/** The server query for a view, its filters, and the title search (Search all reports drops the view). */
+export function listQueryFor(view: ReportsFolderView | null, filter: ReportsFilter | undefined, q: string, searchAll: boolean): ReportListQuery {
+  const scope: ReportListQuery = (q.trim() && searchAll) || !view ? {} : view === "unfiled" ? { folderId: "unfiled" } : view === "shared" ? { shared: true } : view === "favorites" ? { favorites: true } : { folderId: view };
+  return {
+    ...(q.trim() ? { q: q.trim() } : {}), ...scope,
+    ...(filter?.owner ? { ownerId: filter.owner } : {}), ...(filter?.status?.length ? { statuses: filter.status as ReportStatus[] } : {}),
+    ...(filter?.datasource ? { datasourceId: filter.datasource } : {}), ...(filter?.schedule ? { scheduled: filter.schedule === "on" } : {})
+  };
+}
 
 type NameRequest = { kind: "new"; parent: ReportFolder | null } | { kind: "rename"; folder: ReportFolder };
 
@@ -61,10 +76,18 @@ function checkFolderName(initial: string) {
  * opened from the folder button at the top. New report in a folder files the report there. K2: a folder
  * drags in the nav to nest or reorder it (Undo in the toast); its ⋯ menu has Move folder to… (a sheet
  * that Forward reopens) and Move up / Move down.
+ *
+ * Report organization phase 1: the server pages the list (100 at a time, newest change first; infinite
+ * scroll with a Load more button) and filters it: the view, the title, and the filter bar (owner,
+ * status, data source, schedule; in the URL, a bottom sheet on a phone). ☆/★ on each row stars a
+ * report (optimistic, rolled back with a toast on error), and Favorites in the nav lists the starred.
  */
-export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, onOpen, onOpenDatasources, onOpenToolServers, folder: view = null, onFolder, flash = (message) => notify.info(message) }: HomeProps) {
+export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, onOpen, onOpenDatasources, onOpenToolServers, folder: view = null, onFolder, filter, onFilter, flash = (message) => notify.info(message) }: HomeProps) {
   const { canWrite } = useRole();
   const [reports, setReports] = useState<ReportSummary[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [tree, setTree] = useState<ReportFolderTree | null>(null);
   const [sources, setSources] = useState<DatasourceChoice[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -82,24 +105,69 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
   const generation = useRef(0);
   const select = useCallback((next: ReportsFolderView | null, options?: { replace?: boolean }) => { onFolder?.(next, options); }, [onFolder]);
 
-  const load = useCallback(async () => {
+  const filterKey = JSON.stringify(filter ?? {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the filter by value (a new object each render of the route)
+  const listQuery = useMemo(() => listQueryFor(view, filter, query, searchAll), [view, filterKey, query, searchAll]);
+  const listQueryRef = useRef(listQuery);
+  listQueryRef.current = listQuery;
+  /** The first page of the list for the current view and filters; with `everything`, the nav and the data sources too. */
+  const load = useCallback(async (everything = true) => {
     const current = ++generation.current;
     setError(null);
     try {
-      const [{ reports: list }, folders, { datasources }] = await Promise.all([listReports(query), listFolders(), datasourceChoices()]);
+      const [page, folders, choices] = await Promise.all([listReports(listQueryRef.current), everything ? listFolders() : null, everything ? datasourceChoices() : null]);
       if (current !== generation.current) return;
-      setReports(list);
-      setTree(folders);
-      setSources(datasources);
+      setReports(page.reports);
+      setNextCursor(page.nextCursor ?? null);
+      if (folders) setTree(folders);
+      if (choices) setSources(choices.datasources);
     } catch (reason) {
       if (current === generation.current) setError(messageOf(reason, "Could not load your reports"));
     }
-  }, [query]);
-
+  }, []);
+  const loadedOnce = useRef(false);
+  // Another view or other filters: the rows shown belong to the old ones, so show the list loading instead
+  // (typing a title search keeps the rows until the answer comes).
+  const scopeKey = JSON.stringify({ ...listQuery, q: undefined });
+  const shownScope = useRef(scopeKey);
+  if (shownScope.current !== scopeKey) {
+    shownScope.current = scopeKey;
+    generation.current += 1;
+    if (reports !== null) { setReports(null); setNextCursor(null); }
+  }
   useEffect(() => {
-    const timer = window.setTimeout(() => { void load(); }, query ? 200 : 0);
+    const first = !loadedOnce.current;
+    loadedOnce.current = true;
+    const timer = window.setTimeout(() => { void load(first); }, listQuery.q ? 200 : 0);
     return () => window.clearTimeout(timer);
-  }, [load, query]);
+  }, [load, listQuery]);
+  /** The next page (infinite scroll, or Load more); dropped when the list was reloaded meanwhile. */
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore) return;
+    const current = generation.current;
+    setLoadingMore(true);
+    try {
+      const page = await listReports({ ...listQueryRef.current, cursor: nextCursor });
+      if (current !== generation.current) return;
+      setReports((list) => {
+        const seen = new Set((list ?? []).map((report) => report.id));
+        return [...(list ?? []), ...page.reports.filter((report) => !seen.has(report.id))];
+      });
+      setNextCursor(page.nextCursor ?? null);
+    } catch (reason) {
+      if (current === generation.current) notify.error(errorText(reason, "Could not load more reports"));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, nextCursor]);
+  const moreRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = moreRef.current;
+    if (!node || !nextCursor || loadingMore || typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) void loadMore(); }, { rootMargin: "320px 0px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loadMore, loadingMore, nextCursor]);
   useEffect(() => onBinRestored(["report", "report_folder"], () => { void load(); }), [load]);
   useEffect(() => { document.title = `${viewTitle(view, tree?.folders ?? [])} · Reports · ${appName()}`; }, [view, tree]);
 
@@ -107,11 +175,18 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
   useHistoryDialogGuard(naming !== null, closeNaming);
   const closeDrawer = useCallback(() => setDrawer(false), []);
   useHistoryDialogGuard(drawer, closeDrawer, { reopen: () => setDrawer(true) });
+  const closeFilters = useCallback(() => setFiltersOpen(false), []);
+  useLayerOpener("reports.filters", () => setFiltersOpen(true));
+  const applyFilters = (next: ReportsFilter | undefined) => {
+    setFiltersOpen(false);
+    whenHistorySettled(() => onFilter?.(next));
+  };
 
   const folders = useMemo(() => tree?.folders ?? [], [tree]);
   const folderLabels = useMemo(() => orderedFolders(folders).map(({ folder }) => ({ id: folder.id, label: folderPath(folders, folder.id) })), [folders]);
-  const currentFolder = view && view !== "unfiled" && view !== "shared" ? folders.find((item) => item.id === view) ?? null : null;
-  const missingFolder = Boolean(tree && view && view !== "unfiled" && view !== "shared" && !currentFolder);
+  const isFolderView = Boolean(view && view !== "unfiled" && view !== "shared" && view !== "favorites");
+  const currentFolder = isFolderView ? folders.find((item) => item.id === view) ?? null : null;
+  const missingFolder = Boolean(tree && isFolderView && !currentFolder);
   // A folder made elsewhere since the list loaded (another tab, MCP): load once more before calling it gone.
   const recheckedFor = useRef<string | null>(null);
   useEffect(() => {
@@ -119,8 +194,24 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
     recheckedFor.current = view;
     void load();
   }, [missingFolder, view, load]);
-  const scoped = query.trim() && searchAll ? reports ?? [] : reportsInView(reports ?? [], view);
+  const scoped = reports ?? [];
   const title = viewTitle(view, folders);
+  const filtered = activeFilterCount(filter) > 0;
+  // Without a search or filters the nav knows the view's total; otherwise the rows loaded so far (and more to come).
+  const viewTotal = !tree || query.trim() || filtered ? null : !view ? tree.counts.all : view === "unfiled" ? tree.counts.unfiled : view === "shared" ? tree.counts.shared
+    : view === "favorites" ? tree.counts.favorites : currentFolder?.count ?? null;
+  const shownCount = viewTotal ?? `${scoped.length}${nextCursor ? "+" : ""}`;
+
+  /** ☆/★ (D486), optimistic: the row and the Favorites count change at once; StarButton puts them back on error. */
+  const setStar = useCallback((report: ReportSummary, favorite: boolean) => {
+    setReports((list) => {
+      if (!list) return list;
+      if (view === "favorites" && !favorite) return list.filter((item) => item.id !== report.id);
+      if (!list.some((item) => item.id === report.id)) { void load(false); return list; }
+      return list.map((item) => item.id === report.id ? { ...item, favorite } : item);
+    });
+    setTree((current) => current && { ...current, counts: { ...current.counts, favorites: Math.max(0, current.counts.favorites + (favorite ? 1 : -1)) } });
+  }, [load, view]);
 
   /** Files a report (drag, Move to…), with Undo in the toast like the app's other moves. */
   const move = useCallback(async (reportId: string, folderId: string | null, options: { undo?: boolean } = { undo: true }) => {
@@ -235,7 +326,10 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
 
   const noSources = sources !== null && sources.length === 0;
   const newReport = () => setCreating({ folderId: currentFolder?.id ?? null });
-  const emptyCopy = query ? "No report has that title" : missingFolder ? "This folder is gone" : view === "shared" ? "Nothing is shared with you yet" : view === "unfiled" ? "Every report is in a folder" : currentFolder ? "This folder is empty" : "No reports yet";
+  const emptyCopy = query ? "No report has that title" : missingFolder ? "This folder is gone" : filtered ? "No reports match these filters"
+    : view === "favorites" ? "No favorites yet" : view === "shared" ? "Nothing is shared with you yet" : view === "unfiled" ? "Every report is in a folder" : currentFolder ? "This folder is empty" : "No reports yet";
+  // The view's own hints and actions show only when nothing narrows it.
+  const plain = !query && !filtered;
   return <main className="app-page reports-app">
     <header className="app-page-header">
       <button className="app-home-button" onClick={onHome}><House />Home</button>
@@ -247,17 +341,18 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
       <aside className="reports-sidebar" aria-label="Folders">{nav(false)}</aside>
       <section className="reports-body reports-main" aria-labelledby="reports-title">
         <button type="button" className="reports-folder-chip" onClick={() => setDrawer(true)} aria-haspopup="dialog" aria-label={`Folders: ${title}`}>
-          <Archive aria-hidden="true" /><span>{title}</span>{reports && <small>{scoped.length}</small>}<ChevronDown aria-hidden="true" />
+          <Archive aria-hidden="true" /><span>{title}</span>{reports && <small>{shownCount}</small>}<ChevronDown aria-hidden="true" />
         </button>
         <div className="reports-toolbar">
-          <h1 id="reports-title">{title}{reports && <span className="reports-count"> · {scoped.length}</span>}</h1>
+          <h1 id="reports-title">{title}{reports && <span className="reports-count"> · {shownCount}</span>}</h1>
           <label className="reports-search">
             <Search aria-hidden="true" />
             <span className="sr-only">Filter reports by title</span>
-            <input type="search" value={query} maxLength={200} placeholder={view && view !== "shared" ? `Filter ${view === "unfiled" ? "Unfiled" : "this folder"}` : "Filter by title"} onChange={(event) => setQuery(event.target.value)} />
+            <input type="search" value={query} maxLength={200} placeholder={view === "unfiled" ? "Filter Unfiled" : view === "favorites" ? "Filter Favorites" : isFolderView ? "Filter this folder" : "Filter by title"} onChange={(event) => setQuery(event.target.value)} />
           </label>
           {canWrite && !missingFolder && <button type="button" className="primary-button reports-new" onClick={newReport} disabled={noSources}><Plus />New report</button>}
         </div>
+        {tree && sources && <ReportFilterBar filter={filter} choices={{ owners: tree.owners, sources }} onChange={(next) => onFilter?.(next)} onOpenSheet={() => setFiltersOpen(true)} />}
         {query.trim() && view && <div className="reports-scope">
           {!searchAll && <span>Filtering {title}</span>}
           <button type="button" className="reports-scope-chip" aria-pressed={searchAll} onClick={() => setSearchAll((all) => !all)}>{searchAll ? <Check aria-hidden="true" /> : <ChartColumn aria-hidden="true" />}Search all reports</button>
@@ -271,17 +366,19 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
         </div>}
         {!error && !reports && <p className="reports-loading" role="status">Loading reports…</p>}
         {!error && reports && scoped.length === 0 && <div className="reports-state">
-          <span className="reports-state-icon"><ChartColumn /></span>
+          <span className="reports-state-icon">{view === "favorites" && plain ? <Star /> : filtered && !query ? <ListFilter /> : <ChartColumn />}</span>
           <h2>{emptyCopy}</h2>
-          {!query && !view && noSources && (role === "admin"
+          {!query && filtered && <><p>Change or clear the filters to see more reports.</p><button className="secondary-button" onClick={() => onFilter?.(undefined)}>Clear filters</button></>}
+          {plain && view === "favorites" && <p>Star a report with ☆ on its row or its page to keep it here.</p>}
+          {plain && !view && noSources && (role === "admin"
             ? <><p>Reports query a ClickHouse data source. Add one first.</p><button className="primary-button" onClick={onOpenDatasources}><Database />Add a data source</button></>
             : <p>Reports query a ClickHouse data source, and none is set up yet. Ask an admin to add one.</p>)}
-          {!query && !view && !noSources && <p>Paste a doc that describes your metrics and let AI build the report, or write SQL against your team's warehouse yourself.</p>}
-          {!query && currentFolder && <p>Drag a report here, use Move to… in a report's ⋯ menu, or create one in this folder.</p>}
-          {!query && view === "shared" && <p>Reports other people share with you appear here.</p>}
+          {plain && !view && !noSources && <p>Paste a doc that describes your metrics and let AI build the report, or write SQL against your team's warehouse yourself.</p>}
+          {plain && currentFolder && <p>Drag a report here, use Move to… in a report's ⋯ menu, or create one in this folder.</p>}
+          {plain && view === "shared" && <p>Reports other people share with you appear here.</p>}
           {!query && missingFolder && <button className="secondary-button" onClick={() => select(null, { replace: true })}>Show all reports</button>}
-          {!query && !noSources && canWrite && (view === null || currentFolder) && <button className="primary-button" onClick={newReport}><Plus />{currentFolder ? "New report here" : "New report"}</button>}
-          {!query && !view && canWrite && tree && !tree.folders.length && reports.length > 0 && <p>No folders yet: use New folder in the list to group your reports.</p>}
+          {plain && !noSources && canWrite && (view === null || currentFolder) && <button className="primary-button" onClick={newReport}><Plus />{currentFolder ? "New report here" : "New report"}</button>}
+          {plain && !view && canWrite && tree && !tree.folders.length && reports.length > 0 && <p>No folders yet: use New folder in the list to group your reports.</p>}
         </div>}
         {!error && reports && scoped.length > 0 && <ul className="reports-rows" aria-label={`Reports in ${title}`}>
           {scoped.map((report) => {
@@ -302,12 +399,19 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
                   <time dateTime={report.updatedAt}>{relativeTime(report.updatedAt)}</time>
                 </span>
               </button>
+              <StarButton reportId={report.id} title={report.title} favorite={report.favorite} onChange={(favorite) => setStar(report, favorite)} className="reports-row-star" />
               <ReportOverflowMenu compact className="reports-row-menu" label={`${report.title} actions`} items={rowMenu(report)} />
             </li>;
           })}
         </ul>}
+        {!error && reports && nextCursor && <div className="reports-more" ref={moreRef}>
+          <button type="button" className="secondary-button" onClick={() => { void loadMore(); }} disabled={loadingMore} aria-busy={loadingMore || undefined}>
+            {loadingMore ? <LoaderCircle className="spin" aria-hidden="true" /> : null}{loadingMore ? "Loading…" : "Load more"}
+          </button>
+        </div>}
       </section>
     </div>
+    {filtersOpen && tree && sources && <ReportFilterSheet filter={filter} choices={{ owners: tree.owners, sources }} onApply={applyFilters} onClose={closeFilters} reopen={() => setFiltersOpen(true)} />}
     {drawer && <ModalDialog title="Folders" eyebrow="Reports" onClose={closeDrawer} variant="sheet" className="reports-dialog reports-folder-sheet">
       {nav(true)}
     </ModalDialog>}

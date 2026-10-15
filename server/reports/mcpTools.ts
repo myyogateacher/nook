@@ -19,9 +19,9 @@ import { usableDatasource } from "./datasources";
 import { METRIC_ID, METRIC_LIMITS, type CatalogMetricInput } from "../../shared/reportsMetrics";
 import { queryResults, reportRun, startRefresh } from "./refresh";
 import { saveSchedule } from "./scheduler";
-import { listReports, parseSpec as parseStoredSpec } from "./service";
+import { listReportsPage, parseSpec as parseStoredSpec, setFavorite } from "./service";
 import { createFolder, listFolders, moveReportToFolder } from "./folders";
-import { REPORT_FOLDER_NAME_MAX } from "../../shared/reports";
+import { REPORT_FOLDER_NAME_MAX, REPORT_PAGE_SIZE, REPORT_STATUSES } from "../../shared/reports";
 import { knownSpec } from "./specCheck";
 import type { ReportSpec } from "../../shared/reports";
 
@@ -43,6 +43,9 @@ const parseSpec = (json: string): ReportSpec => knownSpec(parseStoredSpec(json))
  * - Lane I, folders: `list_report_folders` (reports:read: the owner's folder tree with counts), and
  *   `create_report_folder` and `move_report_to_folder` (reports:write: the owner's organisation; never
  *   deletes, a folder is deleted only through the Bin in the app).
+ * - Report organization phase 1: list_reports filters (owner, statuses, data source, scheduled,
+ *   favorites, shared, folder) and pages by cursor; `star_report` and `unstar_report` (reports:write:
+ *   the key owner's own Favorites, audited; a star needs a report they can open).
  *
  * Writes are non-destructive (a version, a run, a queued instruction), audited with `via: "mcp"` and the
  * key, and counted against `report_write` (100 a day per key). Nothing is deleted over MCP but through
@@ -89,25 +92,42 @@ export const reportTools: McpToolSpec[] = [
   defineTool({
     name: "list_reports",
     title: "List reports",
-    description: `List the user's analytics reports (their own and those shared with them), newest change first: id, title, status (draft, ready, stale, error), data source name, block count, last run time, and link. Optionally only titles containing a query. ${UNTRUSTED}`,
+    description: `List the user's analytics reports (their own and those shared with them), newest change first, 50 a page by default (at most 100): id, title, status (draft, ready, stale, error), owner, data source name, block count, last run time, whether the user starred it, folder, and link. Filters narrow the list: a title query, owner (an id from list_report_folders' owners, or "me"), statuses, data source, scheduled or not, favorites only, shared with the user only, or one of their folders (with subfolders when subtree is true; "unfiled" for their reports in no folder). When nextCursor is not null, pass it as cursor for the next page. ${UNTRUSTED}`,
     scopes: ["reports:read"],
-    access: { mode: "list", lists: ["report"] },
+    // The filters only narrow the readable set (an owner, a data source, or a folder of the key owner; T393).
+    access: { mode: "list", lists: ["report"], related: ["ownerId", "datasourceId", "folderId"] },
     write: false,
     inputSchema: z.object({
       query: z.string().min(1).max(200).optional().describe("Only reports whose title contains this"),
-      limit: z.number().int().min(1).max(100).optional().describe("At most this many, default 50")
+      ownerId: z.union([z.literal("me"), z.string().uuid()]).optional().describe("Only this person's reports (\"me\" for the user's own)"),
+      statuses: z.array(z.enum(REPORT_STATUSES)).min(1).max(REPORT_STATUSES.length).optional().describe("Only reports in one of these statuses"),
+      datasourceId: z.string().uuid().optional().describe("Only reports on this data source (from list_report_datasources)"),
+      scheduled: z.boolean().optional().describe("true: only reports that refresh on a schedule; false: only those that do not"),
+      favorites: z.boolean().optional().describe("true: only the reports the user starred"),
+      shared: z.boolean().optional().describe("true: only reports other people share with the user"),
+      folderId: z.union([z.literal("unfiled"), z.string().uuid()]).optional().describe("Only the user's reports in this folder (from list_report_folders), or \"unfiled\""),
+      subtree: z.boolean().optional().describe("With folderId: include its subfolders' reports"),
+      cursor: z.string().min(1).max(200).optional().describe("nextCursor from the previous page"),
+      limit: z.number().int().min(1).max(REPORT_PAGE_SIZE).optional().describe("At most this many, default 50")
     }),
-    handler: ({ query, limit }, key) => {
-      if (!ownerHasReports(key.userId)) return { reports: [] };
+    handler: (args, key) => {
+      if (!ownerHasReports(key.userId)) return { reports: [], nextCursor: null };
       // A key over chosen reports is narrowed in SQL, before the limit (T203).
       const ids = keyContainerIds(key, "reports:read", "report");
-      const reports = listReports(key.userId, { q: query, ids, limit: limit ?? 50 });
-      return {
-        reports: reports.map((report) => ({
-          id: report.id, title: report.title, status: report.status, datasource: report.datasourceName, blocks: report.blockCount,
-          lastRunAt: report.lastRunAt, updatedAt: report.updatedAt, folderId: report.folderId, url: reportUrl(report.id)
-        }))
-      };
+      return asOwner(key, () => {
+        const page = listReportsPage(key.userId, {
+          q: args.query, ids, limit: args.limit ?? 50, cursor: args.cursor ?? null, ownerId: args.ownerId === "me" ? key.userId : args.ownerId?.toLowerCase(),
+          statuses: args.statuses, datasourceId: args.datasourceId?.toLowerCase(), scheduled: args.scheduled, favorites: args.favorites, shared: args.shared,
+          folderId: args.folderId?.toLowerCase(), subtree: args.subtree
+        });
+        return {
+          reports: page.reports.map((report) => ({
+            id: report.id, title: report.title, status: report.status, owner: report.isOwner ? "me" : report.ownerName, datasource: report.datasourceName, blocks: report.blockCount,
+            lastRunAt: report.lastRunAt, updatedAt: report.updatedAt, favorite: report.favorite, folderId: report.folderId, url: reportUrl(report.id)
+          })),
+          nextCursor: page.nextCursor
+        };
+      });
     }
   }),
   defineTool({
@@ -123,17 +143,20 @@ export const reportTools: McpToolSpec[] = [
   defineTool({
     name: "list_report_folders",
     title: "List report folders",
-    description: `The key owner's report folders (their private organisation of the Reports home): id, name, parentId (null at the top; up to 3 levels), position among its siblings, and how many of their reports are directly in it; plus the counts of all reports they can open, Unfiled (their reports in no folder), and Shared with me. list_reports gives each report's folderId. ${UNTRUSTED}`,
+    description: `The key owner's report folders (their private organisation of the Reports home): id, name, parentId (null at the top; up to 3 levels), position among its siblings, and how many of their reports are directly in it; plus the counts of all reports they can open, Unfiled (their reports in no folder), Shared with me, and Favorites (starred), and the owners of the reports they can open (id, name, count; for list_reports' ownerId). list_reports gives each report's folderId. ${UNTRUSTED}`,
     scopes: ["reports:read"],
     access: { mode: "list", lists: ["report"] },
     write: false,
     inputSchema: z.object({}),
     handler: (_args, key) => {
-      if (!ownerHasReports(key.userId)) return { folders: [], counts: { all: 0, unfiled: 0, shared: 0 } };
+      if (!ownerHasReports(key.userId)) return { folders: [], counts: { all: 0, unfiled: 0, shared: 0, favorites: 0 }, owners: [] };
       const ids = keyContainerIds(key, "reports:read", "report");
       const tree = listFolders(key.userId, { ids });
       // A key over chosen reports sees only the folders that hold one of them.
-      return { folders: tree.folders.filter((folder) => !ids || folder.count > 0).map((folder) => ({ id: folder.id, name: folder.name, parentId: folder.parentId, position: folder.position, reports: folder.count })), counts: tree.counts };
+      return {
+        folders: tree.folders.filter((folder) => !ids || folder.count > 0).map((folder) => ({ id: folder.id, name: folder.name, parentId: folder.parentId, position: folder.position, reports: folder.count })),
+        counts: tree.counts, owners: tree.owners.map((owner) => ({ id: owner.id, name: owner.id === key.userId ? "me" : owner.name, reports: owner.count }))
+      };
     }
   }),
   defineTool({
@@ -454,5 +477,28 @@ export const reportTools: McpToolSpec[] = [
       const moved = moveReportToFolder(key.userId, args.reportId, args.folderId?.toLowerCase() ?? null, { keyId: key.keyId });
       return { report: { id: moved.report.id, title: moved.report.title, folderId: moved.report.folderId, url: reportUrl(moved.report.id) }, previousFolderId: moved.previousFolderId };
     })
+  }),
+  // Report organization phase 1 (D486): the key owner's own star; never a grant (lists read it through access, T393).
+  defineTool({
+    name: "star_report",
+    title: "Star a report",
+    description: "Stars a report the key owner can open, so it shows under Favorites on their Reports home (list_reports with favorites: true). Only their own shortcut: nobody else sees it, and it gives no access.",
+    scopes: ["reports:write"],
+    access: { mode: "items", items: reportItem },
+    write: true,
+    buckets: ["report_write"],
+    inputSchema: z.object({ reportId }),
+    handler: (args, key) => asOwner(key, () => setFavorite(key.userId, args.reportId.toLowerCase(), true, { keyId: key.keyId }))
+  }),
+  defineTool({
+    name: "unstar_report",
+    title: "Unstar a report",
+    description: "Removes the key owner's star from a report (it leaves their Favorites). The report itself does not change.",
+    scopes: ["reports:write"],
+    access: { mode: "items", items: reportItem },
+    write: true,
+    buckets: ["report_write"],
+    inputSchema: z.object({ reportId }),
+    handler: (args, key) => asOwner(key, () => setFavorite(key.userId, args.reportId.toLowerCase(), false, { keyId: key.keyId }))
   })
 ];

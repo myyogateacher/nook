@@ -117,7 +117,7 @@ describe("migration 052 report_instructions", () => {
     const schema = db.query("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name").all();
     runMigrations(db);
     expect(db.query("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name").all()).toEqual(schema);
-    expect((db.query("SELECT id FROM schema_migrations WHERE id >= 49 ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id)).toEqual([49, 50, 51, 52, 53, 55, 56, 57, 58, 59, 60]);
+    expect((db.query("SELECT id FROM schema_migrations WHERE id >= 49 ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id)).toEqual([49, 50, 51, 52, 53, 55, 56, 57, 58, 59, 60, 61]);
   });
 
   test("a full migration run from scratch includes 052", () => {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readHistoryDepth } from "../appShellNavigation";
 import { popStateClosedDialog } from "../historyDialogs";
-import { parseRoute, type Route } from "../router";
+import { formatRoute, parseRoute, type Route } from "../router";
 import { reportsBackAction, reportsFolderRoute, reportsRoute, type ReportsRoute } from "../reportsRoute";
 import { ReportPage } from "./ReportPage";
 import { ReportsHome } from "./ReportsHome";
@@ -24,7 +24,8 @@ type ReportsAppProps = {
 };
 
 const currentRoute = (): ReportsRoute => {
-  const route = parseRoute(window.location.pathname);
+  // Phase 1: the list's filters ride in the query.
+  const route = parseRoute(window.location.pathname, window.location.search);
   return route.app === "reports" ? route : reportsRoute();
 };
 
@@ -46,7 +47,7 @@ export function ReportsApp({ displayName, role, navigate, flash, onHome, onSetti
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
       if (popStateClosedDialog(event)) return;
-      const next = parseRoute(window.location.pathname);
+      const next = parseRoute(window.location.pathname, window.location.search);
       if (next.app === "reports") setRoute(next);
     };
     window.addEventListener("popstate", onPopState);
@@ -67,5 +68,6 @@ export function ReportsApp({ displayName, role, navigate, flash, onHome, onSetti
   }
   // Lane I: each folder view is its own entry, so Back and Forward step between folders.
   return <ReportsHome {...account} role={role} flash={flash} onHome={onHome} onOpen={(id) => go(reportsRoute(id))} onOpenDatasources={onOpenDatasources} onOpenToolServers={onOpenToolServers}
-    folder={route.folder ?? null} onFolder={(view, options) => { if ((route.folder ?? null) !== view) go(reportsFolderRoute(view), options); }} />;
+    folder={route.folder ?? null} onFolder={(view, options) => { if ((route.folder ?? null) !== view) go(reportsFolderRoute(view, route.filter), options); }}
+    filter={route.filter} onFilter={(filter) => { const next = reportsFolderRoute(route.folder ?? null, filter); if (formatRoute(next) !== formatRoute(route)) go(next); }} />;
 }

@@ -18,9 +18,11 @@ const { whenHistorySettled } = await import("../src/historyDialogs");
 const FINANCE = "0b8f7c2e-0000-4000-8000-00000000000f";
 const GROWTH = "0b8f7c2e-0000-4000-8000-00000000000a";
 const at = "2026-10-14T00:00:00.000Z";
+const ME = "0b8f7c2e-2222-4222-8222-000000000001";
+const BEN = "0b8f7c2e-2222-4222-8222-000000000002";
 const summary = (id: string, title: string, extra: Partial<ReportSummary> = {}): ReportSummary => ({
   id, title, datasourceId: "ds-1", datasourceName: "Warehouse", status: "ready", isOwner: true, ownerName: "Me", blockCount: 1, lastRunAt: null,
-  createdAt: at, updatedAt: at, revision: 1, folderId: null, scheduleCadence: null, ...extra
+  createdAt: at, updatedAt: at, revision: 1, folderId: null, scheduleCadence: null, ownerId: ME, favorite: false, ...extra
 });
 const REVENUE = "0b8f7c2e-1111-4111-8111-000000000001";
 const LOOSE = "0b8f7c2e-1111-4111-8111-000000000002";
@@ -28,17 +30,24 @@ const SHARED = "0b8f7c2e-1111-4111-8111-000000000003";
 const reports = () => [
   summary(REVENUE, "Weekly revenue", { folderId: FINANCE, scheduleCadence: "weekly" }),
   summary(LOOSE, "Trial conversions", { status: "draft" }),
-  summary(SHARED, "Sales pipeline", { isOwner: false, ownerName: "Ben Ortiz" })
+  summary(SHARED, "Sales pipeline", { isOwner: false, ownerName: "Ben Ortiz", ownerId: BEN })
 ];
 const tree = (): ReportFolderTree => ({
   folders: [
     { id: FINANCE, parentId: null, name: "Finance", position: 0, count: 1, createdAt: at, updatedAt: at },
     { id: GROWTH, parentId: null, name: "Growth", position: 1, count: 0, createdAt: at, updatedAt: at }
   ],
-  counts: { all: 3, unfiled: 1, shared: 1 }
+  counts: { all: 3, unfiled: 1, shared: 1, favorites: 0 },
+  owners: [{ id: ME, name: "Me", count: 2, isMe: true }, { id: BEN, name: "Ben Ortiz", count: 1, isMe: false }]
 });
+/** The server's view filtering (phase 1 pages and filters on the server). */
+const page = (list: ReportSummary[]) => () => ({ reports: list, nextCursor: null });
 const routes = (extra: Record<string, (call: ApiCall) => unknown> = {}) => mockApi({
-  "GET /reports": () => ({ reports: reports() }),
+  "GET /reports": () => ({ reports: reports(), nextCursor: null }),
+  [`GET /reports?folder=${FINANCE}`]: page(reports().filter((report) => report.folderId === FINANCE)),
+  [`GET /reports?folder=${GROWTH}`]: page([]),
+  "GET /reports?folder=unfiled": page(reports().filter((report) => report.isOwner && !report.folderId)),
+  "GET /reports?shared=1": page(reports().filter((report) => !report.isOwner)),
   "GET /reports/folders": () => tree(),
   "GET /reports/datasources": () => ({ datasources: [{ id: "ds-1", name: "Warehouse", database: "analytics" }] }),
   "GET /reports/doc-servers": () => ({ servers: [] }),
@@ -198,10 +207,10 @@ describe("Reports folder URLs", () => {
     });
     await pop(`/reports/folder/${FINANCE}`);
     await view.waitFor(() => document.querySelector("#reports-title")?.textContent?.startsWith("Finance"));
-    expect(rowTitles()).toEqual(["Weekly revenue"]);
+    await view.waitFor(() => rowTitles().join() === "Weekly revenue");
     await pop("/reports/unfiled");
     await view.waitFor(() => document.querySelector("#reports-title")?.textContent?.startsWith("Unfiled"));
-    expect(rowTitles()).toEqual(["Trial conversions"]);
+    await view.waitFor(() => rowTitles().join() === "Trial conversions");
     await pop("/reports");
     await view.waitFor(() => document.querySelector("#reports-title")?.textContent?.startsWith("All reports"));
   });

@@ -1,11 +1,11 @@
 import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
 import { logger } from "../log";
-import { REPORT_FOLDER_DEPTH, REPORT_FOLDERS_PER_USER, type ReportFolder, type ReportFolderTree, type ReportSummary } from "../../shared/reports";
+import { REPORT_FOLDER_DEPTH, REPORT_FOLDERS_PER_USER, type ReportFolder, type ReportFolderTree, type ReportOwnerFacet, type ReportSummary } from "../../shared/reports";
 import { ownedReport, readableReportSql } from "./access";
 import { ReportError } from "./errors";
 import { folderNotFound, ownedFolder, type FolderRow } from "./folderAccess";
-import { listReports } from "./service";
+import { FAVORITE_SQL, listReports } from "./service";
 
 const slog = logger("reports");
 
@@ -51,21 +51,38 @@ export function subtreeIds(id: string, folders: readonly FolderRow[]): string[] 
 
 /**
  * The left nav: the owner's live folders (parent, position) with the count of their live reports
- * directly in each, and the counts of All (every report they can open), Unfiled, and Shared with me.
- * `ids` (an MCP key over chosen reports) narrows every count to those reports.
+ * directly in each, the counts of All (every report they can open), Unfiled, Shared with me, and
+ * Favorites, and the people whose reports they can open (the Owner filter). Report organization phase
+ * 1: every count comes from one GROUP BY over the readable set, by place (a folder of theirs, Unfiled,
+ * or shared with them) and owner. `ids` (an MCP key over chosen reports) narrows every count to those reports.
  */
 export function listFolders(userId: string, options: { ids?: readonly string[] | null } = {}): ReportFolderTree {
   const ids = options.ids ? JSON.stringify(options.ids) : null;
-  const scoped = "($ids IS NULL OR r.id IN (SELECT value FROM json_each($ids)))";
-  const perFolder = db.query(`SELECT r.folder_id AS folder_id, COUNT(*) AS count FROM reports r WHERE r.owner_id = $userId AND r.deleted_at IS NULL AND ${scoped} GROUP BY r.folder_id`)
-    .all({ userId, ids }) as Array<{ folder_id: string | null; count: number }>;
-  const counts = new Map(perFolder.map((row) => [row.folder_id, row.count]));
-  const totals = db.query(`SELECT COUNT(*) AS total, COALESCE(SUM(r.owner_id <> $userId), 0) AS shared FROM reports r WHERE ${readableReportSql("r")} AND ${scoped}`)
-    .get({ userId, ids }) as { total: number; shared: number };
+  const scoped = ids ? " AND r.id IN (SELECT value FROM json_each($ids))" : "";
+  // place: NULL for a report shared with the caller, '' for theirs in no folder, else their folder's id.
+  const groups = db.query(`SELECT CASE WHEN r.owner_id = $userId THEN COALESCE(r.folder_id, '') END AS place, r.owner_id AS owner_id, u.display_name AS owner_name,
+      COUNT(*) AS count, SUM(${FAVORITE_SQL}) AS favorites
+    FROM reports r JOIN users u ON u.id = r.owner_id WHERE ${readableReportSql("r")}${scoped} GROUP BY place, r.owner_id`)
+    .all(ids ? { userId, ids } : { userId }) as Array<{ place: string | null; owner_id: string; owner_name: string; count: number; favorites: number }>;
+  const counts = new Map<string | null, number>();
+  const owners = new Map<string, ReportOwnerFacet>();
+  const totals = { all: 0, unfiled: 0, shared: 0, favorites: 0 };
+  for (const group of groups) {
+    totals.all += group.count;
+    totals.favorites += group.favorites;
+    if (group.place === null) totals.shared += group.count;
+    else if (group.place === "") totals.unfiled += group.count;
+    else counts.set(group.place, (counts.get(group.place) ?? 0) + group.count);
+    const owner = owners.get(group.owner_id) ?? { id: group.owner_id, name: group.owner_name, count: 0, isMe: group.owner_id === userId };
+    owner.count += group.count;
+    owners.set(group.owner_id, owner);
+  }
   const folders = liveFolders(userId);
   return {
     folders: folders.map((row): ReportFolder => ({ id: row.id, parentId: row.parent_id, name: row.name, position: row.position, count: counts.get(row.id) ?? 0, createdAt: row.created_at, updatedAt: row.updated_at })),
-    counts: { all: totals.total, unfiled: counts.get(null) ?? 0, shared: totals.shared }
+    counts: totals,
+    // The caller first, then by name.
+    owners: [...owners.values()].sort((a, b) => Number(b.id === userId) - Number(a.id === userId) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   };
 }
 

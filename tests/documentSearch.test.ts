@@ -241,7 +241,8 @@ describe("migration 060_document_fts", () => {
     database.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'u1@example.test', 'U', 'x', ?)").run(at);
     database.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, purpose, created_at, updated_at)
       VALUES ('d1', 'u1', NULL, 'Plan.md', 'text/markdown', 'text', 2, ?, 'file', ?, ?)`).run("a".repeat(64), at, at);
-    expect(runMigrations(database)).toBe(1);
+    // 060 and every migration after it (061, report favorites).
+    expect(runMigrations(database)).toBe(registeredMigrationIds.filter((id) => id >= 60).length);
     for (const name of ["document_search", "document_fts", "document_search_ad"]) expect({ name, found: hasTable(database, name) }).toEqual({ name, found: true });
     expect(database.query("SELECT COUNT(*) AS n FROM document_search").get()).toEqual({ n: 0 });
 

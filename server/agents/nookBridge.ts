@@ -74,7 +74,9 @@ export const NOOK_NEVER_TOOLS: ReadonlySet<string> = new Set([
   "list_report_datasources", "create_report", "refresh_report", "set_report_schedule",
   "add_report_instruction", "apply_report_proposal", "reject_report_proposal", "update_report_query", "update_report_metric",
   // Lane I: a report's folder is its owner's organisation of the Reports home, not an agent's.
-  "create_report_folder", "move_report_to_folder"
+  "create_report_folder", "move_report_to_folder",
+  // Report organization phase 1: a star is the owner's own shortcut on their Reports home, not an agent's.
+  "star_report", "unstar_report"
 ]);
 export const isBinTool = (name: string) => name.startsWith("bin_") || name.startsWith("restore_");
 const agentMayUse = (name: string) => NOOK_AGENT_TOOLS.has(name) && !NOOK_NEVER_TOOLS.has(name) && !isBinTool(name);

@@ -80,7 +80,7 @@
 
 /* Rows: icon, title (owner or folder below), status, data source, schedule, updated, and ⋯; the columns line up. */
 .reports-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid #1f1f23; }
-.reports-row { display: grid; grid-template-columns: minmax(0, 1fr) 40px; align-items: center; border-bottom: 1px solid #1f1f23; }
+.reports-row { display: grid; grid-template-columns: minmax(0, 1fr) 40px 40px; align-items: center; border-bottom: 1px solid #1f1f23; }
 .reports-row:hover { background: #121215; }
 .reports-row.dragging { opacity: .45; }
 .reports-row[draggable="true"] { cursor: grab; }
@@ -98,6 +98,45 @@
 .reports-row-schedule > span { color: #c9b98f; }
 .reports-row-meta time { color: #85858c; font-size: .8rem; white-space: nowrap; }
 .reports-row-menu { justify-self: center; }
+
+/* Report organization phase 1: ☆/★ on rows and the report header (filled gold when on). */
+.reports-star { width: 36px; height: 36px; display: inline-grid; place-items: center; justify-self: center; border: 0; border-radius: 8px; padding: 0; background: transparent; color: #6f6f76; cursor: pointer; }
+.reports-star svg { width: 18px; height: 18px; }
+.reports-star:hover { background: #1c1c20; color: #d9b55f; }
+.reports-star:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+.reports-star.on { color: #e7c05f; }
+.reports-star.on svg { fill: currentColor; }
+/* Unstarred stars stay quiet on a row until it is hovered or focused (always shown on touch screens). */
+@media (hover: hover) and (pointer: fine) {
+  .reports-row-star:not(.on) { opacity: 0; }
+  .reports-row:hover .reports-row-star, .reports-row:focus-within .reports-row-star { opacity: 1; }
+}
+
+/* The filter bar: pills from 761 px, a Filters button (and its sheet) on a phone. */
+.reports-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -6px 0 14px; }
+.reports-filter-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.reports-filter .ui-select-chip { max-width: 220px; padding: 0 12px; }
+.reports-filter.active .ui-select-chip { border-color: #6b572c; background: #2b261b; color: #ffe19a; }
+.reports-filter-clear { min-height: 32px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; padding: 0 12px; background: transparent; color: #b5ab96; font: inherit; font-size: .8rem; cursor: pointer; white-space: nowrap; }
+.reports-filter-clear:hover { background: #1c1c20; color: #ffe19a; }
+.reports-filter-clear svg { width: 14px; height: 14px; }
+.reports-filter-open { display: none; min-height: 44px; align-items: center; gap: 8px; border: 1px solid #2c2c31; border-radius: 999px; padding: 0 14px; background: #131316; color: #ededee; font: inherit; font-size: .88rem; font-weight: 600; cursor: pointer; }
+.reports-filter-open svg { width: 16px; height: 16px; color: #9a9aa1; }
+.reports-filter-open.active { border-color: #6b572c; background: #2b261b; color: #ffe19a; }
+.reports-filter-open b { min-width: 20px; height: 20px; display: inline-grid; place-items: center; border-radius: 999px; padding: 0 6px; background: #6b572c; color: #ffe19a; font-size: .74rem; }
+.reports-filter-clear-narrow { display: none; }
+.reports-filter-fields { display: grid; gap: 14px; padding: 4px 16px 16px; }
+.reports-filter-field { display: grid; gap: 6px; min-width: 0; }
+.reports-filter-label { color: #9a9aa1; font-size: .8rem; font-weight: 600; }
+@media (max-width: 760px) {
+  .reports-filter-chips { display: none; }
+  .reports-filter-open { display: inline-flex; }
+  .reports-filter-clear-narrow { display: inline-flex; min-height: 44px; }
+}
+
+/* Load more under the list (infinite scroll calls it on its own). */
+.reports-more { display: flex; justify-content: center; padding: 16px 0 8px; }
+.reports-more .secondary-button { min-width: 160px; justify-content: center; }
 .reports-drag-ghost { position: fixed; top: -200px; left: -200px; max-width: 280px; overflow: hidden; border: 1px solid #6b572c; border-radius: 10px; padding: 8px 12px; background: #2b261b; color: #ffe19a; font: 600 .85rem Inter, ui-sans-serif, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .new-report-folder { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; border: 1px dashed #2f2f35; border-radius: 10px; padding: 8px 8px 8px 12px; color: #9a9aa1; font-size: .86rem; }
 .new-report-folder strong { color: #ededee; }
@@ -124,7 +163,8 @@
 }
 @media (max-width: 760px), (pointer: coarse) {
   .reports-menu-compact { width: 44px; height: 44px; }
-  .reports-row { grid-template-columns: minmax(0, 1fr) 44px; }
+  .reports-row { grid-template-columns: minmax(0, 1fr) 44px 44px; }
+  .reports-star { width: 44px; height: 44px; }
   .reports-nav-entry { grid-template-columns: minmax(0, 1fr) 44px; }
   .reports-nav-menu { opacity: 1; }
   .reports-nav > .reports-nav-link { padding-right: 58px; }
@@ -135,6 +175,10 @@
 .report-page-brand strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .report-heading { display: grid; gap: 8px; margin-bottom: 16px; }
 .report-heading h1 { margin: 0; color: #f4f4f5; font-size: 1.3rem; overflow-wrap: anywhere; }
+/* Phase 1: the title with its star beside it. */
+.report-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.report-title-row h1 { min-width: 0; }
+.report-title-star { flex: none; }
 .report-facts { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: #9a9aa1; font-size: .82rem; }
 .report-facts span { display: inline-flex; align-items: center; gap: 5px; }
 .report-facts svg { width: 14px; height: 14px; }

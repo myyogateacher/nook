@@ -1,6 +1,6 @@
 # Report organization at scale: favorites, shared folders, lists
 
-Status: **planned (2026-10-15)**. Phase 1 follows Tableau's favorites. **Phase 2 was simplified by the operator**: folders only group, permissions sit on each report, and reports can have several owners.
+Status: **phase 1 shipped (2026-10-15)**, phases 2 and 3 planned. Phase 1 follows Tableau's favorites. **Phase 2 was simplified by the operator**: folders only group, permissions sit on each report, and reports can have several owners.
 - Content lives in shared folders whose access passes down to everything inside.
 - People keep personal shortcuts as favorites.
 - Optional lists group reports without moving them.
@@ -21,6 +21,8 @@ Next free ids at planning time: migration **061** (060 is the Files `document_ft
 5. **D459 redaction applies to any non-owner.** It keys off "author ≠ owner", so it already covers editors.
 
 ## Phase 1: favorites and scale (migration 061)
+
+**Shipped (2026-10-15).** D486: a favorite is the person's own shortcut, never a grant; every list and count reads it through `readableReportSql`, so it drops out when access is lost (T393) and returns with it. The list is paged by keyset, 100 a page, with an opaque cursor; only the filters in use are written into the SQL, so SQLite picks `reports_owner`, `reports_status`, `reports_live_recent` (`(updated_at DESC, id)`, added beside the planned status index) or the favorites' key. The nav's counts and the Owner filter's choices come from one `GROUP BY` by place and owner. Filters live in the URL query (`?owner=&status=&datasource=&schedule=`); on a phone they open in a bottom sheet (`reports.filters`). At 2,000 reports, 300 folders and 50 groups a page costs about 0.3–2.4 ms of CPU (`tests/reportFavorites.test.ts`).
 
 **Data**
 - `report_favorites(user_id, report_id, created_at)`: primary key on both columns, cascades from users and reports.

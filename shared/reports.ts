@@ -358,12 +358,38 @@ export type ReportSummary = {
   folderId: string | null;
   /** Lane I: the cadence of an enabled schedule, for the list's badge; null when it runs only on demand. */
   scheduleCadence: string | null;
+  /** Report organization phase 1 (061): the owner's id (the Owner filter), and whether the caller starred it. */
+  ownerId: string;
+  favorite: boolean;
 };
+
+/** Report organization phase 1: the Reports list is paged by keyset, newest change first, this many a page. */
+export const REPORT_PAGE_SIZE = 100;
+/**
+ * The Reports list's filters (GET /api/reports, list_reports). `folderId` is one of the caller's folders
+ * (its reports directly, or with `subtree` its subfolders' too) or `unfiled`; `shared` the reports
+ * others share with them; `favorites` the ones they starred. Every filter narrows the readable set.
+ */
+export type ReportListFilter = {
+  q?: string;
+  ownerId?: string;
+  statuses?: ReportStatus[];
+  datasourceId?: string;
+  scheduled?: boolean;
+  favorites?: boolean;
+  shared?: boolean;
+  folderId?: string;
+  subtree?: boolean;
+};
+/** One page of the Reports list; `nextCursor` (opaque) asks for the next, null at the end. */
+export type ReportListPage = { reports: ReportSummary[]; nextCursor: string | null };
+/** The people whose reports the caller can open (the Owner filter's choices), with how many each. */
+export type ReportOwnerFacet = { id: string; name: string; count: number; isMe: boolean };
 
 /** Lane I: one of the owner's report folders, with the count of their live reports directly in it. */
 export type ReportFolder = { id: string; parentId: string | null; name: string; position: number; count: number; createdAt: string; updatedAt: string };
 /** Lane I: the Reports home's left nav: the owner's folder tree (flat, by parent and position) and the counts of its fixed sections. */
-export type ReportFolderTree = { folders: ReportFolder[]; counts: { all: number; unfiled: number; shared: number } };
+export type ReportFolderTree = { folders: ReportFolder[]; counts: { all: number; unfiled: number; shared: number; favorites: number }; owners: ReportOwnerFacet[] };
 /** Folders nest up to three levels deep (a folder, a subfolder, and one below that). */
 export const REPORT_FOLDER_DEPTH = 3;
 export const REPORT_FOLDERS_PER_USER = 200;

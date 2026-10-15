@@ -2,13 +2,13 @@ import type { Context, Hono } from "hono";
 import { z, ZodError } from "zod";
 import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
-import { REPORT_LIMITS } from "../../shared/reports";
+import { REPORT_LIMITS, REPORT_PAGE_SIZE, REPORT_STATUSES } from "../../shared/reports";
 import { roleHasReports } from "./access";
 import { createDatasource, datasourceChoices, datasourceRow, datasourceSummary, deleteDatasource, listDatasources, previewAllowlist, SCHEMA_FIELDS, testConnection, updateDatasource } from "./datasources";
 import { asReportError, ReportError } from "./errors";
 import { startSchemaSync, syncSchema } from "./schemaCatalog";
 import { describeTablesTool, listTablesTool, searchSchemaTool } from "./schemaTools";
-import { binReport, cancelConsole, createReport, listReports, reportDatasource, reportDetail, runConsole, updateReport } from "./service";
+import { binReport, cancelConsole, createReport, listReportsPage, reportDatasource, reportDetail, runConsole, setFavorite, updateReport, type ReportListOptions } from "./service";
 import { limited } from "./runner";
 import "./bin";
 import { registerGenerateRoutes } from "./generateRoutes";
@@ -44,6 +44,36 @@ const consoleSchema = z.object({ sql: z.string().min(1).max(REPORT_LIMITS.sqlCha
 const emptySchema = z.object({}).strict();
 
 const notFound = () => new ReportError(404, "NOT_FOUND", "Not found");
+
+const flag = z.enum(["1", "0", "true", "false"]).transform((value) => value === "1" || value === "true");
+/**
+ * GET /api/reports (report organization phase 1): `q`, `owner` (an id, or `me`), `status` (comma-separated),
+ * `datasource`, `scheduled` (1 or 0), `favorites=1`, `shared=1`, `folder` (an id, or `unfiled`) with
+ * `subtree=1`, `cursor` (from the last page's `nextCursor`), and `limit` (at most REPORT_PAGE_SIZE).
+ */
+const listSchema = z.object({
+  q: z.string().max(200).optional(),
+  owner: z.union([z.literal("me"), uuid]).optional(),
+  status: z.string().max(80).transform((value) => value.split(",").filter(Boolean)).pipe(z.array(z.enum(REPORT_STATUSES)).max(REPORT_STATUSES.length)).optional(),
+  datasource: uuid.optional(),
+  scheduled: flag.optional(),
+  favorites: flag.optional(),
+  shared: flag.optional(),
+  folder: z.union([z.literal("unfiled"), uuid]).optional(),
+  subtree: flag.optional(),
+  cursor: z.string().max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(REPORT_PAGE_SIZE).optional()
+}).strict();
+
+function listQuery(c: Context<AppEnv>): ReportListOptions {
+  const query = listSchema.parse(c.req.query());
+  const userId = c.get("user").id;
+  return {
+    q: query.q, ownerId: query.owner === "me" ? userId : query.owner?.toLowerCase(), statuses: query.status, datasourceId: query.datasource?.toLowerCase(),
+    scheduled: query.scheduled, favorites: query.favorites, shared: query.shared, folderId: query.folder?.toLowerCase(), subtree: query.subtree,
+    cursor: query.cursor, limit: query.limit
+  };
+}
 
 export function id(c: Context<AppEnv>, name: string) {
   const parsed = uuid.safeParse(c.req.param(name)?.toLowerCase());
@@ -118,7 +148,7 @@ export function registerReportRoutes(app: Hono<AppEnv>) {
   // Lane I: report folders (literal /api/reports/folders paths, before /api/reports/:reportId).
   registerReportFolderRoutes(app);
   app.get("/api/reports/datasources", handle(() => ({ datasources: datasourceChoices() })));
-  app.get("/api/reports", handle((c) => ({ reports: listReports(c.get("user").id, { q: c.req.query("q")?.slice(0, 200) }) })));
+  app.get("/api/reports", handle((c) => listReportsPage(c.get("user").id, listQuery(c))));
   app.post("/api/reports", handle(async (c) => {
     const input = await parseJson(c.req.raw, reportCreate);
     return c.json({ report: createReport(c.get("user").id, { ...input, folderId: input.folderId?.toLowerCase() ?? null }) }, 201);
@@ -129,6 +159,9 @@ export function registerReportRoutes(app: Hono<AppEnv>) {
     return { report: updateReport(c.get("user").id, reportId, await parseJson(c.req.raw, reportPatch)) };
   }));
   app.delete("/api/reports/:reportId", handle((c) => binReport(c.get("user").id, id(c, "reportId"))));
+  // Report organization phase 1 (D486): the caller's own star on a report they can open.
+  app.put("/api/reports/:reportId/favorite", handle((c) => setFavorite(c.get("user").id, id(c, "reportId"), true)));
+  app.delete("/api/reports/:reportId/favorite", handle((c) => setFavorite(c.get("user").id, id(c, "reportId"), false)));
 
   // The guarded manual SQL console and the Schema browser (the report's data source).
   app.post("/api/reports/:reportId/console", handle(async (c) => {

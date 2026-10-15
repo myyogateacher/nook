@@ -1,5 +1,5 @@
 import { useState, type DragEvent, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, ChartColumn, FilePlus2, Folder as FolderIcon, FolderInput, FolderPlus, Inbox, Pencil, Trash2, Users } from "lucide-react";
+import { ArrowDown, ArrowUp, ChartColumn, FilePlus2, Folder as FolderIcon, FolderInput, FolderPlus, Inbox, Pencil, Star, Trash2, Users } from "lucide-react";
 import type { ReportFolder, ReportFolderTree } from "../../shared/reports";
 import type { ReportsFolderView } from "../router";
 import { ReportOverflowMenu, type MenuItem } from "./reportCommands";
@@ -28,7 +28,7 @@ type NavProps = {
 };
 
 /**
- * The Reports home's left nav (Lane I), in the Notes folder sidebar's look: All reports, Unfiled, the
+ * The Reports home's left nav (Lane I), in the Notes folder sidebar's look: All reports, Favorites (phase 1), Unfiled, the
  * owner's folder tree with counts (up to three levels), Shared with me, and New folder. Each folder has a
  * ⋯ menu (rename, new subfolder, new report here, delete). While a report row is dragged, Unfiled and
  * every folder are drop targets, highlighted under the pointer. On a phone the same list sits in a sheet.
@@ -116,6 +116,7 @@ export function ReportFolderNav({ tree, view, onSelect, canWrite, dragging, onDr
   };
   return <nav className={`reports-nav${dragging || draggingFolder ? " is-dragging" : ""}`} aria-label="Report folders">
     {item("all", "All reports", <ChartColumn aria-hidden="true" />, tree?.counts.all, view === null, () => onSelect(null))}
+    {item("favorites", "Favorites", <Star aria-hidden="true" />, tree?.counts.favorites, view === "favorites", () => onSelect("favorites"), {}, " reports-nav-favorites")}
     {item("unfiled", "Unfiled", <Inbox aria-hidden="true" />, tree?.counts.unfiled, view === "unfiled", () => onSelect("unfiled"), dropProps("unfiled", null))}
     <div className="reports-nav-label">Folders</div>
     <ul className="reports-nav-tree" role="list">

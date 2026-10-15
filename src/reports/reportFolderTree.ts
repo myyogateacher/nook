@@ -42,6 +42,7 @@ export function viewTitle(view: ReportsFolderView | null, folders: readonly Repo
   if (!view) return "All reports";
   if (view === "unfiled") return "Unfiled";
   if (view === "shared") return "Shared with me";
+  if (view === "favorites") return "Favorites";
   return folders.find((folder) => folder.id === view)?.name ?? "Folder";
 }
 

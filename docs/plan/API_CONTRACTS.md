@@ -2618,6 +2618,19 @@ Migration **059** (`report_folders`, `reports.folder_id`). Folders are the owner
 
 Audited as `reports.folder.create`, `.update`, `.bin`, `.restore`, `.purge`, and `reports.report.file`. MCP: `list_report_folders` (`reports:read`; a key over chosen reports sees only the folders holding one, and counts of those reports), `create_report_folder` and `move_report_to_folder` (`reports:write`, counted in `report_write`, audited with the key; nothing deletes). URLs: `/reports` (All), `/reports/folder/:id`, `/reports/unfiled`, `/reports/shared`.
 
+## Analytics reports: report organization phase 1 (favorites and scale)
+
+Migration **061** (`report_favorites`, the `reports_status` and `reports_live_recent` indexes). D486, T393. `ReportSummary` gains `ownerId` and `favorite` (the caller's star).
+
+| Route | Body | Returns |
+| --- | --- | --- |
+| `GET /api/reports?q=&owner=&status=&datasource=&scheduled=&favorites=&shared=&folder=&subtree=&cursor=&limit=` | | `{ reports: [ReportSummary], nextCursor }`: the reports the caller can open, newest change first, at most `limit` (default and maximum 100). `owner` is `me` or a person's id; `status` comma-separated statuses; `scheduled` `1` (an enabled schedule that is not `manual`) or `0`; `favorites=1` the caller's stars; `shared=1` reports others share with them; `folder` one of their folders (with `subtree=1` its subfolders too) or `unfiled`. `nextCursor` is opaque; pass it back as `cursor` for the next page, null at the end. 400 `INVALID` for an unknown parameter, a malformed value, or a bad cursor |
+| `PUT /api/reports/:id/favorite` | | `{ favorite: true }`: stars a report the caller can open (404 otherwise); idempotent. Viewers too (an allowlisted personal write) |
+| `DELETE /api/reports/:id/favorite` | | `{ favorite: false }`: removes the caller's own star; never says whether the report exists |
+| `GET /api/reports/folders` | | as above, plus `counts.favorites` (starred reports the caller can still open) and `owners: [{ id, name, count, isMe }]` (the Owner filter's choices); every count comes from one `GROUP BY` over the readable set |
+
+Audited as `reports.report.star` and `reports.report.unstar` (only when the star changes). MCP: `list_reports` takes `ownerId` (`me` or an id), `statuses`, `datasourceId`, `scheduled`, `favorites`, `shared`, `folderId` (or `unfiled`) with `subtree`, `cursor`, and `limit` ≤ 100, and answers `{ reports: [{ …, owner, favorite }], nextCursor }`; `list_report_folders` adds `counts.favorites` and `owners`. `star_report` and `unstar_report` (`reports:write`, counted in `report_write`, audited with the key; never offered to agents). URLs: `/reports/favorites`, and the list's filters in the query: `?owner=&status=&datasource=&schedule=on|off`.
+
 ## Analytics reports (Wave 46): generation from a doc
 
 D424–D428, T368–T370. Migration **051** (`report_runs_via`: `agent_runs.via` gains `reports`; `reports.doc_arg`). Wire types are in `shared/reportsGenerate.ts` (`shared/reports.ts` stays frozen). Same session, CSRF, role, and guest rules as wave 45. Generating also needs a role that may chat with agents (403 `ROLE_READ_ONLY` otherwise), AI configured (503 `NOT_CONFIGURED`: no AGENT_SECRETS_KEY or no provider), and today's token budget (429 `LIMIT_REACHED` with `reason: "budget"`). Doc errors: **502 `DOC_FETCH`** (unreachable, an error result, an empty doc, no fitting read-only tool, a server that is off), **400 `DOC_TOOL_REFUSED`** (the named tool's effective policy is not `auto`: it is not read-only, or an admin set it to confirm or off; it is never called) and **502 `MCP_AUTH`** (`reconnect: true, serverId`: the doc server refused its credential; the UI says "Reconnect needed").

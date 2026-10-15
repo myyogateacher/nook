@@ -15,6 +15,7 @@ import { NewReportSheet } from "./NewReportSheet";
 import { copyReportLink, LinkSheet, reportLink } from "./reportLink";
 import { ReportConsoleContext } from "./reportConsole";
 import { STATUS_LABELS } from "./ReportsHome";
+import { StarButton } from "./StarButton";
 import { ReportGeneration } from "./ReportGeneration";
 import { SchemaBrowser } from "./SchemaBrowser";
 import { ModelSheet } from "./ModelSheet";
@@ -229,7 +230,11 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     {!loadError && !report && <p className="reports-loading" role="status">Opening the report…</p>}
     {report && <section className="reports-body report-body" aria-labelledby="report-title">
       <div className="report-heading">
-        <h1 id="report-title">{report.title}</h1>
+        <div className="report-title-row">
+          <h1 id="report-title">{report.title}</h1>
+          {/* Phase 1 (D486): the caller's own star, optimistic. */}
+          <StarButton reportId={report.id} title={report.title} favorite={report.favorite} onChange={(favorite) => setReport((current) => current && current.id === report.id ? { ...current, favorite } : current)} className="report-title-star" />
+        </div>
         <p className="report-facts">
           <span className={`reports-status reports-status-${report.status}`}>{STATUS_LABELS[report.status]}</span>
           <span><Database aria-hidden="true" />{report.datasourceName ?? "No data source"}</span>

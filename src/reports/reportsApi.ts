@@ -1,12 +1,32 @@
 import { api, ApiError } from "../api";
-import type { CatalogTable, ConnectionTest, DatasourceChoice, DatasourceSummary, QueryOutcome, ReportDetail, ReportFolder, ReportFolderTree, ReportSummary, SchemaSearchHit, SchemaSyncResult } from "../../shared/reports";
+import type { CatalogTable, ConnectionTest, DatasourceChoice, DatasourceSummary, QueryOutcome, ReportDetail, ReportFolder, ReportFolderTree, ReportListFilter, ReportListPage, ReportSummary, SchemaSearchHit, SchemaSyncResult } from "../../shared/reports";
 import type { DocServerChoice, DocState, GenerateStarted, GenerationRun } from "../../shared/reportsGenerate";
 
 /** The Reports API (docs/plan/API_CONTRACTS.md § Analytics reports, Wave 45). */
 
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) });
 
-export const listReports = (q = "") => api<{ reports: ReportSummary[] }>(`/reports${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`);
+/** Report organization phase 1: GET /api/reports's query for a page of the list (the filters and the cursor). */
+export type ReportListQuery = ReportListFilter & { cursor?: string | null };
+export function reportListSearch(query: ReportListQuery) {
+  const params = new URLSearchParams();
+  const q = query.q?.trim();
+  if (q) params.set("q", q.slice(0, 200));
+  if (query.ownerId) params.set("owner", query.ownerId);
+  if (query.statuses?.length) params.set("status", query.statuses.join(","));
+  if (query.datasourceId) params.set("datasource", query.datasourceId);
+  if (query.scheduled !== undefined) params.set("scheduled", query.scheduled ? "1" : "0");
+  if (query.favorites) params.set("favorites", "1");
+  if (query.shared) params.set("shared", "1");
+  if (query.folderId) params.set("folder", query.folderId);
+  if (query.folderId && query.subtree) params.set("subtree", "1");
+  if (query.cursor) params.set("cursor", query.cursor);
+  const text = params.toString().replace(/%2C/g, ",");
+  return text ? `?${text}` : "";
+}
+export const listReports = (query: ReportListQuery = {}) => api<ReportListPage>(`/reports${reportListSearch(query)}`);
+/** D486: the caller's own star on a report they can open. */
+export const starReport = (id: string, favorite: boolean) => api<{ favorite: boolean }>(`/reports/${id}/favorite`, { method: favorite ? "PUT" : "DELETE", body: "{}" });
 export const getReport = (id: string) => api<{ report: ReportDetail }>(`/reports/${id}`);
 export const createReport = (title: string, datasourceId: string, folderId: string | null = null) => api<{ report: ReportDetail }>("/reports", json("POST", folderId ? { title, datasourceId, folderId } : { title, datasourceId }));
 

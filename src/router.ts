@@ -3,8 +3,45 @@ import { formatBoardSearch, isDefaultBoardQuery, parseBoardSearch, type BoardQue
 import { formatHomeSearch, NEW_VIEW, parseMyWorkSearch, parseViewSearch, type TasksHome } from "./tasks/home/homeUrl";
 import { appName } from "./appName";
 
-/** Lane I: the Reports home's view: Unfiled, Shared with me, or one of the person's folders (its id). */
-export type ReportsFolderView = "unfiled" | "shared" | (string & {});
+/** Lane I: the Reports home's view: Unfiled, Shared with me, Favorites (phase 1), or one of the person's folders (its id). */
+export type ReportsFolderView = "unfiled" | "shared" | "favorites" | (string & {});
+
+/**
+ * Report organization phase 1: the Reports list's filters in its URL query (?owner=&status=&datasource=&schedule=),
+ * so Back and Forward restore them. `owner` is `me` or a person's id; `status` one or more statuses,
+ * comma-separated; `schedule` `on` or `off`. Anything malformed is dropped.
+ */
+export type ReportsFilter = { owner?: string; status?: string[]; datasource?: string; schedule?: "on" | "off" };
+export const REPORTS_FILTER_STATUSES = ["draft", "ready", "stale", "error"] as const;
+
+export function parseReportsFilter(search: string): ReportsFilter | undefined {
+  const params = new URLSearchParams(search);
+  const filter: ReportsFilter = {};
+  const owner = params.get("owner");
+  const status = params.get("status");
+  const datasource = params.get("datasource");
+  const schedule = params.get("schedule");
+  if (owner && (owner === "me" || isRouteId(owner))) filter.owner = owner.toLowerCase();
+  if (status) {
+    const statuses = [...new Set(status.split(","))].filter((value) => (REPORTS_FILTER_STATUSES as readonly string[]).includes(value));
+    if (statuses.length) filter.status = REPORTS_FILTER_STATUSES.filter((value) => statuses.includes(value));
+  }
+  if (datasource && isRouteId(datasource)) filter.datasource = datasource.toLowerCase();
+  if (schedule === "on" || schedule === "off") filter.schedule = schedule;
+  return Object.keys(filter).length ? filter : undefined;
+}
+
+export function formatReportsFilter(filter: ReportsFilter | undefined) {
+  if (!filter) return "";
+  const params = new URLSearchParams();
+  if (filter.owner && (filter.owner === "me" || isRouteId(filter.owner))) params.set("owner", filter.owner.toLowerCase());
+  const statuses = REPORTS_FILTER_STATUSES.filter((value) => filter.status?.includes(value));
+  if (statuses.length) params.set("status", statuses.join(","));
+  if (filter.datasource && isRouteId(filter.datasource)) params.set("datasource", filter.datasource.toLowerCase());
+  if (filter.schedule === "on" || filter.schedule === "off") params.set("schedule", filter.schedule);
+  const text = params.toString().replace(/%2C/g, ",");
+  return text ? `?${text}` : "";
+}
 
 export type Route =
   | { app: "home" }
@@ -52,7 +89,8 @@ export type Route =
   // Analytics reports (Wave 45): the list at /reports and one report at /reports/:reportId. Its sheets
   // (the Schema browser, a new report) are history layers on that entry, not URLs.
   // Lane I: the list's folder: /reports/folder/:folderId, /reports/unfiled, /reports/shared (none: All).
-  | { app: "reports"; reportId: string | null; folder?: ReportsFolderView }
+  // Phase 1: /reports/favorites, and the list's filters in its query (`filter`, never on a report).
+  | { app: "reports"; reportId: string | null; folder?: ReportsFolderView; filter?: ReportsFilter }
   // The Settings hub (Wave 37): a page at /settings (the section list on phones), and one account
   // section at /settings/:section. Team sections are `team` routes under /settings/team/… (above).
   // Wave 40: Settings → Agents has an editor below it at /settings/agents/:agentId (or /settings/agents/new).
@@ -209,9 +247,12 @@ export function parseRoute(pathname: string, search = ""): Route {
   if (app === "chat") return parseChat(rest, search);
   if (app === "reports") {
     const [reportId, folderId] = rest;
-    if (rest.length === 1 && (reportId === "unfiled" || reportId === "shared")) return { app: "reports", reportId: null, folder: reportId };
-    if (rest.length === 2 && reportId === "folder" && folderId !== undefined && isRouteId(folderId)) return { app: "reports", reportId: null, folder: folderId.toLowerCase() };
-    return rest.length === 1 && reportId !== undefined && isRouteId(reportId) ? { app: "reports", reportId: reportId.toLowerCase() } : { app: "reports", reportId: null };
+    if (rest.length === 1 && reportId !== undefined && isRouteId(reportId)) return { app: "reports", reportId: reportId.toLowerCase() };
+    const filter = parseReportsFilter(search);
+    const list = (folder?: ReportsFolderView): Route => ({ app: "reports", reportId: null, ...(folder ? { folder } : {}), ...(filter ? { filter } : {}) });
+    if (rest.length === 1 && (reportId === "unfiled" || reportId === "shared" || reportId === "favorites")) return list(reportId);
+    if (rest.length === 2 && reportId === "folder" && folderId !== undefined && isRouteId(folderId)) return list(folderId.toLowerCase());
+    return list();
   }
   return { app: "home" };
 }
@@ -359,8 +400,9 @@ export function formatRoute(route: Route): string {
   if (route.app === "whiteboards") return formatCollection("/whiteboards", route.folder, route.boardId);
   if (route.app === "reports") {
     if (route.reportId && isRouteId(route.reportId)) return `/reports/${route.reportId.toLowerCase()}`;
-    if (route.folder === "unfiled" || route.folder === "shared") return `/reports/${route.folder}`;
-    return route.folder && isRouteId(route.folder) ? `/reports/folder/${route.folder.toLowerCase()}` : "/reports";
+    const query = formatReportsFilter(route.filter);
+    if (route.folder === "unfiled" || route.folder === "shared" || route.folder === "favorites") return `/reports/${route.folder}${query}`;
+    return `${route.folder && isRouteId(route.folder) ? `/reports/folder/${route.folder.toLowerCase()}` : "/reports"}${query}`;
   }
   if (route.app === "vault") {
     if (!route.vaultId || !isRouteId(route.vaultId)) return "/vault";
@@ -478,9 +520,13 @@ export const routeFromLocation = (location: { pathname: string; search: string }
  * The part of a location `formatRoute` produces, to compare against it: the path, plus the query
  * on Tasks URLs (the only app whose URLs carry one).
  */
+const REPORTS_LIST_PATH = /^\/reports(\/(unfiled|shared|favorites|folder\/[^/]+))?\/?$/;
+
 export function locationUrl(location: { pathname: string; search: string }) {
-  // Tasks URLs carry the board query; /chat/new carries the preselected agent (Wave 40); the Audit log its filters (Wave 42).
-  return /^\/tasks(\/|$)/.test(location.pathname) || location.pathname === "/chat/new" || /^\/chat\/audit(\/|$)/.test(location.pathname) ? `${location.pathname}${location.search}` : location.pathname;
+  // Tasks URLs carry the board query; /chat/new carries the preselected agent (Wave 40); the Audit log its filters (Wave 42);
+  // the Reports list its filters (report organization phase 1).
+  return /^\/tasks(\/|$)/.test(location.pathname) || location.pathname === "/chat/new" || /^\/chat\/audit(\/|$)/.test(location.pathname) || REPORTS_LIST_PATH.test(location.pathname)
+    ? `${location.pathname}${location.search}` : location.pathname;
 }
 
 export function sameRoute(left: Route, right: Route) {

@@ -90,7 +90,10 @@ export const ROLE_READ_ONLY_ALLOWED_WRITES: readonly AllowedWrite[] = [
   // Wave 43 (AC-D, D361): a viewer reading a shared chat continues it in their own copy (they must be able to use its agent).
   { method: "POST", path: "/api/chats/:chatId/fork", roles: ["viewer"], why: "an own copy of a chat shared with them" },
   // Wave 44 (AC-E): Try it on a knowledge base shared with them (view); a read sent as POST.
-  { method: "POST", path: "/api/knowledge/:kbId/search", roles: ["viewer"], why: "a read sent as POST (Try it on a readable knowledge base)" }
+  { method: "POST", path: "/api/knowledge/:kbId/search", roles: ["viewer"], why: "a read sent as POST (Try it on a readable knowledge base)" },
+  // Report organization phase 1 (D486): a viewer stars the reports they can open (their own shortcut, never a grant).
+  { method: "PUT", path: "/api/reports/:reportId/favorite", roles: ["viewer"], why: "own favorite on a readable report" },
+  { method: "DELETE", path: "/api/reports/:reportId/favorite", roles: ["viewer"], why: "own favorite" }
 ];
 
 /**

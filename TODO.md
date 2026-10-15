@@ -14,7 +14,7 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 ## In flight
 
 - [ ] Report organization at scale ([plan](docs/plan/REPORTS_ORG.md), Tableau-style; replaces "readers' own placement"; the D460 `group_grants` fold becomes optional cleanup). Phase 2 follows the operator's simple model; all its questions are settled.
-  - [ ] Phase 2 (062): simple permissions (operator decision, 2026-10-15). Folders are only for grouping and never grant access. A report can have several owners, and an owner or an admin can make others owners. An owner can change the report's folder, its sharing and its other permissions. A report always keeps at least one owner. Folders are one workspace-wide tree. Any member can create a folder; only admins can rename, move, reorder or delete one.
+  - [ ] (Lane P2) Phase 2 (062): simple permissions (operator decision, 2026-10-15). Folders are only for grouping and never grant access. A report can have several owners, and an owner or an admin can make others owners. An owner can change the report's folder, its sharing and its other permissions. A report always keeps at least one owner. Folders are one workspace-wide tree. Any member can create a folder; only admins can rename, move, reorder or delete one.
   - [ ] Phase 3 (064, optional): report Lists. A report can sit in many lists, and a list never grants access.
 
 ## Known LOW leftovers

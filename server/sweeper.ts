@@ -21,6 +21,7 @@ import { sweepAgentRateLimits } from "./agents/limits";
 import { resyncStaleServers, sweepSessions } from "./agents/toolServers";
 import { sweepKnowledge } from "./knowledge/index";
 import { sweepSchemaSync } from "./reports/schemaCatalog";
+import { scheduleDocumentIndex } from "./documentSearch";
 import { logger } from "./log";
 
 const slog = logger("sweeper");
@@ -118,6 +119,8 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
       } catch (error) {
         slog.error("Bin sweep failed", error);
       }
+      // Lane FTS: the Files search index catches up with anything a missed queue left stale (non-blocking).
+      scheduleDocumentIndex();
       try {
         // Calendar notifications (and fired standalone reminders) are kept for 30 days.
         const removed = sweepNotifications(options.nowMs);

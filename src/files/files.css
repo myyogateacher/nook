@@ -257,3 +257,7 @@
   .files-upload-menu button { min-height: 44px; }
   .folder-link[data-depth] { padding-left: calc(13px + var(--folder-depth, 1) * 14px); }
 }
+
+/* Lane FTS: "In file text", files whose text matches the filter (the Files full-text index). */
+.file-text-hits { margin-top: 12px; padding-top: 10px; border-top: 1px solid #26262b; min-width: 0; }
+.file-text-hits-title { margin: 0 14px 6px; color: #8b8b92; font-size: .72rem; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }

@@ -129,6 +129,7 @@ import { isSearchPushedEntry, markSearchPushed, nextSearchHint, readSearchHint, 
 import { SEARCH_MAX_CHARS, type NoteSearchHit } from "./search/searchApi";
 import { useNoteSearch } from "./search/useNoteSearch";
 import { useWhiteboardSearch, WhiteboardSearchResults } from "./search/WhiteboardSearchResults";
+import { FileSearchResults, useFileSearch } from "./search/FileSearchResults";
 import { ModulesSettings } from "./ModulesSettings";
 import { hiddenEntryStep, hiddenModuleForApp, normalizeDisabledModules, recordPopDepth, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, routeGateModules, unavailableModules, type ModuleId, moduleDef } from "./modules";
 import { usePreferences, type PreferencesStatus } from "./usePreferences";
@@ -974,7 +975,7 @@ export function App() {
   const [query, setQuery] = useState("");
   // "Search all notes" widens a search beyond the current section.
   const [searchAll, setSearchAll] = useState(false);
-  const [searchKind, setSearchKind] = useState<"notes" | "whiteboards">("notes");
+  const [searchKind, setSearchKind] = useState<"notes" | "whiteboards" | "files">("notes");
   const [activeSearchIndex, setActiveSearchIndex] = useState(-1);
   const searchInputRef = useRef<HTMLInputElement>(null);
   // The search hint new Notes history entries carry. Updated during render, and directly when
@@ -1340,7 +1341,13 @@ export function App() {
   const boardsFacet = boardFacetAvailable && searchKind === "whiteboards";
   const boardSearch = useWhiteboardSearch(query, boardsFacet);
   const showingBoards = boardsFacet && boardSearch.active;
-  const showingSearchResults = !showingBoards && search.active && search.status === "ready";
+  // Lane FTS: the Files facet: names and text of Files documents (the Files full-text index).
+  const fileFacetAvailable = isModuleEnabled(disabledModules, "files");
+  const filesFacet = fileFacetAvailable && searchKind === "files";
+  const fileSearch = useFileSearch(query, filesFacet);
+  const showingFiles = filesFacet && fileSearch.active;
+  const showingFacet = showingBoards || showingFiles;
+  const showingSearchResults = !showingFacet && search.active && search.status === "ready";
   searchHintRef.current = search.active ? { query, all: searchAll } : null;
   const activeSearchHit = showingSearchResults ? search.results[activeSearchIndex] ?? null : null;
   useEffect(() => setActiveSearchIndex(-1), [query, searchFolder]);
@@ -1895,6 +1902,12 @@ export function App() {
     if (activeApp === "notes" && !await leaveNotes()) return;
     openNotificationPath(path);
   }
+  // Lane FTS: a file found by search opens in Files as a new entry, so Back returns to the search.
+  async function openFileHit(documentId: string) {
+    if (activeApp === "notes" && !await leaveNotes()) return;
+    navigate({ app: "files", folder: "all", documentId }, { filesPanel: "preview" });
+    setActiveApp("files");
+  }
   const openContentPathRef = useRef(openContentPath);
   openContentPathRef.current = openContentPath;
   useEffect(() => {
@@ -2420,11 +2433,12 @@ export function App() {
             />
             {query ? <button type="button" className="search-clear" onClick={() => { clearSearch(); searchInputRef.current?.focus(); }} aria-label="Clear search"><X /></button> : <kbd aria-hidden="true">/</kbd>}
           </div>}
-          {search.active && boardFacetAvailable && <div className="search-scope search-facets" role="group" aria-label="Search in">
-            <button type="button" className="search-scope-chip" aria-pressed={!boardsFacet} onClick={() => setSearchKind("notes")}><FileText aria-hidden="true" />Notes</button>
-            <button type="button" className="search-scope-chip" aria-pressed={boardsFacet} onClick={() => setSearchKind("whiteboards")}><PenTool aria-hidden="true" />Whiteboards</button>
+          {search.active && (boardFacetAvailable || fileFacetAvailable) && <div className="search-scope search-facets" role="group" aria-label="Search in">
+            <button type="button" className="search-scope-chip" aria-pressed={!boardsFacet && !filesFacet} onClick={() => setSearchKind("notes")}><FileText aria-hidden="true" />Notes</button>
+            {boardFacetAvailable && <button type="button" className="search-scope-chip" aria-pressed={boardsFacet} onClick={() => setSearchKind("whiteboards")}><PenTool aria-hidden="true" />Whiteboards</button>}
+            {fileFacetAvailable && <button type="button" className="search-scope-chip" aria-pressed={filesFacet} onClick={() => setSearchKind("files")}><FolderIcon aria-hidden="true" />Files</button>}
           </div>}
-          {search.active && !showingBoards && selectedFolder !== "all" && <div className="search-scope">
+          {search.active && !showingFacet && selectedFolder !== "all" && <div className="search-scope">
             {!searchAll && <span>Searching {selectedFolder === "shared" ? "Shared with me" : folders.find((folder) => folder.id === selectedFolder)?.name ?? "this folder"}</span>}
             <button type="button" className="search-scope-chip" aria-pressed={searchAll} onClick={() => setSearchAll((all) => !all)}>{searchAll ? <Check aria-hidden="true" /> : <Archive aria-hidden="true" />}Search all notes</button>
           </div>}
@@ -2437,6 +2451,10 @@ export function App() {
           {showingBoards && boardSearch.status === "loading" && <p className="search-status" role="status">Searching whiteboards…</p>}
           {showingBoards && boardSearch.status === "ready" && <WhiteboardSearchResults results={boardSearch.results} truncated={boardSearch.truncated} relativeTime={relativeTime} onOpen={(hit) => { void openContentPath(`/whiteboards/${hit.id}`); }} />}
           {showingBoards && boardSearch.status === "ready" && !boardSearch.results.length && <div className="empty-state"><div><PenTool /></div><h2>No whiteboards match</h2><p>Names and the text on boards you can open are searched.</p></div>}
+          {showingFiles && fileSearch.status === "error" && <p className="search-error" role="alert">{fileSearch.error}</p>}
+          {showingFiles && fileSearch.status === "loading" && <p className="search-status" role="status">Searching files…</p>}
+          {showingFiles && fileSearch.status === "ready" && <FileSearchResults results={fileSearch.results} truncated={fileSearch.truncated} relativeTime={relativeTime} onOpen={(hit) => { void openFileHit(hit.id); }} />}
+          {showingFiles && fileSearch.status === "ready" && !fileSearch.results.length && <div className="empty-state"><div><FolderIcon /></div><h2>No files match</h2><p>Names and the text of text files you can open are searched.</p></div>}
           {showingSearchResults && <SearchResults
             results={search.results}
             truncated={search.truncated}
@@ -2448,7 +2466,7 @@ export function App() {
             onHover={setActiveSearchIndex}
           />}
           {showingSearchResults && !search.results.length && <div className="empty-state"><div><Search /></div><h2>No matches</h2><p>{searchAll || selectedFolder === "all" ? "Try other words, or fewer of them." : "Try other words, or search all notes."}</p></div>}
-          {!showingSearchResults && !showingBoards && visibleNotes.map((item) => <article
+          {!showingSearchResults && !showingFacet && visibleNotes.map((item) => <article
             key={item.id}
             className={`note-card${selectedNoteId === item.id ? " selected" : ""}${draggingNoteId === item.id ? " dragging" : ""}`}
             draggable={item.is_owner === 1 && canWrite}
@@ -2468,7 +2486,7 @@ export function App() {
             </button>
             {item.is_owner === 1 && canWrite && <button className="note-delete-button" disabled={editorLocked} onClick={(event) => askDeleteNote(item.id, item.title, event.currentTarget)} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
           </article>)}
-          {!showingSearchResults && !showingBoards && !visibleNotes.length && <div className="empty-state"><div><FilePlus2 /></div><h2>No notes here</h2><p>{query ? (search.status === "loading" ? "Searching note text…" : "Try another search.") : selectedFolder === "shared" ? "Notes shared with you will appear here." : (canWrite ? "Create a note and start writing." : "Notes shared with you appear here.")}</p>{!query && selectedFolder !== "shared" && canWrite && <button onClick={createNote}>New note</button>}</div>}
+          {!showingSearchResults && !showingFacet && !visibleNotes.length && <div className="empty-state"><div><FilePlus2 /></div><h2>No notes here</h2><p>{query ? (search.status === "loading" ? "Searching note text…" : "Try another search.") : selectedFolder === "shared" ? "Notes shared with you will appear here." : (canWrite ? "Create a note and start writing." : "Notes shared with you appear here.")}</p>{!query && selectedFolder !== "shared" && canWrite && <button onClick={createNote}>New note</button>}</div>}
         </div>
       </section>
 

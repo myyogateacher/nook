@@ -31,6 +31,7 @@ import { createFolder, FolderError } from "./folders";
 import { registerAttachmentRoutes } from "./attachments/routes";
 import { isSystemFolder, isSystemFolderError, SYSTEM_FOLDER_BODY } from "./attachments/service";
 import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
+import { scheduleDocumentIndex } from "./documentSearch";
 import { createDraftNote, discardDraft, DraftActionError, hasDraftDelta, isBlankNote, moveNoteToBin, publishDraft, purgeBlankNote, writeDraftLocked } from "./noteDrafts";
 import { resolveNoteDraftProposals } from "./inbox/noteDraftProposals";
 import { registerSearchRoutes } from "./searchRoutes";
@@ -1134,6 +1135,8 @@ try {
 } catch (error) {
   log.error("Whiteboard search index reconcile failed", error);
 }
+// Lane FTS (060): the Files search index; after the migration this is the backfill, in the background.
+scheduleDocumentIndex();
 try {
   await reconcileEventNextOccurrences();
 } catch (error) {

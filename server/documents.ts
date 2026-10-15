@@ -19,6 +19,7 @@ import { mailShared, shareMembers } from "./mail/triggers";
 import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, writeDirectShares } from "./access/shares";
 import { whiteboardFileName } from "../shared/whiteboardScene";
 import { isWhiteboard, renameWhiteboardIndex } from "./whiteboards/search";
+import { renameDocumentIndex, scheduleDocumentIndex } from "./documentSearch";
 import { sourceAccessChangedHook } from "./knowledge/hooks";
 import { isHostKind } from "./attachments/hosts";
 import { ensureSystemFolder, isSystemFolder, SYSTEM_FOLDER_BODY, SYSTEM_FOLDER_MESSAGE } from "./attachments/service";
@@ -290,6 +291,8 @@ async function commitReceived(userId: string, id: string, writer: ObjectWriter, 
     if (!replay || replay.deleted) throw new UploadError(409, { error: "This upload was already stored and has since been deleted", code: "IDEMPOTENCY_KEY_USED" });
     return { document: replay.document, replay: true };
   }
+  // Lane FTS: the Files search index reads the new text in the background.
+  scheduleDocumentIndex();
   return { document: ownedDocumentSummary(id, userId)!, replay: false };
 }
 
@@ -645,6 +648,7 @@ export async function patchDocument(userId: string, id: string, input: { name?: 
         .run(name, moving ? 1 : 0, input.folderId ?? null, now(), id, userId);
       if (name !== null) audit(userId, null, "document.rename", { documentId: id });
       if (name !== null) renameWhiteboardIndex(id, name);
+      if (name !== null) renameDocumentIndex(id, name);
       if (moving) audit(userId, null, "document.move", { documentId: id, folderId: input.folderId ?? null });
     })();
     // A file that uses its folder's access may change audience with the move (Wave 44 fixes, M1).

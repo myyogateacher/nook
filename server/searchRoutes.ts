@@ -5,6 +5,7 @@ import { db } from "./db";
 import { buildFtsQuery, HIT_END, HIT_START, MAX_QUERY_LENGTH, toSegments, type Segment } from "./search";
 import { searchCollectionRows } from "./collections/search";
 import { searchWhiteboards } from "./whiteboards/search";
+import { searchDocuments } from "./documentSearch";
 import { searchReports } from "./reports/search";
 import { uuid } from "./validation";
 import { NO_FILTER, type SqlFilter } from "./keyResources";
@@ -197,13 +198,15 @@ export function registerSearchRoutes(app: Hono<AppEnv>) {
     const folder = c.req.query("folder") ?? "all";
     const limitParam = c.req.query("limit");
     if (q.length > MAX_QUERY_LENGTH) return c.json(invalid(`q must be at most ${MAX_QUERY_LENGTH} characters`), 400);
-    if (scope !== "notes" && scope !== "collections" && scope !== "whiteboards" && scope !== "reports") return c.json(invalid("scope must be notes, collections, whiteboards, or reports"), 400);
+    if (scope !== "notes" && scope !== "collections" && scope !== "whiteboards" && scope !== "reports" && scope !== "files") return c.json(invalid("scope must be notes, collections, whiteboards, reports, or files"), 400);
     const limit = limitParam === undefined ? DEFAULT_LIMIT : Number(limitParam);
     if (!/^\d+$/.test(limitParam ?? "20") || !Number.isSafeInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
       return c.json(invalid(`limit must be an integer from 1 to ${MAX_LIMIT}`), 400);
     }
     // Whiteboards (Wave 23, D204): names and text elements of boards the caller can read (T171).
     if (scope === "whiteboards") return c.json(searchWhiteboards(userId, q, limit));
+    // Files (lane FTS, 060): names and text of Files documents the caller can list, as read_document_text allows.
+    if (scope === "files") return c.json(searchDocuments(userId, q, limit));
     // Analytics reports (Wave 45, D418): titles only, the caller's own; guests have no Reports module.
     if (scope === "reports") return c.get("user").role === "guest" ? c.json({ results: [], truncated: false }) : c.json(searchReports(userId, q, limit));
     if (scope === "collections") {

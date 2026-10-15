@@ -1,15 +1,18 @@
 import { db, type DocumentRow } from "../db";
+import { toSegments } from "../search";
 import { readableDocumentPredicate } from "../documentAccess";
 import { ReportError } from "./errors";
 import { logger, shortId } from "../log";
 import type { NookFileHit, NookFileSearch } from "../../shared/reportsGenerate";
+import { documentIndexReady, searchDocumentRows } from "../documentSearch";
 
 const slog = logger("reports");
 
 /**
- * K4: "Pick from Nook" searches the text of Files documents, not only their names. Files content has
- * no search index (note_fts covers notes; knowledge bases index only the files added to one), so this
- * is a bounded scan instead of an index, without a migration:
+ * K4: "Pick from Nook" searches the text of Files documents, not only their names. Since lane FTS
+ * (060) this is one ranked query on the Files search index (server/documentSearch.ts): `next` is an
+ * offset cursor, `hits` per page. Until the index's backfill has finished once after boot, the bounded
+ * scan below answers instead (and a scan cursor keeps paging the scan). Both have the same access:
  *
  * - **Access** is exactly `read_document_text`'s for the B4 doc source (`listableDocument`): the Files
  *   list predicate (ownership or Files sharing, never a card, row, or other host link), `purpose =
@@ -28,10 +31,12 @@ export const NOOK_FILE_SEARCH_LIMITS = { scan: 100, bytes: 8 * 1024 * 1024, hits
 
 type Cursor = { at: string; id: string };
 const encodeCursor = (cursor: Cursor) => Buffer.from(JSON.stringify([cursor.at, cursor.id])).toString("base64url");
-function decodeCursor(value: string | null | undefined): Cursor | null {
+const encodeOffset = (offset: number) => Buffer.from(JSON.stringify(["fts", offset])).toString("base64url");
+function decodeCursor(value: string | null | undefined): Cursor | { offset: number } | null {
   if (!value) return null;
   try {
     const [at, id] = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown[];
+    if (at === "fts" && typeof id === "number" && Number.isSafeInteger(id) && id > 0 && id <= 10_000) return { offset: id };
     if (typeof at === "string" && typeof id === "string" && at.length <= 40 && /^[0-9a-f-]{36}$/.test(id)) return { at, id };
   } catch { /* invalid */ }
   throw new ReportError(400, "INVALID", "That search cursor is not valid");
@@ -70,8 +75,10 @@ function snippetAt(text: string, index: number, length: number): string {
 export async function searchNookFiles(userId: string, query: string, cursorValue?: string | null): Promise<NookFileSearch> {
   const words = query.toLowerCase().slice(0, NOOK_FILE_SEARCH_LIMITS.queryChars).split(/\s+/).filter(Boolean).slice(0, 8);
   if (!words.length) return { results: [], next: null };
-  const cursor = decodeCursor(cursorValue);
+  const decoded = decodeCursor(cursorValue);
   if (rateLimited(userId)) throw new ReportError(429, "RATE_LIMITED", "Too many file searches. Try again in a moment.");
+  if (decoded ? "offset" in decoded : documentIndexReady()) return searchIndexed(userId, query, decoded && "offset" in decoded ? decoded.offset : 0);
+  const cursor = decoded as Cursor | null;
   // Loaded when used, as nookSource.ts does (mcpTools imports most of the server).
   const { MCP_MAX_TEXT_BYTES, readDocumentText } = await import("../mcpTools");
   const started = performance.now();
@@ -103,4 +110,21 @@ export async function searchNookFiles(userId: string, query: string, cursorValue
   const more = scanned < rows.length;
   slog.info("Nook file search", { user: shortId(userId), scanned, bytes: read, hits: results.length, more, ms: Math.round(performance.now() - started) });
   return { results, next: more && last ? encodeCursor(last) : null };
+}
+
+/** The indexed answer: one ranked query, text files `read_document_text` can read, `hits` per page. */
+function searchIndexed(userId: string, query: string, offset: number): NookFileSearch {
+  const started = performance.now();
+  const { rows, truncated } = searchDocumentRows(userId, query.slice(0, NOOK_FILE_SEARCH_LIMITS.queryChars), { limit: NOOK_FILE_SEARCH_LIMITS.hits, offset, textOnly: true });
+  const results = rows.map((row): NookFileHit => {
+    const segments = toSegments(row.snippet_marked);
+    // Every word is in the name or the text; a snippet without a hit means the name alone matched.
+    const inText = segments.some((segment) => segment.hit);
+    return {
+      id: row.id, name: row.name, ownerName: row.owner_name, isOwner: row.owner_id === userId, updatedAt: row.updated_at,
+      matched: inText ? "text" : "name", snippet: inText ? segments.map((segment) => segment.text).join("").replace(/\s+/g, " ").trim() : null
+    };
+  });
+  slog.info("Nook file search", { user: shortId(userId), indexed: true, hits: results.length, more: truncated, ms: Math.round(performance.now() - started) });
+  return { results, next: truncated ? encodeOffset(offset + rows.length) : null };
 }

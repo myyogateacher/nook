@@ -66,7 +66,8 @@ describe("database migrations", () => {
     expectAllMigrations(ids);
     expect((db.query("SELECT COUNT(*) AS count FROM notes").get() as { count: number }).count).toBe(2);
     const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'document%' ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
-    expect(tables).toEqual(["document_shares", "documents"]);
+    // 060 adds the Files search index (document_search and the document_fts FTS5 tables).
+    expect(tables).toEqual(["document_fts", "document_fts_config", "document_fts_content", "document_fts_data", "document_fts_docsize", "document_fts_idx", "document_search", "document_shares", "documents"]);
 
     const insert = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, created_at, updated_at, deleted_at, purge_after)
       VALUES (?, 'u1', 'f1', 'a.txt', 'text/plain; charset=utf-8', 'text', 1, ?, ?, ?, ?, ?)`);

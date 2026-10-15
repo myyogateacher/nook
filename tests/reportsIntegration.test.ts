@@ -300,6 +300,6 @@ describe("final review L3 and M3", () => {
     // The release it names is this one.
     expect(section).not.toMatch(/\b0\.39\.\d/);
     const { registeredMigrationIds } = await import("../server/migrations");
-    expect(registeredMigrationIds.filter((id) => id >= 50)).toEqual([50, 51, 52, 53, 55, 56, 57, 58, 59]);
+    expect(registeredMigrationIds.filter((id) => id >= 50)).toEqual([50, 51, 52, 53, 55, 56, 57, 58, 59, 60]);
   });
 });

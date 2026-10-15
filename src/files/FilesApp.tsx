@@ -10,6 +10,7 @@ import { useConfirm } from "../ui/useConfirm";
 import { NotificationBell } from "../notifications/NotificationBell";
 import { HeaderInboxButton } from "../AppShell";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
+import { FileSearchResults, matchedText, useFileSearch, type FileSearchHit } from "../search/FileSearchResults";
 import { closedPreviewTarget, documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute, type FilesRoute } from "../filesRoute";
 import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute, parseRoute, type Route } from "../router";
@@ -282,6 +283,13 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const inFolder = useMemo(() => documents.filter((item) => documentInFolder(item, folder)), [documents, folder]);
   const visible = useMemo(() => sortDocuments(filterDocuments(inFolder, query), sort), [inFolder, query, sort]);
   const selected = documents.find((item) => item.id === documentId) ?? (extraDocument?.id === documentId ? extraDocument : null);
+  // Lane FTS: the filter matches names here; the Files full-text index adds files whose text matches
+  // ("In file text"), best first, leaving out the files the name filter already shows.
+  const textSearch = useFileSearch(query, data !== null);
+  const textHits = useMemo(() => {
+    const shown = new Set(visible.map((item) => item.id));
+    return textSearch.results.filter((hit) => matchedText(hit) && !shown.has(hit.id));
+  }, [textSearch.results, visible]);
   const folderTitle = folder === "all" ? "All files" : folder === "shared" ? "Shared with me" : currentFolder?.name ?? "Folder";
   const pendingUploads = queue.items.filter((item) => item.status === "queued" || item.status === "uploading").length;
   const { ask: askLeave, confirmElement: leaveConfirm } = useConfirm();
@@ -637,6 +645,14 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     navigate(filesRoute(folder, document.id), { filesPanel: "preview" });
   }
 
+  // A text hit may be in another folder, or beyond the loaded list: it opens like any file.
+  function openTextHit(hit: FileSearchHit) {
+    const listed = findDocument(hit.id);
+    if (listed) { openDocument(listed); return; }
+    getFile(hit.id).then(({ document }) => { setExtraDocument(document); openDocument(document); })
+      .catch((reason: unknown) => flash(reason instanceof ApiError ? reason.message : "That file could not be opened"));
+  }
+
   // Desktop Close (×) and Esc in the preview pane: deselect and go back to the folder's URL in place.
   function closePreview() {
     const closedId = documentId;
@@ -932,7 +948,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
             <button className="icon-button file-row-more" onClick={(event) => openActions(item, event.currentTarget)} aria-haspopup="dialog" aria-label={`Actions for ${item.name}`}><Ellipsis /></button>
           </div>;
         })}
-        {data && inFolder.length > 0 && !visible.length && <div className="empty-state"><div><Search /></div><h2>No matches</h2><p>No file names here match “{query.trim()}”.</p><button onClick={() => setQuery("")}>Clear filter</button></div>}
+        {textSearch.active && textSearch.status === "ready" && textHits.length > 0 && <div role="listitem" className="file-text-hits">
+          <h2 className="file-text-hits-title">In file text</h2>
+          <FileSearchResults results={textHits} truncated={textSearch.truncated} relativeTime={relativeTime} onOpen={openTextHit} label="Files whose text matches" />
+        </div>}
+        {data && inFolder.length > 0 && !visible.length && !textHits.length && <div className="empty-state"><div><Search /></div><h2>No matches</h2><p>No file names here match “{query.trim()}”.</p><button onClick={() => setQuery("")}>Clear filter</button></div>}
         {data && !inFolder.length && <div className="empty-state"><div><Files /></div><h2>{emptyCopy.title}</h2><p>{emptyCopy.body}</p>{canUpload && <button onClick={() => fileInputRef.current?.click()}>Upload files</button>}</div>}
         {!data && loadError && <div className="empty-state file-load-error" role="alert"><div><TriangleAlert /></div><h2>Could not load your files</h2><p>{loadError}</p><button onClick={() => setLoadAttempt((attempt) => attempt + 1)}><RotateCcw />Try again</button></div>}
         {!data && !loadError && <p className="file-preview-note" role="status">Loading files…</p>}

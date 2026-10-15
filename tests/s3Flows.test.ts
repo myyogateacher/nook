@@ -262,6 +262,29 @@ describe.skipIf(!s3Backend)("S3 backend: file flows", () => {
     expect((db.query("SELECT COUNT(*) AS n FROM documents WHERE owner_id = ?").get(owner.userId) as { n: number }).n).toBe(0);
   });
 
+  test("the Files search index reads text through S3 (lane FTS); a missing object is indexed by name only", async () => {
+    const { whenDocumentIndexIdle } = await import("../server/documentSearch");
+    const { resetSearchRateLimit } = await import("../server/searchRoutes");
+    const owner = await createUser("S3 search owner");
+    const term = `s3w${crypto.randomUUID().slice(0, 8)}`;
+    const document = await uploadOk(owner, `Notes about ${term} in the bucket`, "bucket.md");
+    await whenDocumentIndexIdle();
+    expect(db.query("SELECT body_state FROM document_search WHERE document_id = ?").get(document.id)).toEqual({ body_state: "text" });
+    resetSearchRateLimit();
+    const found = await api(owner, "GET", `/search?q=${term}&scope=files`);
+    expect(found.body.results.map((hit: Json) => hit.id)).toEqual([document.id]);
+
+    const missing = `s3m${crypto.randomUUID().slice(0, 8)}`;
+    const failing = await uploadOk(owner, `${missing} body`, `${missing}.md`);
+    // The object vanished before the indexer read it: an integrity failure, not storage trouble.
+    db.query("DELETE FROM document_search WHERE document_id = ?").run(failing.id);
+    fakeS3!.objects.delete(key(failing.id));
+    const { scheduleDocumentIndex } = await import("../server/documentSearch");
+    scheduleDocumentIndex();
+    await whenDocumentIndexIdle();
+    expect(db.query("SELECT body_state FROM document_search WHERE document_id = ?").get(failing.id)).toEqual({ body_state: "unreadable" });
+  });
+
   test("a missing or truncated object fails closed with 500", async () => {
     const owner = await createUser("S3 integrity owner");
     const document = await uploadOk(owner, "intact", "intact.txt");
@@ -366,6 +389,8 @@ describe.skipIf(!s3Backend)("S3 backend: outages and limits (review H2, L1, M3)"
   test("a download that stalls mid-body is cut after the idle deadline instead of staying pending", async () => {
     const owner = await createUser("S3 stalled download");
     const document = await uploadOk(owner, "x".repeat(5000), "stalled.txt");
+    // The Files search index reads a new upload in the background; let it finish so the stall hits the download.
+    await (await import("../server/documentSearch")).whenDocumentIndexIdle();
     const original = objectStore();
     setObjectStoreForTests(createS3ObjectStore(settings(fakeS3!.url)));
     fakeS3!.stallBodyNext(new RegExp(`^GET ${PREFIX}documents/${document.id}`));

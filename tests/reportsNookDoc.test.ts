@@ -10,6 +10,7 @@ const { generateDeps, liveGenerations } = await import("../server/reports/genera
 const { syncSchema } = await import("../server/reports/schemaCatalog");
 const { fetchNookFetched } = await import("../server/reports/docSource");
 const { NOOK_FILE_SEARCH_LIMITS, resetNookFileSearchRate } = await import("../server/reports/nookFileSearch");
+const { documentIndexReady, resetDocumentIndexForTests, whenDocumentIndexIdle } = await import("../server/documentSearch");
 
 /**
  * B4: Nook as a built-in doc source (`nook`): listed first, no sync; a doc ref is a link to a note or a
@@ -233,11 +234,20 @@ describe("K1: generate straight into a folder", () => {
 describe("K4: Pick from Nook searches Files text", () => {
   const search = async (session: Session, q: string, cursor?: string) => {
     resetNookFileSearchRate();
+    await whenDocumentIndexIdle();
     return send(session, "GET", `/reports/nook-files?q=${encodeURIComponent(q)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
   };
   const ids = (body: Json) => (body.results as Array<{ id: string }>).map((hit) => hit.id);
 
-  test("matches every word in the name or the text, with a plain snippet; access is exactly read_document_text's", async () => {
+  // Lane FTS: the indexed query once the backfill is done, the bounded scan before; the same answers.
+  for (const indexed of [true, false]) test(`matches every word in the name or the text, with a plain snippet; access is exactly read_document_text's (${indexed ? "index" : "scan before the backfill"})`, async () => {
+    await whenDocumentIndexIdle();
+    const wasReady = documentIndexReady();
+    resetDocumentIndexForTests({ ready: indexed });
+    try { await matchesEveryWord(); } finally { resetDocumentIndexForTests({ ready: wasReady }); }
+  });
+
+  async function matchesEveryWord() {
     const word = `zq${crypto.randomUUID().slice(0, 8)}`;
     const byText = await upload(owner, "Quarter notes.md", `# Notes\n\nThe ${word} metric is net of refunds.`);
     const byName = await upload(owner, `${word} rules.txt`, "nothing here", "text/plain");
@@ -264,26 +274,35 @@ describe("K4: Pick from Nook searches Files text", () => {
     expect(ids((await search(other, word)).body).sort()).toEqual([theirs, shared].sort());
     expect((await search(owner, "   ")).body).toEqual({ results: [], next: null });
     expect((await search(owner, word, "not-a-cursor")).status).toBe(400);
-  });
+  }
 
-  test("pages with a cursor (newest first) when the scan cap is reached; rate limited", async () => {
+  test("pages with a cursor (newest first among equals) when the scan or hit cap is reached; rate limited", async () => {
     const word = `pg${crypto.randomUUID().slice(0, 8)}`;
     const made: string[] = [];
     for (let index = 0; index < 5; index += 1) made.push(await upload(owner, `Page ${index}.md`, `${word} ${index}`));
-    const saved = NOOK_FILE_SEARCH_LIMITS.scan;
-    NOOK_FILE_SEARCH_LIMITS.scan = 2;
+    const saved = { ...NOOK_FILE_SEARCH_LIMITS };
+    await whenDocumentIndexIdle();
+    const wasReady = documentIndexReady();
     try {
-      const seen: string[] = [];
-      let cursor: string | undefined;
-      for (let page = 0; page < 10; page += 1) {
-        const answer = await search(owner, word, cursor);
-        seen.push(...ids(answer.body));
-        if (!answer.body.next) break;
-        cursor = answer.body.next as string;
+      for (const indexed of [false, true]) {
+        resetDocumentIndexForTests({ ready: indexed });
+        // The scan pages by candidates read, the index by hits; equal ranks come newest first.
+        if (indexed) NOOK_FILE_SEARCH_LIMITS.hits = 2;
+        else NOOK_FILE_SEARCH_LIMITS.scan = 2;
+        const seen: string[] = [];
+        let cursor: string | undefined;
+        for (let page = 0; page < 10; page += 1) {
+          const answer = await search(owner, word, cursor);
+          seen.push(...ids(answer.body));
+          if (!answer.body.next) break;
+          cursor = answer.body.next as string;
+        }
+        expect({ indexed, seen }).toEqual({ indexed, seen: [...made].reverse() });
+        Object.assign(NOOK_FILE_SEARCH_LIMITS, saved);
       }
-      expect(seen).toEqual([...made].reverse());
     } finally {
-      NOOK_FILE_SEARCH_LIMITS.scan = saved;
+      Object.assign(NOOK_FILE_SEARCH_LIMITS, saved);
+      resetDocumentIndexForTests({ ready: wasReady });
     }
     resetNookFileSearchRate();
     const statuses: number[] = [];

@@ -211,7 +211,7 @@ describe("GET /api/search drafts and access", () => {
 describe("GET /api/search validation and limits", () => {
   test("rejects bad parameters with 400", async () => {
     const user = await createUser("Search validator");
-    for (const query of ["q=x&scope=files", "q=x&folder=nope", "q=x&limit=0", "q=x&limit=51", "q=x&limit=abc", "q=x&limit=1.5", `q=${"a".repeat(201)}`]) {
+    for (const query of ["q=x&scope=pages", "q=x&folder=nope", "q=x&limit=0", "q=x&limit=51", "q=x&limit=abc", "q=x&limit=1.5", `q=${"a".repeat(201)}`]) {
       const response = await request(`/search?${query}`, {}, user);
       expect(response.status).toBe(400);
       expect(((await response.json()) as { error: string }).error).toBe("Invalid request");

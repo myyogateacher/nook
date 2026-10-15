@@ -111,7 +111,8 @@ describe("Back and Forward on a phone", () => {
     const sheet = await Bun.file(new URL("../src/reports/InspectSheet.tsx", import.meta.url)).text();
     expect(view).toContain("if (inspect) lastInspect.current = inspect;");
     expect(view).toContain("reopen={() => setInspect(lastInspect.current)}");
-    expect(sheet).toContain("useHistoryDialogGuard(true, onClose, { reopen });");
+    expect(sheet).toContain("useHistoryDialogGuard(true, onClose, { reopen, layerKey });");
+    expect(view).toContain("useLayerOpener(\"reports.inspect\"");
   });
 });
 

@@ -10,7 +10,8 @@ import type { QueryResultView, ReportResultsView, ScheduleView } from "../../sha
 import { buildChartOption, paletteFor, type ChartBuild, type ChartPalette } from "./chartOption";
 import type { MeterModel } from "./chartKinds";
 import { InspectSheet, type DataBlock } from "./InspectSheet";
-import type { InspectTab } from "./inspectHistory";
+import { INSPECT_TABS, type InspectTab } from "./inspectHistory";
+import { useLayerOpener } from "../historyDialogs";
 import { KpiTile, type ResultLookup } from "./KpiTile";
 import { ResultTable } from "./ResultTable";
 import { PAGE_METRICS_RUN_MARKER } from "../../shared/reportsMetrics";
@@ -102,6 +103,11 @@ export function ReportView({ report, canWrite, generating = false, initial, read
   // Forward after Back reopens the last Inspect sheet (its first tab), as Changes and Share do.
   const lastInspect = useRef<{ blockId: string; tab: InspectTab } | null>(null);
   if (inspect) lastInspect.current = inspect;
+  // D480: Forward after Back went past the report page remounts it; the layer key names the block and tab.
+  useLayerOpener("reports.inspect", (arg) => {
+    const [blockId, tab] = arg.split(":");
+    if (blockId) setInspect({ blockId, tab: INSPECT_TABS.includes(tab as InspectTab) ? tab as InspectTab : "query" });
+  });
   const [menuBlock, setMenuBlock] = useState<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [externalLink, setExternalLink] = useState<string | null>(null);
@@ -253,7 +259,7 @@ export function ReportView({ report, canWrite, generating = false, initial, read
       onInspect={(tab) => { setMenuBlock(null); setInspect({ blockId: menuTarget.id, tab }); }}
       onRerun={() => { setMenuBlock(null); void startRefresh(menuTarget.queryKey); }} />}
     {inspected && isDataBlock(inspected) && <InspectSheet report={report} block={inspected} query={queries.get(inspected.queryKey)} view={results.get(inspected.queryKey)}
-      palette={palette} canRerun={canWrite} busy={busy} onRerun={(key) => { void startRefresh(key); }} initialTab={inspect!.tab} onClose={() => setInspect(null)} reopen={() => setInspect(lastInspect.current)} />}
+      palette={palette} canRerun={canWrite} busy={busy} onRerun={(key) => { void startRefresh(key); }} initialTab={inspect!.tab} layerKey={`reports.inspect:${inspected.id}:${inspect!.tab}`} onClose={() => setInspect(null)} reopen={() => setInspect(lastInspect.current)} />}
     {scheduleOpen && <ScheduleSheet reportId={report.id} schedule={schedule} runs={runs} canWrite={canWrite} reopen={() => setScheduleOpen(true)}
       onSaved={(next) => { setSchedule(next); setScheduleOpen(false); notify.success(next.enabled ? "Schedule saved" : "Schedule off"); }} onClose={() => setScheduleOpen(false)} />}
     {externalLink && <ExternalLinkSheet href={externalLink} onClose={() => setExternalLink(null)} />}

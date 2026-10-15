@@ -467,6 +467,8 @@ export function acquireDialogSentinel(env: SentinelEnv = defaultSentinelEnv(), k
   // A dialog replacing one that closed this tick takes over its sentinel.
   if (top?.released && top.env.history === env.history) {
     top.released = false;
+    // The entry is this layer's now: Forward after Back past the page reopens it by its key (D480).
+    top.key = key;
     layer.entry = top;
   } else {
     armLayer(layer);

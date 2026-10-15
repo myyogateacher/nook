@@ -8,6 +8,10 @@ import { parseArrayLiteral, placeholderInput, placeholderValue, unescapeParamStr
 const { syncSchema } = await import("../server/reports/schemaCatalog");
 const params = await import("../server/reports/params");
 const { consoleBindings } = await import("../server/reports/service");
+const { reportTools } = await import("../server/reports/mcpTools");
+const { NOOK_AGENT_TOOLS, NOOK_NEVER_TOOLS } = await import("../server/agents/nookBridge");
+const { createApiKey } = await import("../server/apiKeys");
+const { invokeMcpToolForTests } = await import("../server/mcpTools");
 
 /**
  * D490: the SQL console binds a saved query's `{name:Type}` placeholders (Inspect → Open in console) as
@@ -234,5 +238,43 @@ describe("option search past the first 200 (D491)", () => {
     const madeUp = await send(viewer, "POST", `/reports/${reportId}/param-runs`, { values: { customer: "customer-999" } });
     expect(madeUp).toMatchObject({ status: 400, body: { code: "INVALID" } });
     expect(madeUp.body.error).toContain("not one of the choices for Customer");
+  });
+});
+
+describe("search_report_options (D507)", () => {
+  const tool = () => reportTools.find((item) => item.name === "search_report_options")!;
+  const keyOf = (session: Session) => ({ keyId: `k-opts-${session.userId.slice(0, 6)}`, userId: session.userId, name: "k", scopes: ["reports:read" as const] });
+
+  test("a read tool (reports:read), offered to chat agents like get_report", () => {
+    expect([tool().scopes, tool().write, tool().access.mode, NOOK_AGENT_TOOLS.has("search_report_options"), NOOK_NEVER_TOOLS.has("search_report_options")]).toEqual([["reports:read"], false, "items", true, false]);
+  });
+
+  test("a reader finds a choice past the first 200 with the same bound ILIKE; no query is the cached list; the found value runs", async () => {
+    fake.requests.length = 0;
+    const found = await tool().handler({ reportId, parameterId: "customer", query: "ER-24" }, keyOf(viewer)) as Json;
+    expect(found).toEqual({ parameterId: "customer", query: "ER-24", options: CUSTOMERS.filter((name) => name.includes("er-24")), truncated: false, error: null });
+    const search = wrapped().find((item) => item.sql.includes("ILIKE"))!;
+    expect(search.sql).toContain(") AS nook_options WHERE toString(`customer`) ILIKE {nook_search:String}");
+    expect(search.params.param_nook_search).toBe("%ER-24%");
+    const cached = await tool().handler({ reportId, parameterId: "customer" }, keyOf(viewer)) as Json;
+    expect([cached.query, cached.options.length, cached.truncated]).toEqual([null, 200, true]);
+    const block = reportTools.find((item) => item.name === "get_report_block")!;
+    const ran = await block.handler({ reportId, blockId: "kpi-orders", parameters: { customer: "customer-245" } }, keyOf(viewer)) as Json;
+    expect(ran.parameters.values).toMatchObject({ customer: "customer-245" });
+  });
+
+  test("read access is checked; an unknown parameter is not found; searches share the person's limit with the app", async () => {
+    await expect(Promise.resolve().then(() => tool().handler({ reportId, parameterId: "customer", query: "1" }, keyOf(stranger)))).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(Promise.resolve().then(() => tool().handler({ reportId, parameterId: "nope", query: "1" }, keyOf(viewer)))).rejects.toMatchObject({ code: "NOT_FOUND" });
+    for (let at = 0; at < params.OPTION_SEARCH.perMinute; at += 1) expect((await send(viewer, "GET", `/reports/${reportId}/parameters/customer/options?q=${at}`)).status).toBe(200);
+    await expect(Promise.resolve().then(() => tool().handler({ reportId, parameterId: "customer", query: "x" }, keyOf(viewer)))).rejects.toMatchObject({ code: "RATE_LIMITED" });
+  });
+
+  test("a key over other chosen reports gets NOT_FOUND, and nothing reaches ClickHouse", async () => {
+    const key = createApiKey(viewer.userId, { name: "Options elsewhere", surfaces: "both", grants: [{ module: "reports", permission: "read", resourceKind: "report", resourceId: crypto.randomUUID() }], expiresInDays: 1 });
+    fake.requests.length = 0;
+    const result = await invokeMcpToolForTests("search_report_options", { reportId, parameterId: "customer", query: "ER-24" }, key.id);
+    expect(JSON.parse(result.content[0]!.text).code).toBe("NOT_FOUND");
+    expect(wrapped().length).toBe(0);
   });
 });

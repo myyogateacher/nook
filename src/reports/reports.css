@@ -273,6 +273,8 @@
 .report-source-actions .report-source-remove { margin-left: auto; color: var(--red); }
 .report-owner-review-owners { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .report-owner-review-owners > span { display: inline-flex; align-items: center; gap: 6px; }
+.report-owner-review-more { flex-direction: column; align-items: center; gap: 8px; }
+.report-owner-review-more .file-dialog-hint { margin: 0; }
 .report-test { display: grid; gap: 6px; border-radius: 10px; padding: 10px 12px; background: #15201a; color: #bfe6c9; font-size: .84rem; }
 .report-test.failed { background: #2a1519; color: #fda4af; }
 .report-test p { margin: 0; display: flex; align-items: flex-start; gap: 6px; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }

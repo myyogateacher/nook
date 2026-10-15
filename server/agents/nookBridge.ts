@@ -53,7 +53,7 @@ export const NOOK_AGENT_TOOLS: ReadonlySet<string> = new Set([
   // Today, team, whiteboards
   "get_today", "list_team_members", "get_team_member", "list_invites", "list_whiteboards", "read_whiteboard", "create_whiteboard",
   // Reports (C2): the read tools only; a report's queries, schedule, and instructions stay out of reach.
-  "list_reports", "list_report_folders", "get_report", "get_report_block", "get_report_run", "get_report_instruction", "list_report_versions", "get_report_version_diff", "get_report_metrics"
+  "list_reports", "list_report_folders", "get_report", "get_report_block", "search_report_options", "get_report_run", "get_report_instruction", "list_report_versions", "get_report_version_diff", "get_report_metrics"
 ]);
 /** Classified as never offered (T318): proposal and routine machinery, uploads, the agent module's own tools, Bin. */
 export const NOOK_NEVER_TOOLS: ReadonlySet<string> = new Set([

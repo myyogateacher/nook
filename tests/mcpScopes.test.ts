@@ -93,7 +93,7 @@ test("the reports tools split by scope: reads under reports:read, every write un
   // The registry first: importing the reports tools on their own closes an import cycle through it.
   await import("../server/mcpTools");
   const { reportTools } = await import("../server/reports/mcpTools");
-  const read = ["list_reports", "list_report_datasources", "list_report_folders", "get_report", "get_report_block", "get_report_run", "get_report_instruction", "list_report_versions", "get_report_version_diff", "get_report_metrics", "list_report_owners", "list_unmanaged_reports"];
+  const read = ["list_reports", "list_report_datasources", "list_report_folders", "get_report", "get_report_block", "get_report_run", "get_report_instruction", "list_report_versions", "get_report_version_diff", "get_report_metrics", "list_report_owners", "list_unmanaged_reports", "search_report_options"];
   const write = ["create_report", "refresh_report", "set_report_schedule", "add_report_instruction", "apply_report_proposal", "reject_report_proposal", "update_report_query", "create_report_folder", "move_report_to_folder", "update_report_metric", "star_report", "unstar_report",
     "update_report_folder", "add_report_owner"];
   expect(reportTools.map((tool) => tool.name).sort()).toEqual([...read, ...write].sort());

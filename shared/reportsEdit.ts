@@ -166,7 +166,8 @@ export type ReportOwners = { owners: ReportOwner[]; canManage: boolean };
 export type OwnerReviewScope = "unmanaged" | "unopenable";
 export type OwnerReviewOwner = { id: string; name: string; state: ReportOwnerState };
 export type OwnerReviewReport = { id: string; title: string; folder: { id: string; name: string } | null; owners: OwnerReviewOwner[]; updatedAt: string; canOpen: boolean; managed: boolean };
-export type OwnerReview = { scope: OwnerReviewScope; reports: OwnerReviewReport[]; total: number; limit: number };
+/** D505: a page of 200 by cursor; `total` is counted on the first page only (null on a page after `nextCursor`). */
+export type OwnerReview = { scope: OwnerReviewScope; reports: OwnerReviewReport[]; total: number | null; limit: number; nextCursor: string | null };
 export type SharingInput ={ visibility: ReportVisibility; shares: Array<{ kind: "user" | "group"; id: string; level: ShareLevel }> };
 
 export const INSTRUCTION_STATUS_TEXT: Record<InstructionStatus, string> = {

@@ -160,3 +160,76 @@ describe("the list's choice between a set and the recent-first walk (D501)", () 
     expect(reportListSizes({ statuses: ["ready"] }, "big", memory)).toEqual({});
   });
 });
+
+/**
+ * D505: Settings → Report owners at scale (D500's lists checked every live report and showed the 200
+ * most recent). Both lists, first page (with its count), a later and a deep page by cursor, and a title
+ * search, at NOOK_PERF_REPORTS (50,000 by default): a sparse unmanaged list (a blocked owner's and a
+ * viewer's reports, 1%) and a dense unopenable one (the admin opens under half).
+ */
+describe.skipIf(!process.env.NOOK_PERF)(`Settings → Report owners at ${REPORTS.toLocaleString()} reports (NOOK_PERF)`, () => {
+  test("both lists: a page and its count under 100 ms of CPU at 50,000; later pages by cursor", async () => {
+    const { ownerReviewPage } = await import("../server/reports/ownerReview");
+    const at = Date.parse("2026-10-15T00:00:00.000Z");
+    const memory = new Database(":memory:", { strict: true });
+    memory.exec("PRAGMA foreign_keys = ON");
+    runMigrations(memory);
+    const iso = (offset: number) => new Date(at - offset * 1000).toISOString();
+    const users = Array.from({ length: USERS }, (_, index) => `user-${index}`);
+    const seedMs = cpuMs(() => memory.transaction(() => {
+      const user = memory.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role, disabled_at) VALUES (?, ?, ?, 'x', ?, ?, ?)");
+      // user-0 the admin, user-199 and user-197 blocked, user-198 now a viewer.
+      for (const [index, id] of users.entries()) user.run(id, `${id}@example.test`, `Person ${index}`, iso(0), index === 0 ? "admin" : index === 198 ? "viewer" : "member", index === 199 || index === 197 ? iso(0) : null);
+      memory.query("INSERT INTO report_datasources (id, name, kind, url, username, created_at, updated_at) VALUES ('ds', 'Warehouse', 'clickhouse', 'http://x', 'u', ?, ?)").run(iso(0), iso(0));
+      const folder = memory.query("INSERT INTO report_folders (id, created_by, parent_id, name, position, created_at, updated_at) VALUES (?, ?, NULL, ?, ?, ?, ?)");
+      for (let index = 0; index < 100; index += 1) folder.run(`folder-${index}`, users[1]!, `Folder ${index}`, index, iso(0), iso(0));
+      const report = memory.query("INSERT INTO reports (id, owner_id, title, datasource_id, status, visibility, created_at, updated_at, folder_id) VALUES (?, ?, ?, 'ds', 'ready', ?, ?, ?, ?)");
+      const share = memory.query("INSERT INTO report_members (report_id, user_id, level, created_at) VALUES (?, ?, 'view', ?)");
+      for (let index = 0; index < REPORTS; index += 1) {
+        const id = `report-${index}`;
+        // A third open to all, a sixth shared with someone (the admin for every other one), the rest private.
+        const visibility = index % 3 === 0 ? "all_users" : index % 6 === 1 ? "selected" : "private";
+        report.run(id, users[index % USERS]!, `Report ${index} revenue`, visibility, iso(index), iso(index), index % 4 === 0 ? null : `folder-${index % 100}`);
+        if (visibility === "selected") share.run(id, users[index % 12 === 1 ? 0 : (index + 1) % USERS]!, iso(0));
+      }
+      memory.exec("ANALYZE");
+    })());
+    const admin = { id: users[0]! };
+    const timings: Record<string, number> = {};
+    const measure = (name: string, work: () => unknown) => {
+      work();
+      timings[name] = Array.from({ length: 5 }, () => cpuMs(work)).sort((a, b) => a - b)[2]!;
+    };
+    // Every unmanaged report, by walking them all (D500's query): the list must match it.
+    const walked = () => (memory.query(`SELECT r.id FROM reports r WHERE r.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM report_owners o JOIN users u ON u.id = o.user_id
+      WHERE o.report_id = r.id AND u.disabled_at IS NULL AND u.role IN ('admin', 'member')) ORDER BY r.updated_at DESC, r.id`).values()).map((row) => row[0] as string);
+    const pages = (scope: "unmanaged" | "unopenable", label: string) => {
+      const first = ownerReviewPage(admin, { scope }, memory);
+      const second = ownerReviewPage(admin, { scope, cursor: first.nextCursor }, memory);
+      expect(first.reports.length).toBe(200);
+      expect(second.total).toBeNull();
+      if (scope === "unmanaged") expect([...first.reports, ...second.reports].map((report) => report.id)).toEqual(walked().slice(0, 400));
+      // A page deep in the list: after the 1,000th row.
+      let deep = first;
+      for (let page = 0; page < 4 && deep.nextCursor; page += 1) deep = ownerReviewPage(admin, { scope, cursor: deep.nextCursor }, memory);
+      measure(`${label} first page`, () => ownerReviewPage(admin, { scope }, memory));
+      measure(`${label} next page`, () => ownerReviewPage(admin, { scope, cursor: first.nextCursor }, memory));
+      measure(`${label} deep page`, () => ownerReviewPage(admin, { scope, cursor: deep.nextCursor ?? first.nextCursor }, memory));
+      measure(`${label} title search`, () => ownerReviewPage(admin, { scope, q: "4 revenue" }, memory));
+      return first;
+    };
+    expect(pages("unmanaged", "unmanaged").total).toBe(Math.floor(REPORTS / USERS) * 3);
+    pages("unopenable", "unopenable");
+    // The worst case for D506's start from the owners who cannot act: one of them co-owns a third of all.
+    memory.transaction(() => {
+      const coOwner = memory.query("INSERT OR IGNORE INTO report_owners (report_id, user_id, created_at) VALUES (?, ?, ?)");
+      for (let index = 1; index < REPORTS; index += 3) coOwner.run(`report-${index}`, users[197]!, iso(0));
+      memory.exec("ANALYZE");
+    })();
+    expect(pages("unmanaged", "unmanaged, a blocked co-owner of a third").total).toBe(Math.floor(REPORTS / USERS) * 3);
+    console.log(`[report owners at ${REPORTS.toLocaleString()}] seed ${Math.round(seedMs)} ms CPU; median CPU ms: ${Object.entries(timings).map(([name, ms]) => `${name} ${ms.toFixed(2)}`).join(", ")}`);
+    // 100 ms at 50,000 reports, in proportion past it (the walks of D506 grow with the reports).
+    const budget = 100 * Math.max(1, REPORTS / 50_000);
+    for (const [name, ms] of Object.entries(timings)) expect({ name, ms: ms < budget }).toEqual({ name, ms: true });
+  }, 120_000);
+});

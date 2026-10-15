@@ -36,5 +36,6 @@ export const threadMoving = (instructions: readonly Pick<ReportInstruction, "sta
 export const getOwners = (id: string) => api<ReportOwners>(`/reports/${id}/owners`);
 export const addOwner = (id: string, userId: string) => api<ReportOwners>(`/reports/${id}/owners`, json("POST", { userId }));
 export const removeOwner = (id: string, userId: string) => api<ReportOwners>(`/reports/${id}/owners/${userId}`, { method: "DELETE", body: "{}" });
-/** D500: Settings → Report owners (admins): reports nobody can manage, or the admin cannot open. */
-export const ownerReview = (scope: OwnerReviewScope, q: string) => api<OwnerReview>(`/reports/admin/owner-review?${new URLSearchParams({ scope, ...(q.trim() ? { q: q.trim() } : {}) })}`);
+/** D500: Settings → Report owners (admins): reports nobody can manage, or the admin cannot open; D505: `cursor` for the next page. */
+export const ownerReview = (scope: OwnerReviewScope, q: string, cursor?: string | null) =>
+  api<OwnerReview>(`/reports/admin/owner-review?${new URLSearchParams({ scope, ...(q.trim() ? { q: q.trim() } : {}), ...(cursor ? { cursor } : {}) })}`);

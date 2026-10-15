@@ -48,7 +48,7 @@ const consoleSchema = z.object({
   params: z.record(z.string().max(60), z.string().max(CONSOLE_PARAM_LIMITS.chars)).refine((value) => Object.keys(value).length <= CONSOLE_PARAM_LIMITS.values, "too many values").optional()
 }).strict();
 const emptySchema = z.object({}).strict();
-const ownerReviewSchema = z.object({ scope: z.enum(["unmanaged", "unopenable"]).optional(), q: z.string().max(200).optional() }).strict();
+const ownerReviewSchema = z.object({ scope: z.enum(["unmanaged", "unopenable"]).optional(), q: z.string().max(200).optional(), cursor: z.string().min(1).max(200).optional() }).strict();
 
 const notFound = () => new ReportError(404, "NOT_FOUND", "Not found");
 
@@ -113,10 +113,10 @@ const adminOnly = (handler: Handler): Handler => (c) => {
 };
 
 export function registerReportRoutes(app: Hono<AppEnv>) {
-  // --- Admin: Settings → Report owners (D500): reports nobody can manage, or the admin cannot open ---
+  // --- Admin: Settings → Report owners (D500): reports nobody can manage, or the admin cannot open; pages by cursor (D505) ---
   app.get("/api/reports/admin/owner-review", handle(adminOnly((c) => {
     const query = ownerReviewSchema.parse(c.req.query());
-    return ownerReview(c.get("user"), { scope: query.scope, q: query.q });
+    return ownerReview(c.get("user"), { scope: query.scope, q: query.q, cursor: query.cursor });
   })));
   // --- Admin: data sources (Settings → Report data sources) ---
   app.get("/api/reports/admin/datasources", handle(adminOnly(() => ({ datasources: listDatasources() }))));

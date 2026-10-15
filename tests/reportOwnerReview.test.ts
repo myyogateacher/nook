@@ -114,7 +114,46 @@ describe("list_unmanaged_reports", () => {
     expect([tool().scopes, tool().write, NOOK_NEVER_TOOLS.has("list_unmanaged_reports")]).toEqual([["reports:read"], false, true]);
     expect("scope" in ((tool().inputSchema as unknown as { shape: Record<string, unknown> }).shape)).toBe(false);
     const listed = await tool().handler({ query: "zq review" }, keyOf(admin)) as Json;
-    expect(listed).toEqual({ reports: [{ id: blocked.id, title: "Zq review blocked owner", folder: "Review folder", owners: [{ id: leaver.userId, name: "Review leaver", state: "blocked" }], updatedAt: expect.any(String), canOpen: true }], total: 1 });
+    expect(listed).toEqual({ reports: [{ id: blocked.id, title: "Zq review blocked owner", folder: "Review folder", owners: [{ id: leaver.userId, name: "Review leaver", state: "blocked" }], updatedAt: expect.any(String), canOpen: true }], total: 1, nextCursor: null });
     await expect(Promise.resolve().then(() => tool().handler({}, keyOf(member)))).rejects.toThrow(/admin/i);
+  });
+});
+
+describe("paging by cursor (D505)", () => {
+  // 205 reports of the blocked owner, made in SQL; a third share one updated_at, so the id breaks ties.
+  const base = Date.parse("2026-01-01T00:00:00.000Z");
+  const ids = Array.from({ length: 205 }, () => crypto.randomUUID());
+  const insert = db.query("INSERT INTO reports (id, owner_id, title, datasource_id, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, 'private', ?, ?)");
+  db.transaction(() => ids.forEach((id, index) => { const at = new Date(base + (index % 3 === 0 ? 0 : index) * 1000).toISOString(); insert.run(id, leaver.userId, `Zp page ${index}`, datasource.id, at, at); }))();
+  const expected = (db.query("SELECT id FROM reports WHERE title LIKE 'Zp page %' ORDER BY updated_at DESC, id").all() as Json[]).map((row) => row.id as string);
+  const tool = () => reportTools.find((item) => item.name === "list_unmanaged_reports")!;
+
+  test("200 a page, newest change first; the next page by nextCursor, with no repeats and no count; a bad cursor is a 400", async () => {
+    const first = await review(admin, "q=zp%20page");
+    const cursor = first.body.nextCursor as string;
+    expect([first.status, first.body.total, first.body.limit, typeof cursor, first.body.reports.length]).toEqual([200, 205, 200, "string", 200]);
+    const second = await review(admin, `q=zp%20page&cursor=${encodeURIComponent(cursor)}`);
+    expect(second.body).toMatchObject({ total: null, nextCursor: null });
+    expect([...first.body.reports, ...second.body.reports].map((report: Json) => report.id)).toEqual(expected);
+    // A page of reports the admin cannot open is audited as a later page.
+    const audit = db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = 'reports.owner.review' ORDER BY rowid DESC LIMIT 1").get(admin.userId) as { metadata_json: string };
+    expect(JSON.parse(audit.metadata_json)).toMatchObject({ scope: "unmanaged", shown: 5, unopenable: 5, query: true, more: true });
+    expect((await review(admin, "cursor=nope")).status).toBe(400);
+    expect((await review(member, `cursor=${encodeURIComponent(cursor)}`)).status).toBe(404);
+  });
+
+  test("list_unmanaged_reports pages the same way (limit, cursor, nextCursor)", async () => {
+    const key = { keyId: "k-review-pages", userId: admin.userId, name: "k", scopes: ["reports:read" as const] };
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const page = await tool().handler({ query: "zp page", limit: 90, ...(cursor ? { cursor } : {}) }, key) as Json;
+      expect(page.total).toBe(pages === 0 ? 205 : null);
+      seen.push(...page.reports.map((report: Json) => report.id as string));
+      cursor = page.nextCursor ?? undefined;
+      pages += 1;
+    } while (cursor);
+    expect([pages, seen]).toEqual([3, expected]);
   });
 });

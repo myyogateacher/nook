@@ -22,10 +22,8 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 
 ## Known LOW leftovers
 
-- [ ] Report option search (D491) has no MCP tool: an agent passing a select value past the first 200 to `get_report`/`refresh_report` must already know it (the run checks it against ClickHouse); a `search_report_options` tool would let it look one up.
-
-- [ ] Settings → Report owners leftover (lane ORG, D500):
-  - [ ] Each list shows the 200 most recently changed (a title search finds the rest); no paging. Both lists check every live report (admins only; not measured past a few hundred); measure at 50,000 and page by cursor if needed.
+- [ ] Settings → Report owners past 50,000 reports (lane REP2, D506): **You can't open** walks every live report for its count (42 ms of CPU at 50,000, 166 ms at 200,000; later pages 2 ms), and the unmanaged list's check for reports with no owner rows costs two index counts (about 5 ms at 50,000, 20 ms at 200,000). A blocked person who co-owns a third of all reports makes every unmanaged page check them (50 ms at 50,000, 205 ms at 200,000). If a deployment gets there: count the admin's readable set from its parts, or cache the count per list for a minute.
+  - Forward back into the section reopens a report's Owners sheet titled "Report" when that report is past the first page (the title comes from the list, which loads its first page; the owners API has no title). Small: carry the title in the owners answer for admins, or look it up by id.
 
 - [ ] PDF text leftovers (lanes FILES and PDF, D496, D510–D514):
   - [ ] The PDF worker has no heap cap: Bun 1.4.2 ignores Worker `resourceLimits` (D513). It runs `smol`, bounded by 16 MiB, 300 pages, 15 s, one at a time. Set a heap limit if Bun gains one.

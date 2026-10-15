@@ -63,7 +63,7 @@ export function encodeCursor(row: { updatedAt: string; id: string }) {
   return Buffer.from(JSON.stringify([row.updatedAt, row.id])).toString("base64url");
 }
 
-function decodeCursor(cursor: string): { at: string; id: string } {
+export function decodeCursor(cursor: string): { at: string; id: string } {
   try {
     const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown;
     if (Array.isArray(value) && value.length === 2 && typeof value[0] === "string" && typeof value[1] === "string" && value[0].length <= 40 && value[1].length <= 64) return { at: value[0], id: value[1] };

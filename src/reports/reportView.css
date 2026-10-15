@@ -92,7 +92,14 @@ ul.report-block-problem { display: block; padding-left: 18px; }
 /* KPI tiles: proportional figures (tabular only in tables and on axes); one hero figure at most. */
 .report-block-kpi { gap: 4px; container: report-kpi / inline-size; }
 /* KPI titles wrap to two lines instead of truncating; the delta sits on its own line under the value. */
-.report-block-kpi .report-block-title { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.25; }
+.report-block-kpi .report-block-title { white-space: normal; overflow-wrap: normal; word-break: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.25; }
+/* Lines break between words only; a single word wider than the line ends in an ellipsis rather than splitting. */
+.report-title-word { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: pre; vertical-align: top; }
+/* A narrow tile (a phone's half-width KPI): its buttons keep the first row and the title takes the tile's full width under them, so common words fit whole. */
+@container report-kpi (max-width: 220px) {
+  .report-block-kpi .report-block-head { flex-wrap: wrap; justify-content: flex-end; row-gap: 0; }
+  .report-block-kpi .report-block-title { order: 1; flex-basis: 100%; }
+}
 @container report-kpi (max-width: 240px) { .report-kpi-vs { flex-basis: 100%; } }
 .report-kpi { display: grid; gap: 4px; padding: 2px 0; }
 .report-kpi-label { color: var(--report-muted); font-size: .8rem; }
@@ -160,8 +167,9 @@ ul.report-block-problem { display: block; padding-left: 18px; }
 /* The inspect sheet. */
 .report-inspect { display: flex; flex-direction: column; }
 .report-inspect-tabs { display: flex; align-items: center; gap: 4px; padding: 0 20px 8px; overflow-x: auto; scrollbar-width: none; }
-.report-inspect-tabs button[role="tab"] { min-height: 44px; flex: none; border: 1px solid transparent; border-radius: 999px; padding: 0 14px; background: transparent; color: var(--report-soft); font-weight: 600; cursor: pointer; }
+.report-inspect-tabs button[role="tab"] { min-height: 44px; min-width: 72px; flex: none; display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: 999px; padding: 0 16px; background: transparent; color: var(--report-soft); font-weight: 600; cursor: pointer; }
 .report-inspect-tabs button[role="tab"].active { border-color: var(--report-accent-line); background: var(--report-accent-bg); color: var(--report-accent); }
+/* Back sits after the tabs, so the first tab lines up with the content and no tab moves when it appears. */
 .report-inspect-back { width: 44px; height: 44px; flex: none; }
 .report-inspect-back-idle { visibility: hidden; }
 .report-inspect-body { min-height: 0; flex: 1 1 auto; overflow: auto; padding: 4px 20px calc(18px + env(safe-area-inset-bottom)); }

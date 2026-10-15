@@ -22,7 +22,6 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 
 ## Known LOW leftovers
 
-- [ ] Reports at 390 px (lane RUI QA): a KPI title breaks inside a word ("Request / s" on a half-width tile), and a horizontal bar chart's value-axis labels crowd together ("500 1,000 1,500 2,000…"); the Inspect sheet's "Data" tab is under the 64 px button-lint width at 390 and 1280.
 - [ ] Report option search (D491) has no MCP tool: an agent passing a select value past the first 200 to `get_report`/`refresh_report` must already know it (the run checks it against ClickHouse); a `search_report_options` tool would let it look one up.
 
 - [ ] Settings → Report owners leftover (lane ORG, D500):

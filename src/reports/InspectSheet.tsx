@@ -143,11 +143,11 @@ export function InspectSheet({ report, block, query, view, palette, canRerun, bu
   const first = shownTab.step === 0;
   return <ModalDialog title={title} eyebrow="How was this built" onClose={close} variant="sheet" className="reports-dialog report-inspect">
     <div className="report-inspect-tabs" role="tablist" aria-label="Inspect">
-      {/* Always laid out, so the tabs never move under a finger; hidden on the first step. */}
-      <button type="button" className={`icon-button report-inspect-back${first ? " report-inspect-back-idle" : ""}`} disabled={first} aria-hidden={first || undefined}
-        aria-label="Back to the previous tab" onClick={() => tabs.back()}><ChevronLeft /></button>
       {INSPECT_TABS.map((name) => <button key={name} type="button" role="tab" id={`inspect-tab-${name}`} aria-selected={tab === name} aria-controls="inspect-panel"
         className={tab === name ? "active" : undefined} onClick={() => tabs.select(name, tab)}>{INSPECT_TAB_LABELS[name]}</button>)}
+      {/* After the tabs (the first lines up with the content); always laid out, so nothing moves under a finger; hidden on the first step. */}
+      <button type="button" className={`icon-button report-inspect-back${first ? " report-inspect-back-idle" : ""}`} disabled={first} aria-hidden={first || undefined}
+        aria-label="Back to the previous tab" onClick={() => tabs.back()}><ChevronLeft /></button>
     </div>
     <div className="report-inspect-body" role="tabpanel" id="inspect-panel" aria-labelledby={`inspect-tab-${tab}`}>
       {tab === "query" && <QueryTab block={block} query={query} result={result} failed={failed} canRerun={canRerun} busy={busy} onRerun={onRerun} />}

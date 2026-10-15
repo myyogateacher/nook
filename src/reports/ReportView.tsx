@@ -35,6 +35,12 @@ export function UpdatedAgo({ at }: { at: string }) {
   return <>{`Updated ${timeAgo(at, now)}`}</>;
 }
 
+/** A KPI title as words, each kept whole on its line (ellipsized when one alone is wider than the tile). */
+export function titleWords(title: string) {
+  const words = title.split(/\s+/).filter(Boolean);
+  return words.map((word, at) => <span key={at} className="report-title-word">{word}{at < words.length - 1 ? " " : ""}</span>);
+}
+
 /** ECharts and its option renderer load only when a report with a chart opens (charts.tsx). */
 const EChart = lazy(() => import("./charts"));
 
@@ -368,7 +374,8 @@ export function DataBlockCard({ block, view, hasQuery, palette, running, loaded,
   const title = block.title ?? (block.type === "kpi" ? block.label ?? block.column : block.queryKey);
   return <article className={`report-block report-block-${block.type} ${widthClass(block)}${block.type === "kpi" && block.hero ? " report-block-hero" : ""}${pending ? " report-block-pending" : ""}`} aria-label={title} aria-busy={pending || undefined}>
     <header className="report-block-head">
-      <h3 className="report-block-title">{title}</h3>
+      {/* A KPI title wraps between words only; a word too long for its line ends in an ellipsis (the tooltip has it all). */}
+      <h3 className="report-block-title" title={title}>{block.type === "kpi" ? titleWords(title) : title}</h3>
       <span className="report-block-badges">
         {rerunning && <LoaderCircle className="spin report-block-spinner" aria-label="Running" />}
         {view?.stale && <span className="reports-status reports-status-stale" title={failed ? `The last run failed: ${failed.error ?? ""}` : "The query changed since this result"}>Stale</span>}

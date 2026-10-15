@@ -244,6 +244,15 @@ describe("chart options from the theme", () => {
     expect(label([500, 705, 560, 564], 1)!.align).toBeUndefined();
   });
 
+  test("D493: a narrow horizontal bar chart drops its value-axis labels when every bar is labelled, else uses fewer ticks", () => {
+    const rows = (count: number) => ({ columns: [{ name: "route", type: "String" }, { name: "requests", type: "UInt64" }], rows: Array.from({ length: count }, (_, at) => [`r${at}`, 3300 - at * 10]) });
+    const axis = (count: number, width?: number) => buildChartOption({ ...bar(), kind: "horizontal_bar", intent: "rank", x: "route", y: ["requests"] }, rows(count), dark, { width }).option!.xAxis as { splitNumber?: number; axisLabel: { show: boolean; hideOverlap: boolean } };
+    expect(axis(6, 330).axisLabel.show).toBe(false);
+    expect(axis(6, 900).axisLabel.show).toBe(true);
+    expect(axis(6, 900).splitNumber).toBeUndefined();
+    expect(axis(20, 330)).toMatchObject({ splitNumber: 2, axisLabel: { show: true, hideOverlap: true } });
+  });
+
   test("D492: a line's end label fits its gutter (no unit at phone width); a late maximum reads leftwards; thinning never drops the dots", () => {
     const rows = (values: number[]) => ({ columns: [{ name: "day", type: "Date" }, { name: "requests", type: "UInt64" }], rows: values.map((value, at) => [`2026-09-${String(at + 1).padStart(2, "0")}`, value]) });
     const build = (values: number[], width?: number) => buildChartOption({ ...bar(), kind: "line", intent: "trend", x: "day", y: ["requests"], unit: "requests" }, rows(values), dark, { width }).option!;

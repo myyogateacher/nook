@@ -406,9 +406,14 @@ export function buildChartOption(block: ChartBlock, data: ChartData, theme: Char
   }
 
   const horizontal = kind === "horizontal_bar";
+  // D493: a horizontal bar chart's value axis runs across the tile; on a narrow one its labels collide.
+  // When every bar carries its own value label the axis labels go; otherwise fewer ticks (one per ~110 px) and overlaps hidden.
+  const narrowAcross = horizontal && size.width !== undefined && size.width < 560;
+  const everyBarLabelled = bars && series.length === 1 && !stacked && categories.length <= TIP_LABELS;
   const valueAxis = {
     type: "value",
-    axisLabel: { color: ink.muted, fontSize: TYPE.axis.size, formatter: named(`axis:${format ?? "number"}`, (value: number) => compactValue(value, format)) },
+    ...(narrowAcross ? { splitNumber: Math.max(2, Math.floor((size.width! - 120) / 110)) } : {}),
+    axisLabel: { show: !(narrowAcross && everyBarLabelled), hideOverlap: true, color: ink.muted, fontSize: TYPE.axis.size, formatter: named(`axis:${format ?? "number"}`, (value: number) => compactValue(value, format)) },
     // Gridlines are horizontal only: a horizontal bar chart's value axis runs across, so it has none.
     splitLine: { show: !horizontal, lineStyle: { color: ink.grid, width: MARKS.grid.width, type: "solid" } },
     axisLine: { show: false }, axisTick: { show: false }

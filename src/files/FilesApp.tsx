@@ -901,7 +901,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         <div className="mobile-header"><button className="icon-button" onClick={() => back("folders")} aria-label="Back to folders"><ChevronLeft /></button><strong>{folderTitle}</strong></div>
         <div className="note-heading"><span className="eyebrow">{folder === "shared" || currentFolder?.is_owner === 0 ? "Shared" : "Library"}</span><h1 title={folderTitle}>{folderTitle}</h1></div>
         <div className="file-header-row">
-          <span className="file-count" aria-live="polite">{fileCountLabel(visible.length, inFolder.length)}</span>
+          <span className="file-count" aria-live="polite">{fileCountLabel(visible.length, inFolder.length, textHits.length, textSearch.truncated)}</span>
           <div className="file-view-toggle" role="group" aria-label="View">
             <button className="icon-button" onClick={() => chooseView("list")} aria-pressed={view === "list"} aria-label="List view" title="List view"><ListIcon /></button>
             <button className="icon-button" onClick={() => chooseView("grid")} aria-pressed={view === "grid"} aria-label="Grid view" title="Grid view"><LayoutGrid /></button>

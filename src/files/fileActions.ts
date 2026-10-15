@@ -141,9 +141,16 @@ export function filterDocuments<T extends Pick<DocumentSummary, "name" | "owner_
   });
 }
 
-export function fileCountLabel(shown: number, total: number) {
+/**
+ * The Files header count. While a filter runs, `textHits` counts the "In file text" files (D497):
+ * "3 of 12 files · 2 in text", or "2 in file text" when no name matches, never "0 of 12 files".
+ */
+export function fileCountLabel(shown: number, total: number, textHits = 0, moreText = false) {
   const noun = (count: number) => count === 1 ? "1 file" : `${count} files`;
-  return shown === total ? noun(total) : `${shown} of ${noun(total)}`;
+  const hits = textHits > 0 ? `${textHits}${moreText ? "+" : ""}` : "";
+  if (shown === total) return hits ? `${noun(total)} · ${hits} in text` : noun(total);
+  if (shown === 0) return hits ? `${hits} in file text` : "No names match";
+  return hits ? `${shown} of ${noun(total)} · ${hits} in text` : `${shown} of ${noun(total)}`;
 }
 
 export type FolderNameCheck = { ok: true; name: string; changed: boolean } | { ok: false; error: string };

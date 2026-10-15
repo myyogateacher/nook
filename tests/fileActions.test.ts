@@ -112,6 +112,12 @@ test("the filter matches every word in the name or owner, ignoring case and spac
   expect(fileCountLabel(4, 4)).toBe("4 files");
   expect(fileCountLabel(1, 1)).toBe("1 file");
   expect(fileCountLabel(1, 4)).toBe("1 of 4 files");
+  // D497: text hits are counted; no name match never reads "0 of 4 files".
+  expect(fileCountLabel(0, 4)).toBe("No names match");
+  expect(fileCountLabel(0, 4, 2)).toBe("2 in file text");
+  expect(fileCountLabel(0, 4, 20, true)).toBe("20+ in file text");
+  expect(fileCountLabel(1, 4, 3)).toBe("1 of 4 files · 3 in text");
+  expect(fileCountLabel(4, 4, 3)).toBe("4 files · 3 in text");
 });
 
 test("the sort choice is remembered per user and survives broken storage", () => {

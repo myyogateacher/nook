@@ -2454,7 +2454,7 @@ export function App() {
           {showingFiles && fileSearch.status === "error" && <p className="search-error" role="alert">{fileSearch.error}</p>}
           {showingFiles && fileSearch.status === "loading" && <p className="search-status" role="status">Searching files…</p>}
           {showingFiles && fileSearch.status === "ready" && <FileSearchResults results={fileSearch.results} truncated={fileSearch.truncated} relativeTime={relativeTime} onOpen={(hit) => { void openFileHit(hit.id); }} />}
-          {showingFiles && fileSearch.status === "ready" && !fileSearch.results.length && <div className="empty-state"><div><FolderIcon /></div><h2>No files match</h2><p>Names and the text of text files you can open are searched.</p></div>}
+          {showingFiles && fileSearch.status === "ready" && !fileSearch.results.length && <div className="empty-state"><div><FolderIcon /></div><h2>No files match</h2><p>Names, text files, and PDF text you can open are searched.</p></div>}
           {showingSearchResults && <SearchResults
             results={search.results}
             truncated={search.truncated}

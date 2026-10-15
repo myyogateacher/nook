@@ -1,6 +1,8 @@
 import { db, now, type DocumentRow } from "./db";
 import { buildFtsQuery, cleanIndexText, HIT_END, HIT_START, toSegments, type Segment } from "./search";
 import { readableDocumentPredicate } from "./documentAccess";
+import { NO_FILTER, type SqlFilter } from "./keyResources";
+import { PDF_TEXT_LIMITS, PdfTextError } from "./pdfText";
 import { StorageUnavailableError } from "./objectStore";
 import { logger } from "./log";
 
@@ -12,7 +14,9 @@ const slog = logger("search");
  *
  * - **What is indexed.** The name always. The body only for text files of at most 1 MiB (the
  *   `read_document_text` limit), read exactly as that tool reads them (integrity and UTF-8 checks),
- *   so local and S3 storage index the same. The body is capped at `DOCUMENT_INDEX_LIMITS.bodyBytes`.
+ *   so local and S3 storage index the same, and for PDFs of at most `PDF_TEXT_LIMITS.maxBytes`
+ *   (lane FILES, D496): their text layer, read in the PDF worker (server/pdfText.ts) with its page
+ *   and time caps. The body is capped at `DOCUMENT_INDEX_LIMITS.bodyBytes`.
  * - **Sync.** Files content never changes after upload, so a row is current while its
  *   `source_sha256` equals the document's `sha256`. Upload queues the indexer; rename rewrites the
  *   title in its own transaction; Bin and restore change nothing (queries filter binned documents);
@@ -23,7 +27,9 @@ const slog = logger("search");
  *   row stop the loop until then (the store is down). A file that is not UTF-8 text or fails its
  *   integrity check is indexed by name only (`unreadable`).
  * - **Backfill.** After migration 060 every existing document is stale, so the first pass after boot
- *   is the backfill. `documentIndexReady()` turns true once a pass finds nothing stale; until then
+ *   is the backfill. A PDF row from before D496 (`body_state = 'none'` for a PDF within the size cap)
+ *   is stale too, so the same pass backfills PDF text with no migration; a PDF the worker cannot
+ *   read (a password, a broken file, the time cap) becomes `unreadable` and is not retried. `documentIndexReady()` turns true once a pass finds nothing stale; until then
  *   "Pick from Nook" keeps its bounded scan (server/reports/nookFileSearch.ts).
  * - **Logs** say counts, never names or text.
  */
@@ -35,6 +41,10 @@ export const documentIndexDeps = {
     // Loaded when used: mcpTools imports most of the server.
     const { readDocumentText } = await import("./mcpTools");
     return readDocumentText(document);
+  },
+  async readPdfText(document: DocumentRow): Promise<string> {
+    const { readDocumentPdfText } = await import("./mcpTools");
+    return (await readDocumentPdfText(document, DOCUMENT_INDEX_LIMITS.bodyBytes)).text;
   }
 };
 
@@ -43,7 +53,8 @@ const notWhiteboard = "NOT EXISTS (SELECT 1 FROM whiteboards wb WHERE wb.documen
 const staleQuery = db.query(`
   SELECT d.* FROM documents d LEFT JOIN document_search s ON s.document_id = d.id
   WHERE d.purpose = 'file' AND d.purge_started_at IS NULL AND ${notWhiteboard}
-    AND (s.id IS NULL OR s.source_sha256 <> d.sha256)
+    AND (s.id IS NULL OR s.source_sha256 <> d.sha256
+      OR (s.body_state = 'none' AND d.preview_kind = 'pdf' AND d.size_bytes <= ?))
   ORDER BY d.updated_at DESC, d.id DESC LIMIT ?`);
 const currentSha = db.query("SELECT sha256, name FROM documents WHERE id = ? AND purge_started_at IS NULL");
 const deleteMapping = db.query("DELETE FROM document_search WHERE document_id = ?");
@@ -86,22 +97,26 @@ const STORAGE_DOWN_AFTER = 3;
 export async function indexDocumentsOnce(nowMs = Date.now()): Promise<DocumentIndexPass> {
   const limits = DOCUMENT_INDEX_LIMITS;
   for (const [id, at] of deferred) if (at <= nowMs) deferred.delete(id);
-  const rows = (staleQuery.all(limits.batchDocs + deferred.size + 1) as DocumentRow[]).filter((row) => !deferred.has(row.id));
+  const rows = (staleQuery.all(PDF_TEXT_LIMITS.maxBytes, limits.batchDocs + deferred.size + 1) as DocumentRow[]).filter((row) => !deferred.has(row.id));
   const pass: DocumentIndexPass = { indexed: 0, unreadable: 0, deferred: 0, read: 0, storageDown: false, more: rows.length > limits.batchDocs };
   let failuresInRow = 0;
   for (const row of rows.slice(0, limits.batchDocs)) {
-    const readable = row.preview_kind === "text" && row.size_bytes <= limits.textMaxBytes;
+    const pdf = row.preview_kind === "pdf" && row.size_bytes <= PDF_TEXT_LIMITS.maxBytes;
+    const readable = pdf || (row.preview_kind === "text" && row.size_bytes <= limits.textMaxBytes);
     if (readable && pass.read > 0 && pass.read + row.size_bytes > limits.batchBytes) { pass.more = true; break; }
     let state: BodyState = "none";
     let body = "";
     if (readable) {
       pass.read += row.size_bytes;
       try {
-        body = cleanIndexText(truncateBytes(await documentIndexDeps.readText(row), limits.bodyBytes));
+        const text = pdf ? await documentIndexDeps.readPdfText(row) : await documentIndexDeps.readText(row);
+        body = cleanIndexText(truncateBytes(text, limits.bodyBytes));
         state = "text";
         failuresInRow = 0;
       } catch (error) {
-        const unavailable = error instanceof StorageUnavailableError || (error as { code?: string }).code === "STORAGE_UNAVAILABLE";
+        const code = (error as { code?: string }).code;
+        // A full PDF queue (requests reading PDFs) is like storage trouble: try again later.
+        const unavailable = error instanceof StorageUnavailableError || code === "STORAGE_UNAVAILABLE" || code === "RATE_LIMITED" || (error instanceof PdfTextError && error.reason === "busy");
         if (unavailable) {
           // This file waits; the others go on, unless the store looks down altogether.
           deferred.set(row.id, nowMs + limits.retryMs);
@@ -207,7 +222,7 @@ export type DocumentSearchHit = {
 };
 
 const SNIPPET_TOKENS = 16;
-const searchSql = (textOnly: boolean) => `
+const searchSql = (textOnly: boolean, keyCondition = "1") => `
   SELECT d.id, d.name, d.folder_id, d.mime_type, d.size_bytes, d.preview_kind, d.owner_id, u.display_name AS owner_name,
          CASE WHEN d.owner_id = $userId THEN 1 ELSE 0 END AS is_owner, d.updated_at,
          highlight(document_fts, 0, $hitStart, $hitEnd) AS title_marked,
@@ -218,6 +233,7 @@ const searchSql = (textOnly: boolean) => `
   JOIN users u ON u.id = d.owner_id
   WHERE document_fts MATCH $query AND ${readableDocumentPredicate} AND ${notWhiteboard}
     ${textOnly ? "AND d.preview_kind = 'text' AND d.size_bytes <= $maxBytes AND s.body_state <> 'unreadable'" : ""}
+    AND ($folderId IS NULL OR d.folder_id = $folderId) AND ${keyCondition}
   ORDER BY bm25(document_fts, 8.0, 1.0), d.updated_at DESC, d.id DESC
   LIMIT $limit OFFSET $offset`;
 const searchQueries = { all: db.query(searchSql(false)), text: db.query(searchSql(true)) };
@@ -227,11 +243,14 @@ const searchQueries = { all: db.query(searchSql(false)), text: db.query(searchSq
  * never a card, row, or other host link) whose name or text matches `q`, best first. The ACL is
  * part of the query, before LIMIT. `textOnly` keeps the files `read_document_text` can read.
  */
-export function searchDocumentRows(userId: string, q: string, options: { limit: number; offset?: number; textOnly?: boolean }) {
+export function searchDocumentRows(userId: string, q: string, options: { limit: number; offset?: number; textOnly?: boolean; folderId?: string | null; keyScope?: SqlFilter }) {
   const query = buildFtsQuery(q);
   if (query === null) return { rows: [] as DocumentSearchRow[], truncated: false };
-  const rows = (options.textOnly ? searchQueries.text : searchQueries.all).all({
-    userId, query, hitStart: HIT_START, hitEnd: HIT_END, limit: options.limit + 1, offset: options.offset ?? 0,
+  const scope = options.keyScope ?? NO_FILTER;
+  const statement = scope.sql === "1" ? (options.textOnly ? searchQueries.text : searchQueries.all) : db.query(searchSql(!!options.textOnly, scope.sql));
+  const rows = statement.all({
+    ...scope.params,
+    userId, query, hitStart: HIT_START, hitEnd: HIT_END, limit: options.limit + 1, offset: options.offset ?? 0, folderId: options.folderId ?? null,
     ...(options.textOnly ? { maxBytes: DOCUMENT_INDEX_LIMITS.textMaxBytes } : {})
   }) as DocumentSearchRow[];
   return { rows: rows.slice(0, options.limit), truncated: rows.length > options.limit };
@@ -245,4 +264,27 @@ export function searchDocuments(userId: string, q: string, limit: number) {
     mime_type: row.mime_type, size_bytes: row.size_bytes, owner_name: row.owner_name, is_owner: row.is_owner, updated_at: row.updated_at
   }));
   return { results, truncated };
+}
+
+/** An MCP/REST `search_documents` hit (D495): plain strings, no scores, like `search_notes`. */
+export type DocumentToolHit = {
+  id: string; name: string; snippet: string; matched_in: Array<"name" | "text">; folder_id: string | null; mime_type: string; size_bytes: number;
+  owner_name: string; is_owner: 0 | 1; updated_at: string;
+};
+
+const plain = (marked: string) => marked.replace(/[\u0002\u0003]/g, "");
+
+/**
+ * `search_documents` (D495): the same query and access as the Files search (the Files listing access,
+ * the predicate in SQL before LIMIT), narrowed to the key's chosen files and folders (`keyScope`) and
+ * optionally one folder. `indexing` is true until the first backfill has finished.
+ */
+export function searchDocumentsForKey(userId: string, q: string, options: { folderId: string | null; limit: number; keyScope: SqlFilter }) {
+  const { rows, truncated } = searchDocumentRows(userId, q, { limit: options.limit, folderId: options.folderId, keyScope: options.keyScope });
+  const results = rows.map((row): DocumentToolHit => ({
+    id: row.id, name: row.name, snippet: plain(row.snippet_marked),
+    matched_in: [...(row.title_marked.includes(HIT_START) ? ["name" as const] : []), ...(row.snippet_marked.includes(HIT_START) ? ["text" as const] : [])],
+    folder_id: row.folder_id, mime_type: row.mime_type, size_bytes: row.size_bytes, owner_name: row.owner_name, is_owner: row.is_owner, updated_at: row.updated_at
+  }));
+  return { results, truncated, indexing: !ready };
 }

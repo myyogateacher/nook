@@ -4,6 +4,7 @@ import { createUser, request, type Session } from "./support/harness";
 const { createApiKey } = await import("../server/apiKeys");
 const { invokeMcpToolForTests, loadLiveKey, mcpToolSpecs, toolVisible } = await import("../server/mcpTools");
 const { resetMcpLimits } = await import("../server/mcpRateLimit");
+const { whenDocumentIndexIdle } = await import("../server/documentSearch");
 const { resetTodayRateLimit } = await import("../server/today/rateLimit");
 const { resetKeyRouteLimits } = await import("../server/keyRoutes");
 type Grant = import("../server/keyGrants").Grant;
@@ -105,6 +106,15 @@ describe("chosen notes and files (Wave 34)", () => {
     expect(hidden.value.code).toBe("NOT_FOUND");
     expect(hidden.text).not.toContain("otter");
     expect((await call(byFile, "get_today")).text).not.toContain("hidden-otter");
+    // search_documents (D495) is narrowed before its LIMIT; a folder outside the grant is NOT_FOUND.
+    await whenDocumentIndexIdle();
+    const searched = await call(byFile, "search_documents", { query: "file", limit: 1 });
+    expect(searched.value).toMatchObject({ truncated: false });
+    expect(searched.value.results.map((hit: { id: string }) => hit.id)).toEqual([w.d1]);
+    expect(searched.text).not.toContain("otter");
+    expect((await call(byFile, "search_documents", { query: "file", folderId: w.f2 })).value.code).toBe("NOT_FOUND");
+    const overFolder = key(w.owner, [on("files", "read", "folder", w.f2)]);
+    expect((await call(overFolder, "search_documents", { query: "file" })).value.results.map((hit: { id: string }) => hit.id)).toEqual([w.d2]);
     const byFolder = key(w.owner, [on("files", "write", "folder", w.f1)]);
     expect((await call(byFolder, "move_file", { documentId: w.d1, folderId: w.f2 })).value.code).toBe("NOT_FOUND");
     expect((await call(byFolder, "rename_file", { documentId: w.d2, name: "nope.md" })).value.code).toBe("NOT_FOUND");

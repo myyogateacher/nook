@@ -5,6 +5,8 @@ const { createMcpApiKey } = await import("../server/mcp");
 const { setKeyScopesForTests } = await import("../server/apiKeys");
 const { invokeMcpToolForTests } = await import("../server/mcpTools");
 const { resetMcpLimits, consumeMcpLimits, MCP_LIMITS, MCP_USER_LIMITS } = await import("../server/mcpRateLimit");
+const { whenDocumentIndexIdle } = await import("../server/documentSearch");
+const { makePdf } = await import("./support/pdf");
 type McpScope = import("../server/mcpScopes").McpScope;
 
 beforeEach(() => resetMcpLimits());
@@ -441,7 +443,7 @@ async function uploadFile(session: Session, content: string | Uint8Array, filena
 describe("MCP document tools", () => {
   test("files:read exposes the document tools and list_folders only", async () => {
     const owner = await createUser("Files scopes");
-    expect(await toolNames(makeKey(owner, ["files:read"]))).toEqual(["get_document_metadata", "list_documents", "list_folders", "read_document_text"]);
+    expect(await toolNames(makeKey(owner, ["files:read"]))).toEqual(["get_document_metadata", "list_documents", "list_folders", "read_document_text", "search_documents"]);
     const notesKey = makeKey(owner, ["notes:read", "notes:write-draft"]);
     expect(await toolNames(notesKey)).not.toContain("list_documents");
     const direct = await invokeMcpToolForTests("read_document_text", { documentId: crypto.randomUUID() }, notesKey.id);
@@ -497,5 +499,77 @@ describe("MCP document tools", () => {
     expect((await callTool(key, "read_document_text", { documentId: text.id })).value).toMatchObject({ code: "NOT_FOUND" });
     const after = await callTool(key, "list_documents");
     expect((after.value.documents as Array<{ id: string }>).map((item) => item.id)).not.toContain(text.id);
+  }, 20_000);
+});
+
+describe("MCP search_documents and PDF text (lane FILES, D495, D496)", () => {
+  const term = () => `kw${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
+  type Hit = { id: string; name: string; snippet: string; matched_in: string[]; is_owner: number; owner_name: string };
+  async function search(key: Key, args: Record<string, unknown>) {
+    await whenDocumentIndexIdle();
+    return callTool(key, "search_documents", args);
+  }
+
+  test("finds names and text (PDFs too), ranked, with plain snippets; only files the caller can list", async () => {
+    const owner = await createUser("Docs search owner");
+    const reader = await createUser("Docs search reader");
+    const stranger = await createUser("Docs search stranger");
+    const word = term();
+    const named = await uploadFile(owner, "nothing to see", `${word} plan.txt`);
+    const inText = await uploadFile(owner, `The ${word} budget is due Friday.`, "budget.txt");
+    const pdf = await uploadFile(owner, makePdf([`Quarterly ${word} report`, "Second page"]), "quarterly.pdf");
+    expect(pdf.preview_kind).toBe("pdf");
+    const key = makeKey(owner, ["files:read"]);
+
+    const found = await search(key, { query: word });
+    expect(found.isError).toBe(false);
+    const hits = found.value.results as Hit[];
+    // A name match ranks first (the name weighs more than the text).
+    expect(hits.map((hit) => hit.id)[0]).toBe(named.id);
+    expect(hits.map((hit) => hit.id).sort()).toEqual([named.id, inText.id, pdf.id].sort());
+    const byId = new Map(hits.map((hit) => [hit.id, hit]));
+    expect(byId.get(named.id)!.matched_in).toEqual(["name"]);
+    expect(byId.get(inText.id)!).toMatchObject({ matched_in: ["text"], name: "budget.txt", is_owner: 1 });
+    expect(byId.get(inText.id)!.snippet).toContain(`${word} budget`);
+    expect(byId.get(pdf.id)!.snippet).toContain(`Quarterly ${word} report`);
+    expect(JSON.stringify(found.value)).not.toMatch(/\\u000[23]/);
+    expect(found.value).toMatchObject({ truncated: false, indexing: expect.any(Boolean) });
+    expect(((await search(key, { query: word, limit: 1 })).value as { truncated: boolean }).truncated).toBe(true);
+
+    // The PDF's text layer is readable too.
+    const read = await callTool(key, "read_document_text", { documentId: pdf.id });
+    expect(read.value).toMatchObject({ id: pdf.id, text: `Quarterly ${word} report\n\nSecond page`, pdf: { pages: 2, pagesRead: 2, truncated: false } });
+
+    // Strangers see nothing, not even names; a share shows the file with its owner.
+    const strangerKey = makeKey(stranger, ["files:read"]);
+    const none = await search(strangerKey, { query: word });
+    expect(none.value.results).toEqual([]);
+    expect(JSON.stringify(none.value)).not.toContain("budget");
+    await request(`/files/${inText.id}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "selected", userIds: [reader.userId] }) }, owner);
+    const shared = (await search(makeKey(reader, ["files:read"]), { query: word })).value.results as Hit[];
+    expect(shared.map((hit) => hit.id)).toEqual([inText.id]);
+    expect(shared[0]).toMatchObject({ is_owner: 0, owner_name: "Docs search owner" });
+
+    // The Bin hides a file; other scopes cannot call the tool; bad input is INVALID.
+    expect((await request(`/files/${inText.id}`, { method: "DELETE", body: "{}" }, owner)).status).toBe(200);
+    expect(((await search(key, { query: word })).value.results as Hit[]).map((hit) => hit.id)).not.toContain(inText.id);
+    expect(await toolNames(makeKey(owner, ["notes:read"]))).not.toContain("search_documents");
+    expect((await search(key, { query: "" })).isError).toBe(true);
+    expect((await search(key, { query: word, limit: 21 })).isError).toBe(true);
+    expect((await search(key, { query: `${word} OR NEAR(x) title:*` })).isError).toBe(false);
+  }, 30_000);
+
+  test("folderId narrows to one folder; another person's folder finds nothing", async () => {
+    const owner = await createUser("Docs search folders");
+    const stranger = await createUser("Docs search folder stranger");
+    const word = term();
+    const folder = (await json<{ folder: { id: string } }>(await request("/folders", { method: "POST", body: JSON.stringify({ name: "Reading" }) }, owner))).folder.id;
+    const inside = await uploadFile(owner, `${word} inside`, "inside.txt");
+    expect((await request(`/files/${inside.id}`, { method: "PATCH", body: JSON.stringify({ folderId: folder }) }, owner)).status).toBe(200);
+    await uploadFile(owner, `${word} outside`, "outside.txt");
+    const key = makeKey(owner, ["files:read"]);
+    const hits = (await search(key, { query: word, folderId: folder })).value.results as Hit[];
+    expect(hits.map((hit) => hit.id)).toEqual([inside.id]);
+    expect((await search(makeKey(stranger, ["files:read"]), { query: word, folderId: folder })).value).toMatchObject({ results: [], truncated: false });
   }, 20_000);
 });

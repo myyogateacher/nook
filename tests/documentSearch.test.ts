@@ -17,6 +17,8 @@ const search = await import("../server/documentSearch");
 const { DOCUMENT_INDEX_LIMITS, documentIndexDeps, documentIndexReady, indexDocumentsOnce, resetDocumentIndexForTests, scheduleDocumentIndex, whenDocumentIndexIdle } = search;
 const { resetSearchRateLimit } = await import("../server/searchRoutes");
 const { StorageUnavailableError } = await import("../server/objectStore");
+const { PDF_TEXT_LIMITS } = await import("../server/pdfText");
+const { makePdf } = await import("./support/pdf");
 
 
 type Json = Record<string, any>;
@@ -24,6 +26,7 @@ let owner: Session;
 let other: Session;
 const savedLimits = { ...DOCUMENT_INDEX_LIMITS };
 const savedRead = documentIndexDeps.readText;
+const savedPdf = documentIndexDeps.readPdfText;
 
 async function api(session: Session, method: string, path: string, body?: unknown) {
   const response = await request(path, method === "GET" ? {} : { method, body: JSON.stringify(body ?? {}) }, session);
@@ -55,6 +58,7 @@ beforeAll(async () => {
 afterEach(() => {
   Object.assign(DOCUMENT_INDEX_LIMITS, savedLimits);
   documentIndexDeps.readText = savedRead;
+  documentIndexDeps.readPdfText = savedPdf;
 });
 
 describe("Files search index: sync", () => {
@@ -208,6 +212,51 @@ describe("Files search index: backfill and storage", () => {
     expect(row(bad)).toMatchObject({ body_state: "unreadable" });
     expect(ids(await find(owner, broken))).toEqual([bad]);
     expect(ids(await find(owner, term))).toEqual([id]);
+  });
+});
+
+describe("Files search index: PDF text (lane FILES, D496)", () => {
+  test("a PDF's text layer is indexed; a PDF row from before PDF text is backfilled with no migration", async () => {
+    const term = word("pdf");
+    const id = await upload(owner, "Board minutes.pdf", makePdf([`Minutes ${term} approved`, "Next meeting"]), "application/pdf");
+    const found = await find(owner, term);
+    expect(ids(found)).toEqual([id]);
+    expect(found.results[0]!.snippet.some((segment: Json) => segment.hit && segment.text.toLowerCase() === term)).toBe(true);
+    expect(row(id)).toMatchObject({ body_state: "text" });
+
+    // As indexed before D496: the name only, body_state 'none'. The next pass reads the text.
+    db.query("UPDATE document_fts SET body = '' WHERE rowid = (SELECT id FROM document_search WHERE document_id = ?)").run(id);
+    db.query("UPDATE document_search SET body_state = 'none' WHERE document_id = ?").run(id);
+    expect(ids(await find(owner, term))).toEqual([]);
+    scheduleDocumentIndex();
+    await whenDocumentIndexIdle();
+    expect(row(id)).toMatchObject({ body_state: "text" });
+    expect(ids(await find(owner, term))).toEqual([id]);
+  });
+
+  test("a PDF that cannot be read is indexed by name and not retried; one over the size cap is never read", async () => {
+    const broken = word("bpdf");
+    const bad = await upload(owner, `${broken} scan.pdf`, "%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n", "application/pdf");
+    await whenDocumentIndexIdle();
+    expect(row(bad)).toMatchObject({ body_state: "unreadable" });
+    expect(ids(await find(owner, broken))).toEqual([bad]);
+    const at = (db.query("SELECT indexed_at FROM document_search WHERE document_id = ?").get(bad) as { indexed_at: string }).indexed_at;
+    scheduleDocumentIndex();
+    await whenDocumentIndexIdle();
+    expect((db.query("SELECT indexed_at FROM document_search WHERE document_id = ?").get(bad) as { indexed_at: string }).indexed_at).toBe(at);
+
+    const reads: string[] = [];
+    documentIndexDeps.readPdfText = async (document) => { reads.push(document.id); return savedPdf(document); };
+    const saved = PDF_TEXT_LIMITS.maxBytes;
+    PDF_TEXT_LIMITS.maxBytes = 100;
+    try {
+      const big = await upload(owner, "Big.pdf", makePdf([`${word("big")} text`]), "application/pdf");
+      await whenDocumentIndexIdle();
+      expect(row(big)).toMatchObject({ body_state: "none" });
+      expect(reads).not.toContain(big);
+    } finally {
+      PDF_TEXT_LIMITS.maxBytes = saved;
+    }
   });
 });
 

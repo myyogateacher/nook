@@ -15,7 +15,7 @@ export const MCP_PERMISSIONS: readonly McpPermission[] = [
   { scope: "notes:write-draft", label: "Write drafts", help: "Create notes and edit drafts of your own notes; never publishes.", implies: "notes:read" },
   { scope: "notes:publish", label: "Publish notes", help: "Publish drafts of your own notes after reading them.", implies: "notes:read",
     warning: "An agent can make its drafts visible to everyone the note is shared with." },
-  { scope: "files:read", label: "Read files", help: "File details and the text of text files up to 1 MiB." },
+  { scope: "files:read", label: "Read files", help: "File details, search, and the text of text files up to 1 MiB and of PDFs." },
   { scope: "files:write", label: "Write files", help: "Upload, rename, and move your files and create folders; never shares or deletes.", implies: "files:read" },
   { scope: "tasks:read", label: "Read tasks", help: "Read boards and cards." },
   { scope: "tasks:write", label: "Write tasks", help: "Create, move, and comment on cards, and manage tags, WIP limits, sprints (owner only), and attachments; never deletes.", implies: "tasks:read" },

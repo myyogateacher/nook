@@ -7,6 +7,7 @@ import { audit, db, withSurfaceAuditContext, type DocumentRow, type NoteRow } fr
 import { listableDocument, listableDocumentSummary, listReadableDocuments } from "./documentAccess";
 import { DocumentIntegrityError, openObjectForRead } from "./documentStorage";
 import { StorageUnavailableError } from "./objectStore";
+import { extractPdfText, PDF_TEXT_LIMITS, PdfTextError } from "./pdfText";
 import { consumeMcpLimits, type McpLimitBucket } from "./mcpRateLimit";
 import { hasAllScopes, hasAnyScope, hasScope, type McpScope } from "./mcpScopes";
 import { countKeyUsage, isKeyDenial, resolveKeyActor } from "./apiKeys";
@@ -14,6 +15,7 @@ import { grantsForScopes, scopeReach, selectionHas, type ScopeReach } from "./ke
 import { anchorsOf, keyFilter, keyReach, keyReachAny, reachCanCover, reachCovers, type ItemKind } from "./keyResources";
 import { MAX_QUERY_LENGTH } from "./search";
 import { searchPublishedNotes } from "./searchRoutes";
+import { searchDocumentsForKey } from "./documentSearch";
 import { createDraftNote, writeDraftLocked } from "./noteDrafts";
 import { noteAttachmentsFor } from "./noteAttachments";
 import { noteManageTools } from "./mcpNoteTools";
@@ -411,9 +413,8 @@ const noteWriteTools: McpToolSpec[] = [
 
 export const MCP_MAX_TEXT_BYTES = 1_048_576;
 
-export async function readDocumentText(document: DocumentRow) {
-  if (document.preview_kind !== "text") throw new McpToolError("NOT_TEXT", "Only text files can be read. This file is not text.");
-  if (document.size_bytes > MCP_MAX_TEXT_BYTES) throw new McpToolError("TOO_LARGE", `Text files larger than ${MCP_MAX_TEXT_BYTES} bytes cannot be read over MCP`);
+/** A document's bytes, integrity-checked, with storage trouble as tool errors. */
+async function readDocumentBytes(document: DocumentRow) {
   let bytes: Uint8Array;
   try {
     bytes = await (await openObjectForRead(document.id, document.size_bytes)).bytes();
@@ -425,11 +426,41 @@ export async function readDocumentText(document: DocumentRow) {
   if (bytes.byteLength !== document.size_bytes || createHash("sha256").update(bytes).digest("hex") !== document.sha256) {
     throw new McpToolError("INTERNAL", "File content failed integrity verification");
   }
+  return bytes;
+}
+
+export async function readDocumentText(document: DocumentRow) {
+  if (document.preview_kind !== "text") throw new McpToolError("NOT_TEXT", "Only text files can be read. This file is not text.");
+  if (document.size_bytes > MCP_MAX_TEXT_BYTES) throw new McpToolError("TOO_LARGE", `Text files larger than ${MCP_MAX_TEXT_BYTES} bytes cannot be read over MCP`);
+  const bytes = await readDocumentBytes(document);
   if (bytes.includes(0)) throw new McpToolError("NOT_TEXT", "This file is not valid UTF-8 text");
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
     throw new McpToolError("NOT_TEXT", "This file is not valid UTF-8 text");
+  }
+}
+
+/** The most PDF text `read_document_text` returns, in characters (D496). */
+export const MCP_MAX_PDF_TEXT_CHARS = 1_000_000;
+
+/**
+ * The text layer of a PDF (D496): pages in order, read in the PDF worker (server/pdfText.ts) with
+ * its page, size, and time caps. A PDF without a text layer (a scan) returns empty text.
+ */
+export async function readDocumentPdfText(document: DocumentRow, maxChars = MCP_MAX_PDF_TEXT_CHARS) {
+  if (document.preview_kind !== "pdf") throw new McpToolError("NOT_TEXT", "This file is not a PDF.");
+  if (document.size_bytes > PDF_TEXT_LIMITS.maxBytes) throw new McpToolError("TOO_LARGE", `PDFs larger than ${PDF_TEXT_LIMITS.maxBytes} bytes cannot be read as text`);
+  const bytes = await readDocumentBytes(document);
+  try {
+    return await extractPdfText(bytes, { maxChars });
+  } catch (error) {
+    if (!(error instanceof PdfTextError)) throw error;
+    if (error.reason === "encrypted") throw new McpToolError("NOT_TEXT", "This PDF is password-protected");
+    if (error.reason === "invalid") throw new McpToolError("NOT_TEXT", "This file is not a readable PDF");
+    if (error.reason === "timeout") throw new McpToolError("TOO_LARGE", "This PDF took too long to read");
+    if (error.reason === "busy") throw new McpToolError("RATE_LIMITED", "PDF reading is busy. Try again in a moment.");
+    throw new McpToolError("NOT_TEXT", "The text of this PDF could not be read");
   }
 }
 
@@ -460,8 +491,8 @@ const fileTools: McpToolSpec[] = [
   }),
   defineTool({
     name: "read_document_text",
-    title: "Read a text file",
-    description: `Read a text file (such as .txt, .md, .csv, or .json) up to ${MCP_MAX_TEXT_BYTES} bytes as UTF-8. Other files return NOT_TEXT or TOO_LARGE.`,
+    title: "Read a text file or PDF",
+    description: `Read a text file (such as .txt, .md, .csv, or .json) up to ${MCP_MAX_TEXT_BYTES} bytes as UTF-8, or the text layer of a PDF up to ${PDF_TEXT_LIMITS.maxBytes} bytes (at most ${PDF_TEXT_LIMITS.maxPages} pages and ${MCP_MAX_PDF_TEXT_CHARS} characters; a scanned PDF has no text). Other files return NOT_TEXT or TOO_LARGE.`,
     scopes: ["files:read"],
     access: { mode: "items", items: [{ arg: "documentId", kind: "document" }] },
     write: false,
@@ -469,9 +500,29 @@ const fileTools: McpToolSpec[] = [
     handler: async ({ documentId }, key) => {
       const document = listableDocument(documentId, key.userId);
       if (!document) throw notFound("File");
-      const text = await readDocumentText(document);
-      return { id: document.id, name: document.name, mimeType: document.mime_type, sizeBytes: document.size_bytes, text };
+      const base = { id: document.id, name: document.name, mimeType: document.mime_type, sizeBytes: document.size_bytes };
+      if (document.preview_kind === "pdf") {
+        const pdf = await readDocumentPdfText(document);
+        return { ...base, text: pdf.text, pdf: { pages: pdf.pages, pagesRead: pdf.pagesRead, truncated: pdf.truncated } };
+      }
+      return { ...base, text: await readDocumentText(document) };
     }
+  }),
+  defineTool({
+    name: "search_documents",
+    title: "Search files",
+    description: "Full-text search over the names and text of files the user can see in Nook Files (text files, and the text layer of PDFs), best match first. Snippets are plain text. Read a hit with read_document_text.",
+    scopes: ["files:read"],
+    access: { mode: "list", lists: ["document"], items: [{ arg: "folderId", kind: "folder", ifAbsent: "allow" }] },
+    write: false,
+    inputSchema: z.object({
+      query: z.string().min(1).max(MAX_QUERY_LENGTH).describe("Words to find; quote a phrase with double quotes"),
+      folderId: z.string().uuid().optional().describe("Only files directly in this folder"),
+      limit: z.number().int().min(1).max(20).optional().describe("Maximum results, 1 to 20 (default 10)")
+    }),
+    handler: ({ query, folderId, limit }, key) => searchDocumentsForKey(key.userId, query, {
+      folderId: folderId ?? null, limit: limit ?? 10, keyScope: keyFilter(key, "files:read", DOCUMENT_ANCHOR_COLUMNS)
+    })
   })
 ];
 

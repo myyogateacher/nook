@@ -164,7 +164,9 @@
 @media (max-width: 760px) {
   .files-workspace .note-heading { display: none; }
   .files-workspace .mobile-header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .file-header-row { margin-bottom: 4px; }
+  .file-header-row { margin-bottom: 4px; flex-wrap: wrap; justify-content: flex-end; row-gap: 2px; }
+  /* D497: the count gets its own line under the buttons, so "1 of 6 files · 1 in text" never wraps word by word. */
+  .file-count { order: 1; flex: 1 0 100%; margin-right: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .files-upload-button { min-height: 44px; padding: 0 18px; }
   .file-row { min-height: 64px; }
   .upload-queue-toggle, .upload-item-row .icon-button, .upload-queue-header .text-action { min-height: 44px; }

@@ -20,8 +20,7 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 - [ ] Reports: measure chart-kind choice with a real model (left from the chart-kinds lane, D488): run `scripts/reportEval.ts` with `REPORT_EVAL_*` set on the five kind cases (`onboarding_funnel`, `cohort_retention`, `quota_attainment`, `latency_spread`, `plan_flow`) and compare against a run with the shape line and the kind check off; only the scripted golden/trap runs were done.
 
 - [ ] Reports parameters, left from lane PARAMS (D489, migration 063):
-  - [ ] The SQL console refuses a saved query with `{name:Type}` placeholders (Inspect → Open in console): bind the report's defaults there, or show the bound values beside it.
-  - [ ] Date presets resolve on UTC days; use the report's schedule time zone (or the viewer's) for "today" and "last 30 days".
+  - [ ] The SQL console refuses a saved query with `{name:Type}` placeholders (Inspect → Open in console): prompt for each placeholder's value (a typed input per `{name:Type}`) and bind it as `param_<name>`; not cheap enough for the v0.40.0 fix (the console's guard path, its UI, and its tests).
   - [ ] Measure parameter adoption with a real model (`scripts/reportEval.ts` with `REPORT_EVAL_*`): a doc that names a window or a dimension should get a date range or filter; only the scripted provider was run.
   - [ ] A select's options are read per report (cached 6 h and after each default refresh); a very high-cardinality column still lists only the first 200 (no search-as-you-type against ClickHouse).
 

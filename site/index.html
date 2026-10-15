@@ -675,6 +675,7 @@ docker compose ps</code></pre></div></article></div>
           <tr><td><code>VAULT_ENCRYPTION_KEY_FILE</code></td><td>empty</td><td>Instead of the variable: an absolute path to a file holding the key, outside <code>DATA_DIR</code>.</td></tr>
           <tr><td><code>AGENT_SECRETS_KEY</code></td><td>empty</td><td>Agent chat's base64 32-byte key, different from the TOTP and Vault keys; it seals model-provider API keys. Empty keeps Chat off. Keep it away from the backups.</td></tr>
           <tr><td><code>AGENT_SECRETS_KEY_FILE</code></td><td>empty</td><td>Instead of the variable: an absolute path to a file holding the key, outside <code>DATA_DIR</code>.</td></tr>
+          <tr><td><code>REPORT_TIME_ZONE</code></td><td>the server&#39;s zone</td><td>The time zone report date presets (Today, Last 30 days, month to date) resolve in for a report without a schedule; a report&#39;s schedule zone wins.</td></tr>
           <tr><td><code>AGENT_ALLOWED_PRIVATE_HOSTS</code></td><td>empty</td><td>Model endpoints on private networks the server may call (host names, IP addresses, or CIDR ranges, comma-separated); plain <code>http:</code> only for these.</td></tr>
           <tr><td><code>AGENT_MAX_CONCURRENT_RUNS</code></td><td><code>4</code></td><td>Agent runs in flight for the whole instance, chats and API runs together (1–16).</td></tr>
           <tr><td><code>AGENT_RUN_TIMEOUT_S</code></td><td><code>600</code></td><td>The wall clock of one chat answer in seconds (30–3600); API and MCP runs stop at 5 minutes, or at this value if lower.</td></tr>

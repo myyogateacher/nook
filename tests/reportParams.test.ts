@@ -5,6 +5,7 @@ import { startFakeClickhouse, type FakeRequest } from "./support/fakeClickhouse"
 import type { ReportSpec } from "../shared/reports";
 import { upgradeSpec } from "../shared/reports";
 import {
+  todayIn, zoneLabel,
   bindValues, canonicalValues, defaultValues, isDefaultSet, resolveDateRange, resolveValues, valueProblem, valuesFromSearch, valuesToSearch, type ReportParameter
 } from "../shared/reportParams";
 
@@ -13,6 +14,7 @@ const { syncSchema } = await import("../server/reports/schemaCatalog");
 const refresh = await import("../server/reports/refresh");
 const params = await import("../server/reports/params");
 const { checkSpecShape } = await import("../server/reports/specValidate");
+const zone = await import("../server/reports/paramZone");
 
 /**
  * Interactive report parameters (spec v3, D489): binding and type rejection, the v2 → v3 upgrade, the
@@ -132,6 +134,28 @@ describe("values, binding, and the URL (shared/reportParams.ts)", () => {
     const some: ReportParameter = { ...COUNTRY, default: ["DE"] } as ReportParameter;
     expect(valuesToSearch([some], { country: [] })).toEqual({ country: [""] });
     expect(valuesFromSearch([some], { country: [""] })).toEqual({ country: [] });
+  });
+});
+
+describe("presets resolve in the report's zone (IST near midnight)", () => {
+  // 18:45 UTC on 15 October is 00:15 IST on 16 October.
+  const nearMidnight = new Date("2026-10-15T18:45:00Z");
+  test("today is the zone's calendar day; the presets count from it; the label names the zone", () => {
+    expect(todayIn("Asia/Kolkata", nearMidnight)).toBe("2026-10-16");
+    expect(todayIn("UTC", nearMidnight)).toBe("2026-10-15");
+    expect(resolveDateRange({ preset: "today" }, todayIn("Asia/Kolkata", nearMidnight))).toEqual({ from: "2026-10-16", to: "2026-10-16" });
+    expect(resolveDateRange({ preset: "30d" }, todayIn("Asia/Kolkata", nearMidnight))).toEqual({ from: "2026-09-17", to: "2026-10-16" });
+    expect(zoneLabel("Asia/Kolkata", nearMidnight)).toBe("IST");
+    expect(zoneLabel("UTC")).toBe("UTC");
+    expect(todayIn("Not/AZone", nearMidnight)).toBe("2026-10-15");
+  });
+
+  test("month and quarter to date turn over at the zone's midnight, not UTC's", () => {
+    // 19:00 UTC on 30 September is 00:30 IST on 1 October: a new month and a new quarter in IST.
+    const today = todayIn("Asia/Kolkata", new Date("2026-09-30T19:00:00Z"));
+    expect(resolveDateRange({ preset: "mtd" }, today)).toEqual({ from: "2026-10-01", to: "2026-10-01" });
+    expect(resolveDateRange({ preset: "qtd" }, today)).toEqual({ from: "2026-10-01", to: "2026-10-01" });
+    expect(resolveDateRange({ preset: "qtd" }, todayIn("UTC", new Date("2026-09-30T19:00:00Z")))).toEqual({ from: "2026-07-01", to: "2026-09-30" });
   });
 });
 
@@ -293,6 +317,31 @@ describe("runs with parameters", () => {
     expect((db.query("SELECT count(*) AS n FROM report_param_sets WHERE report_id = ?").get(reportId) as { n: number }).n).toBe(20);
     expect((db.query("SELECT count(*) AS n FROM report_param_results WHERE report_id = ?").get(reportId) as { n: number }).n).toBe(20);
     expect(db.query("SELECT 1 FROM report_param_sets WHERE report_id = ? AND set_hash = ?").get(reportId, "0".repeat(64))).toBeNull();
+  });
+});
+
+describe("the report's zone (D489)", () => {
+  test("the schedule's zone, else REPORT_TIME_ZONE, else the process's; binding and the results name it", async () => {
+    const reportId = await seededReport();
+    const nearMidnight = new Date("2026-10-15T18:45:00Z");
+    const saved = process.env.REPORT_TIME_ZONE;
+    try {
+      process.env.REPORT_TIME_ZONE = "America/New_York";
+      expect(zone.reportTimeZone(reportId)).toBe("America/New_York");
+      expect(zone.reportToday(reportId, nearMidnight)).toBe("2026-10-15");
+      db.query("INSERT INTO report_schedules (report_id, cadence, tz, created_at, updated_at) VALUES (?, 'manual', 'Asia/Kolkata', ?, ?)").run(reportId, new Date().toISOString(), new Date().toISOString());
+      expect(zone.reportTimeZone(reportId)).toBe("Asia/Kolkata");
+      expect(zone.reportToday(reportId, nearMidnight)).toBe("2026-10-16");
+    } finally {
+      if (saved === undefined) delete process.env.REPORT_TIME_ZONE; else process.env.REPORT_TIME_ZONE = saved;
+    }
+    const today = todayIn("Asia/Kolkata");
+    const view = await send(viewer, "GET", `/reports/${reportId}/results?values=${enc({ period: { preset: "today" } })}`);
+    expect(view.body.timeZone).toBe("Asia/Kolkata");
+    expect(view.body.set.bound).toMatchObject({ period_from: today, period_to: today });
+    await refresh.startRefresh(owner.userId, reportId, { trigger: "user" }).done;
+    const sent = fake.requests.find((item) => item.sql.startsWith("SELECT * FROM (") && item.params.param_period_to);
+    expect(sent?.params.param_period_to).toBe(today);
   });
 });
 

@@ -77,7 +77,7 @@ function api() {
   const runs: unknown[] = [];
   const cached = new Set<string>();
   const calls = mockApi({
-    [`GET /reports/${REPORT_ID}/results`]: () => ({ results: [{ queryKey: "totals", result: result(1200, { period_from: "2026-09-14", period_to: "2026-10-13", country: "[]" }), failed: null, stale: false }], running: null }),
+    [`GET /reports/${REPORT_ID}/results`]: () => ({ results: [{ queryKey: "totals", result: result(1200, { period_from: "2026-09-14", period_to: "2026-10-13", country: "[]" }), failed: null, stale: false }], running: null, timeZone: "Asia/Kolkata" }),
     [`GET /reports/${REPORT_ID}/runs`]: () => ({ runs: [], schedule: null }),
     [`GET /reports/${REPORT_ID}/parameters/country/options`]: () => ({ options: { paramId: "country", options: ["DE", "FR", "IN", "US"], truncated: false, error: null, at: null } })
   });
@@ -112,7 +112,7 @@ describe("the control bar and the URL (D489)", () => {
       await view.waitFor(() => kpiText().includes("1,200") || kpiText().includes("1.2K"));
       expect(document.querySelector(".report-params")).not.toBeNull();
       // The date range: Last 7 days.
-      await pick(view, "Last 7 days");
+      await pick(view, "Last 7 days (IST)");
       expect(window.location.search).toBe("?p.period=7d");
       await view.waitFor(() => kpiText().includes("280"));
       expect(mocked.runs).toEqual([{ period: { preset: "7d" }, country: [] }]);
@@ -144,7 +144,7 @@ describe("the control bar and the URL (D489)", () => {
       await view.waitFor(() => kpiText().includes("20"));
       expect(mocked.runs).toEqual([{ period: { preset: "today" }, country: ["DE", "US"] }]);
       expect(document.querySelector(".report-param-multi")?.textContent).toContain("Country: DE, US");
-      expect(document.querySelector(".report-params-summary")?.textContent).toBe("Today · DE, US");
+      expect(document.querySelector(".report-params-summary")?.textContent).toBe("Today (UTC) · DE, US");
     } finally {
       mocked.restore();
     }

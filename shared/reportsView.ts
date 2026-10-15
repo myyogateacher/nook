@@ -13,7 +13,7 @@ import type { DocPageInfo } from "./reportsGenerate";
 export type QueryResultView = { queryKey: string; result: ReportResult | null; failed: ReportResult | null; stale: boolean };
 
 /** GET /api/reports/:id/results. `running` is the report's run in progress, if any (the one-run lock). */
-export type ReportResultsView = { results: QueryResultView[]; running: ReportRun | null };
+export type ReportResultsView = { results: QueryResultView[]; running: ReportRun | null; /** D489: a report with parameters: the IANA zone its date presets resolve in. */ timeZone?: string };
 
 /** A doc snapshot as the inspect panel's Provenance tab shows it (never its markdown). */
 export type DocSnapshotInfo = { id: string; title: string | null; sha256: string; fetchedAt: string };

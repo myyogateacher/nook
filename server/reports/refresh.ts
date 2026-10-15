@@ -2,6 +2,7 @@ import { audit, db, now } from "../db";
 import { REPORT_LIMITS, type ReportQuery, type ReportResult, type ReportRun, type ReportSpec, type ResultColumn, type RunTrigger } from "../../shared/reports";
 import type { QueryResultView, ReportResultsView } from "../../shared/reportsView";
 import { bindValues, defaultValues, todayUtc, type BoundParam } from "../../shared/reportParams";
+import { reportTimeZone, reportToday } from "./paramZone";
 import { ownedReport, readableReport, type ReportRow } from "./access";
 import { queryIdFor } from "./clickhouse";
 import { datasourceRow, usableDatasource, type DatasourceRow } from "./datasources";
@@ -126,7 +127,9 @@ export function reportResults(reportId: string, userId: string): ReportResultsVi
   const report = readableReport(reportId, userId);
   abandonExpiredReportRuns(Date.now(), reportId);
   const running = runningRun(reportId);
-  return { results: queryResults(reportId, parseSpec(report.spec_json)), running: running ? runView(running) : null };
+  const spec = parseSpec(report.spec_json);
+  // D489: the zone the report's date presets resolve in (the control bar names it).
+  return { results: queryResults(reportId, spec), running: running ? runView(running) : null, ...(spec.parameters.length ? { timeZone: reportTimeZone(reportId) } : {}) };
 }
 
 // ------------------------------------------------------------------------------- abandoned runs
@@ -375,7 +378,7 @@ export function startRefresh(userId: string, reportId: string, options: { trigge
   if (!queries.length) throw new ReportError(404, "NOT_FOUND", "This report has no query with that key");
   const run = takeRunLock({ reportId, kind: "refresh", trigger: options.trigger, userId, queryKeys: options.queryKey ? [options.queryKey] : null, nowMs: options.nowMs });
   audit(userId, null, "reports.refresh.start", { reportId, runId: run.id, trigger: options.trigger, queryKey: options.queryKey ?? null });
-  const state: ActiveRun = { controller: new AbortController(), datasource, inFlight: new Set(), params: defaultBound(spec) };
+  const state: ActiveRun = { controller: new AbortController(), datasource, inFlight: new Set(), params: defaultBound(spec, reportToday(reportId)) };
   active.set(run.id, state);
   const done = withLogContext({ ...currentLogContext(), run: shortId(run.id), report: shortId(reportId) }, () => execute(run, report, spec, queries, userId, state)).catch((error: unknown) => {
     slog.error("Report refresh failed", error);
@@ -416,7 +419,7 @@ export function startPreview(userId: string, reportId: string, version: number, 
   const queries = spec.queries.map((query) => ({ ...query, key: keys.get(query.key)! }));
   const run = takeRunLock({ reportId, kind: "refresh", trigger: "user", userId, queryKeys: [previewMarker(version), ...keys.values()] });
   audit(userId, null, "reports.version.preview.start", { reportId, runId: run.id, version });
-  const state: ActiveRun = { controller: new AbortController(), datasource, inFlight: new Set(), params: defaultBound(spec) };
+  const state: ActiveRun = { controller: new AbortController(), datasource, inFlight: new Set(), params: defaultBound(spec, reportToday(reportId)) };
   active.set(run.id, state);
   const done = withLogContext({ ...currentLogContext(), run: shortId(run.id), report: shortId(reportId) }, () => execute(run, report, spec, queries, userId, state, version)).catch((error: unknown) => {
     slog.error("Report version preview failed", error);

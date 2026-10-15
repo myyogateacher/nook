@@ -2738,7 +2738,7 @@ Parameter values (`values`) are an object by parameter id: a date range `{ prese
 
 | Route | Body | Returns |
 | --- | --- | --- |
-| `GET /api/reports/:id/results?values=<JSON>` | | `{ results, running, set: { isDefault, values, bound, missing } }`: the default set's stored results, or another set's cached results with the query keys a run would fill (`missing`). Nothing runs. Without `values` the answer is as before. |
+| `GET /api/reports/:id/results?values=<JSON>` | | `{ results, running, timeZone, set: { isDefault, values, bound, missing } }` (`timeZone`: the IANA zone the date presets resolve in, on every results answer of a report with parameters): the default set's stored results, or another set's cached results with the query keys a run would fill (`missing`). Nothing runs. Without `values` the answer is as before. |
 | `POST /api/reports/:id/param-runs` | `{ values, force? }` (strict) | The same shape, after running the set's missing queries (or all with `force`). Takes the report's one-run lock (**409 `RUN_IN_PROGRESS`** while another run holds it; the client retries) and the caller's query slots; **429 `BUSY`** past 20 runs a minute per person. The default set never runs here. |
 | `GET /api/reports/:id/parameters/:paramId/options` | | `{ options: { paramId, options: string[] ≤ 200, truncated, error, at } }`: a select's choices from its guarded options query, cached per report (re-read after a default refresh or 6 h). |
 

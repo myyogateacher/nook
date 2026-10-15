@@ -17,6 +17,7 @@ import {
 import { killQuery, runGuarded } from "./runner";
 import { parseSpec } from "./service";
 import { classify, GuardError } from "./sqlGuard";
+import { reportToday } from "./paramZone";
 
 /**
  * Interactive report parameters (spec v3, D489, docs/plan/REPORT_THEME.md § Parameters).
@@ -245,13 +246,13 @@ export type ParamResultsView = ReportResultsView & { set: ParamSetInfo };
 export function paramResults(reportId: string, userId: string, given: Record<string, unknown> | null | undefined): ParamResultsView {
   const report = readableReport(reportId, userId);
   const spec = parseSpec(report.spec_json);
-  const set = resolveSet(spec, given);
+  const set = resolveSet(spec, given, reportToday(reportId));
   const base = reportResults(reportId, userId);
   const info = (missing: string[]): ParamSetInfo => ({ isDefault: set.isDefault, values: set.values, bound: boundRecord(set.bound), missing });
   if (set.isDefault) return { ...base, set: info([]) };
   const cached = setResults(report, spec, set.hash);
   if (cached.results.some((item) => item.result || item.failed)) db.query("UPDATE report_param_sets SET last_used_at = ? WHERE report_id = ? AND set_hash = ?").run(now(), reportId, set.hash);
-  return { results: cached.results, running: base.running, set: info(cached.missing) };
+  return { results: cached.results, running: base.running, ...(base.timeZone ? { timeZone: base.timeZone } : {}), set: info(cached.missing) };
 }
 
 // ----------------------------------------------------------------------------------- runs
@@ -342,7 +343,7 @@ export function pruneParamSets(reportId?: string, nowMs = Date.now()): number {
 export async function runParamSet(userId: string, reportId: string, given: Record<string, unknown> | null | undefined, options: { trigger: RunTrigger; force?: boolean }): Promise<ParamResultsView> {
   const report = readableReport(reportId, userId);
   const spec = parseSpec(report.spec_json);
-  const set = resolveSet(spec, given);
+  const set = resolveSet(spec, given, reportToday(reportId));
   if (set.isDefault) return paramResults(reportId, userId, given);
   await assertOptionValues(report, spec, set.values, userId);
   const cached = setResults(report, spec, set.hash);

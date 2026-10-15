@@ -8,6 +8,7 @@ import {
 import { MAX_FACETS, MAX_HEATMAP_SIDE, MAX_SCATTER_SERIES, MAX_SERIES } from "../../shared/reportTheme";
 import { bindValues, DATE_PRESETS, defaultValues, MULTI_SELECT_TYPES, NUMBER_TYPES, PARAM_ID, PARAM_LIMITS, SCALAR_SELECT_TYPES, todayUtc, validDay, type BoundParam, type ReportParameter } from "../../shared/reportParams";
 import { paramSetsToCheck, parameterErrors, runOptionsQuery } from "./params";
+import { runToday } from "./paramZone";
 import { findCycle, histogramBins } from "../../shared/reportStats";
 import { queryIdFor } from "./clickhouse";
 import type { DatasourceRow } from "./datasources";
@@ -203,14 +204,14 @@ export const SPEC_JSON_SCHEMA: Record<string, unknown> = {
  * run_sql's `parameters` (D489): the declared list the SQL's placeholders read, bound with their
  * defaults; absent, `fallback` (the edit agent's current spec). Refused (400) when the list is not valid.
  */
-export function runSqlParams(raw: unknown, fallback: readonly ReportParameter[] = []): BoundParam[] {
-  if (raw === undefined || raw === null) return bindValues(fallback, defaultValues(fallback), todayUtc());
+export function runSqlParams(raw: unknown, fallback: readonly ReportParameter[] = [], today = todayUtc()): BoundParam[] {
+  if (raw === undefined || raw === null) return bindValues(fallback, defaultValues(fallback), today);
   const parsed = z.array(parameterSchema).max(PARAM_LIMITS.parameters).safeParse(raw);
   if (!parsed.success) throw new ReportError(400, "INVALID", `parameters: ${parsed.error.issues.slice(0, 5).map(issueText).join("; ")}`);
   const list = parsed.data as ReportParameter[];
   const problems = parameterErrors(list, []).filter((line) => !line.includes("no query reads it"));
   if (problems.length) throw new ReportError(400, "INVALID", `parameters: ${problems.slice(0, 5).join("; ")}`);
-  return bindValues(list, defaultValues(list), todayUtc());
+  return bindValues(list, defaultValues(list), today);
 }
 
 /** Whether a ClickHouse type is a number (re-exported from shared/reports.ts). */
@@ -706,7 +707,7 @@ export async function validateSpec(row: DatasourceRow, raw: unknown, context: { 
       errors.push(`parameter ${param.id}: its optionsQuery failed: ${failure(error)}`);
     }
   }
-  const sets = paramSetsToCheck(spec.parameters, options);
+  const sets = paramSetsToCheck(spec.parameters, options, runToday(context.runId));
   for (const query of spec.queries) {
     if (!used.has(query.key)) {
       errors.push(`query ${query.key}: no block uses it; remove it or add a block`);

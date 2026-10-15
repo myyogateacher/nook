@@ -1,11 +1,11 @@
-import { createContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { Check, ChevronDown, ListFilter, LoaderCircle, RotateCcw } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import type { ReportParamsSearch } from "../router";
 import { Select } from "../ui/Select";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import {
-  DATE_PRESET_LABELS, DATE_PRESETS, defaultValues, isDefaultSet, PARAM_LIMITS, resolveDateRange, todayUtc, validDay, valueLabel, valueProblem,
+  DATE_PRESET_LABELS, DATE_PRESETS, defaultValues, isDefaultSet, PARAM_LIMITS, resolveDateRange, todayIn, validDay, valueLabel, valueProblem, zoneLabel,
   type DatePreset, type DateRangeValue, type MultiSelectParameter, type ParamOptions, type ParamValue, type ParamValues, type ReportParameter
 } from "../../shared/reportParams";
 import { getParamOptions } from "./reportViewApi";
@@ -48,9 +48,13 @@ const optionList = (state: OptionsState[string] | undefined): string[] => state 
 const optionsNote = (state: OptionsState[string] | undefined) => state === "loading" ? "Loading choices…" : state && "error" in state && state.error ? state.error : null;
 
 /** "Sep 1 – Sep 30" for a custom range (the pill is short); presets read as their label. */
-function rangeText(value: DateRangeValue) {
-  if (value.preset !== "custom") return DATE_PRESET_LABELS[value.preset];
-  const day = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC", ...(iso.slice(0, 4) !== todayUtc().slice(0, 4) ? { year: "numeric" } : {}) });
+/** D489: the zone the report's presets resolve in (its schedule's, else the instance's), named on the picker. */
+const ZoneContext = createContext<string>("UTC");
+const presetText = (preset: Exclude<DateRangeValue["preset"], "custom">, zone: string) => `${DATE_PRESET_LABELS[preset]} (${zoneLabel(zone)})`;
+
+function rangeText(value: DateRangeValue, zone: string) {
+  if (value.preset !== "custom") return presetText(value.preset, zone);
+  const day = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC", ...(iso.slice(0, 4) !== todayIn(zone).slice(0, 4) ? { year: "numeric" } : {}) });
   return `${day(value.from)} – ${day(value.to)}`;
 }
 
@@ -68,14 +72,15 @@ type FieldProps = {
 
 /** One parameter's control: a pill in the bar, a labelled field in the phone's sheet. */
 function ParamField({ param, value, options, variant, disabled, onChange, onSheet }: FieldProps) {
+  const zone = useContext(ZoneContext);
   const isDefault = JSON.stringify(value) === JSON.stringify(param.default);
   let control: React.ReactNode;
   switch (param.type) {
     case "date_range": {
       const range = value as DateRangeValue;
       control = <Select<DatePreset> variant={variant} label={param.label} value={range.preset} searchable={false} disabled={disabled}
-        placeholder={rangeText(range)}
-        options={DATE_PRESETS.map((preset) => ({ value: preset, label: preset === "custom" && range.preset === "custom" ? `Custom: ${rangeText(range)}` : preset === "custom" ? "Custom range…" : DATE_PRESET_LABELS[preset] }))}
+        placeholder={rangeText(range, zone)}
+        options={DATE_PRESETS.map((preset) => ({ value: preset, label: preset === "custom" && range.preset === "custom" ? `Custom: ${rangeText(range, zone)}` : preset === "custom" ? "Custom range…" : presetText(preset, zone) }))}
         onChange={(preset) => preset === "custom" ? onSheet({ kind: "range", param }) : onChange({ preset })} />;
       break;
     }
@@ -124,10 +129,12 @@ type BarProps = {
   /** A set is loading (its blocks show their own spinners). */
   busy: boolean;
   onChange: (values: ParamValues) => void;
+  /** D489: the report's zone (IANA), from the results. */
+  timeZone?: string;
 };
 
 /** The control bar: pills from 761 px, the Filters button and sheet on a phone. */
-export function ReportParamsBar({ reportId, parameters, values, busy, onChange }: BarProps) {
+export function ReportParamsBar({ reportId, parameters, values, busy, onChange, timeZone = "UTC" }: BarProps) {
   const options = useParamOptions(reportId, parameters, true);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [phoneOpen, setPhoneOpen] = useState(false);
@@ -135,7 +142,8 @@ export function ReportParamsBar({ reportId, parameters, values, busy, onChange }
   const changed = parameters.filter((param) => JSON.stringify(values[param.id]) !== JSON.stringify(param.default)).length;
   const set = (param: ReportParameter, value: ParamValue) => onChange({ ...values, [param.id]: value });
   const reset = () => onChange(defaultValues(parameters));
-  return <div className="report-params" role="group" aria-label="Report filters">
+  const summary = (param: ReportParameter) => param.type === "date_range" ? rangeText((values[param.id] ?? param.default) as DateRangeValue, timeZone) : valueLabel(param, values[param.id] ?? param.default);
+  return <ZoneContext.Provider value={timeZone}><div className="report-params" role="group" aria-label="Report filters">
     <div className="report-params-chips">
       {parameters.map((param) => <ParamField key={param.id} param={param} value={values[param.id] ?? param.default} options={options} variant="chip" disabled={false}
         onChange={(value) => set(param, value)} onSheet={setSheet} />)}
@@ -146,7 +154,7 @@ export function ReportParamsBar({ reportId, parameters, values, busy, onChange }
       <button type="button" className={`secondary-button report-params-open${changed ? " active" : ""}`} onClick={() => setPhoneOpen(true)} aria-haspopup="dialog">
         <ListFilter aria-hidden="true" />Filters{changed > 0 && <b aria-label={`${changed} changed`}>{changed}</b>}
       </button>
-      <span className="report-params-summary">{parameters.map((param) => valueLabel(param, values[param.id] ?? param.default)).join(" · ")}</span>
+      <span className="report-params-summary">{parameters.map(summary).join(" · ")}</span>
       {busy && <LoaderCircle className="spin report-params-spinner" aria-label="Updating" />}
     </div>
     {sheet?.kind === "range" && <CustomRangeSheet param={sheet.param} value={values[sheet.param.id] as DateRangeValue} onClose={() => setSheet(null)}
@@ -155,19 +163,20 @@ export function ReportParamsBar({ reportId, parameters, values, busy, onChange }
       onApply={(value) => { setSheet(null); set(sheet.param, value); }} />}
     {phoneOpen && <ParamsSheet parameters={parameters} values={values} options={options} onClose={() => setPhoneOpen(false)} reopen={() => setPhoneOpen(true)}
       onApply={(next) => { setPhoneOpen(false); onChange(next); }} />}
-  </div>;
+  </div></ZoneContext.Provider>;
 }
 
 /** Custom from–to days (both included); Apply keeps a valid range only. */
 function CustomRangeSheet({ param, value, onApply, onClose }: { param: ReportParameter; value: DateRangeValue; onApply: (value: DateRangeValue) => void; onClose: () => void }) {
-  const start = resolveDateRange(value ?? { preset: "30d" }, todayUtc());
+  const zone = useContext(ZoneContext);
+  const start = resolveDateRange(value ?? { preset: "30d" }, todayIn(zone));
   const [from, setFrom] = useState(start.from);
   const [to, setTo] = useState(start.to);
   useHistoryDialogGuard(true, onClose, { reopen: null });
   const problem = !validDay(from) || !validDay(to) ? "Pick both days" : from > to ? "The start is after the end" : null;
   return <ModalDialog title={param.label} eyebrow="Custom range" onClose={onClose} variant="sheet" className="reports-dialog report-params-sheet">
     <div className="report-params-fields">
-      <label className="report-param-field"><span className="report-param-label">From</span><input type="date" className="report-param-input" value={from} max={to || undefined} onChange={(event) => setFrom(event.target.value)} /></label>
+      <label className="report-param-field"><span className="report-param-label">From ({zoneLabel(zone)} days)</span><input type="date" className="report-param-input" value={from} max={to || undefined} onChange={(event) => setFrom(event.target.value)} /></label>
       <label className="report-param-field"><span className="report-param-label">To (included)</span><input type="date" className="report-param-input" value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} /></label>
       {problem && <p className="report-param-problem" role="alert">{problem}</p>}
     </div>

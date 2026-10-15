@@ -12,7 +12,7 @@
 export const PARAM_TYPES = ["date_range", "select", "multi_select", "number", "text"] as const;
 export type ParamType = typeof PARAM_TYPES[number];
 
-/** The date range's presets, in the picker's order. Days are UTC calendar days; `to` is included. */
+/** The date range's presets, in the picker's order. Days are calendar days in the report's zone (server/reports/paramZone.ts); `to` is included. */
 export const DATE_PRESETS = ["today", "7d", "30d", "90d", "mtd", "qtd", "custom"] as const;
 export type DatePreset = typeof DATE_PRESETS[number];
 export const DATE_PRESET_LABELS: Record<DatePreset, string> = {
@@ -94,6 +94,37 @@ const elementType = (type: string) => /^Array\((.*)\)$/.exec(type)?.[1] ?? type;
 
 /** Today's UTC day (`YYYY-MM-DD`). */
 export const todayUtc = (now = new Date()) => now.toISOString().slice(0, 10);
+
+/** Today's calendar day (`YYYY-MM-DD`) in an IANA zone (the report's, D489); UTC for a zone this runtime does not know. */
+export function todayIn(timeZone: string, now = new Date()): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+    const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  } catch {
+    return todayUtc(now);
+  }
+}
+
+/** A zone's short name for labels ("IST", "EDT", "UTC"), else its GMT offset ("GMT+4"). */
+export function zoneLabel(timeZone: string, now = new Date()): string {
+  if (timeZone === "UTC" || timeZone === "Etc/UTC") return "UTC";
+  const short = (locale: string) => {
+    try {
+      return new Intl.DateTimeFormat(locale, { timeZone, timeZoneName: "short" }).formatToParts(now).find((part) => part.type === "timeZoneName")?.value ?? "";
+    } catch {
+      return "";
+    }
+  };
+  const us = short("en-US");
+  if (us && !/^(GMT|UTC)[+-]/.test(us)) return us;
+  // en-US names few zones outside the Americas ("GMT+5:30"); en-IN names IST, en-GB the European ones.
+  for (const locale of ["en-IN", "en-GB", "en-AU"]) {
+    const name = short(locale);
+    if (name && !/^(GMT|UTC)[+-]/.test(name)) return name;
+  }
+  return us || timeZone;
+}
 
 function shiftDay(day: string, days: number): string {
   const date = new Date(`${day}T00:00:00Z`);

@@ -235,7 +235,7 @@ A report may declare **parameters**: a date range and filters a reader changes o
 
 | Type | Fields | Placeholders the SQL reads |
 | --- | --- | --- |
-| `date_range` | `default: { preset }`: `today`, `7d`, `30d`, `90d`, `mtd`, `qtd`, or `{ preset: "custom", from, to }` (YYYY-MM-DD) | `{<id>_from:Date}` and `{<id>_to:Date}`, both days included (UTC days) |
+| `date_range` | `default: { preset }`: `today`, `7d`, `30d`, `90d`, `mtd`, `qtd`, or `{ preset: "custom", from, to }` (YYYY-MM-DD) | `{<id>_from:Date}` and `{<id>_to:Date}`, both days included (calendar days in the report's zone) |
 | `select` | `chType` String, Int32, Int64, UInt32, UInt64; `default`; `optionsQuery` | `{<id>:<chType>}` |
 | `multi_select` | `chType` Array(String) and the integer arrays; `default` (`[]` is All); `optionsQuery` | `{<id>:Array(String)}`, written `(empty({id:Array(String)}) OR col IN {id:Array(String)})` so All keeps every row |
 | `number` | `chType` Int32, Int64, UInt32, UInt64, Float64; `default`; `min?`, `max?` | `{<id>:<chType>}` |
@@ -244,6 +244,8 @@ A report may declare **parameters**: a date range and filters a reader changes o
 Every parameter has an `id` (`[a-z][a-z0-9_]{0,29}`), a `label`, a `type`, a `default`, and its ClickHouse type. At most 8 per report. An options query is a guarded SELECT whose first column lists the choices (at most 200), with no placeholders.
 
 **Binding, never pasting.** Queries read parameters only as ClickHouse typed query parameters. The server binds the values over HTTP (`param_<name>`); nothing a reader picks is ever written into the SQL text. The guard accepts exactly `{name:Type}` with a type above (never `Identifier`, so a parameter can never name a table or a column) only in a report's saved queries; every placeholder must be declared with exactly its type, and every parameter must be read by a query. `EXPLAIN QUERY TREE` runs with the same bound values (ClickHouse 26.6 folds them into CONSTANT nodes: `tests/fixtures/clickhouse-26.6/params_*`).
+
+**The report's zone.** "Today", the last 7/30/90 days, month to date, and quarter to date are calendar days in the report's zone: its schedule's zone (the one Schedule sets, which scheduled refreshes already use), else the instance's (`REPORT_TIME_ZONE`, else the server's zone). A custom range is calendar dates in that zone. The picker names it: "Last 30 days (IST)".
 
 **Which set runs where.** The **default set** is what Refresh all, schedules, generation, and "Run with today's data" use; its results stay the report's stored results. Any other set is run on demand by whoever reads the report (read access is enough), under the report's one-run lock and the data source's limits, rate-limited per person, and cached per set (the sha256 of the canonical bound values), shared by every reader. A cached set is fresh until the report's next default refresh or a change to its SQL. The 20 most recently used sets per report are kept, none unused for 7 days.
 

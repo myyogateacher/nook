@@ -28,6 +28,7 @@ import { parseSpec } from "./service";
 import { BANNED_FUNCTIONS } from "./sqlGuard";
 import { reportErrorOf, runSqlParams, validateSpec } from "./specValidate";
 import { PARAMETER_RULES, PLACEHOLDER_GUARD_LINE } from "./paramPrompt";
+import { reportToday } from "./paramZone";
 import { forValidation, knownSpec, reattach, specHash } from "./specCheck";
 import type { SavedOutcome } from "./versions";
 import { currentLogContext, logger, shortId, withLogContext } from "../log";
@@ -501,7 +502,7 @@ async function executeEdit(run: Execution) {
         const queryId = adHocQueryId("editsql");
         const sha256 = createHash("sha256").update(sql).digest("hex");
         try {
-          const outcome = await runGuarded(datasource, sql, { classes: ["select"], maxRows: Math.min(datasource.max_rows, REPORT_LIMITS.storedRows), queryId, userId, signal: controller.signal, params: runSqlParams(args.parameters, run.spec.parameters ?? []) });
+          const outcome = await runGuarded(datasource, sql, { classes: ["select"], maxRows: Math.min(datasource.max_rows, REPORT_LIMITS.storedRows), queryId, userId, signal: controller.signal, params: runSqlParams(args.parameters, run.spec.parameters ?? [], reportToday(reportId)) });
           audit(userId, null, "reports.instruction.run_sql", { reportId, instructionId: instruction.id, runId, queryId, sha256, purpose: purpose.slice(0, 120), ok: true, rows: outcome.rows.length, ms: outcome.ms });
           // D488: the data-shape advisor's line rides on every result.
           const shape = adviseShape(outcome.columns, outcome.rows);

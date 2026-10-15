@@ -38,6 +38,7 @@ import { currentLogContext, logger, shortId, withLogContext } from "../log";
 import { BEFORE_PLAN_TOOLS, Planner, plannerTools } from "./planner";
 import { adviseShape, kindHints } from "./shapeAdvisor";
 import { PARAMETER_RULES, PLACEHOLDER_GUARD_LINE } from "./paramPrompt";
+import { reportToday } from "./paramZone";
 
 const slog = logger("reports");
 
@@ -663,7 +664,7 @@ async function executeGeneration(run: Execution) {
         const queryId = adHocQueryId("gensql");
         const sha256 = createHash("sha256").update(sql).digest("hex");
         try {
-          const outcome = await runGuarded(datasource, sql, { classes: ["select"], maxRows: Math.min(datasource.max_rows, REPORT_LIMITS.storedRows), queryId, userId, signal: controller.signal, params: runSqlParams(args.parameters) });
+          const outcome = await runGuarded(datasource, sql, { classes: ["select"], maxRows: Math.min(datasource.max_rows, REPORT_LIMITS.storedRows), queryId, userId, signal: controller.signal, params: runSqlParams(args.parameters, [], reportToday(reportId)) });
           audit(userId, null, "reports.generate.run_sql", { reportId, runId, agentRunId, queryId, sha256, purpose: purpose.slice(0, 120), ok: true, rows: outcome.rows.length, ms: outcome.ms });
           // D488: the data-shape advisor's line (the kinds this data fits) rides on every result.
           const shape = adviseShape(outcome.columns, outcome.rows);

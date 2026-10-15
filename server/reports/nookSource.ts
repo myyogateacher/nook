@@ -11,18 +11,21 @@ import { ReportError } from "./errors";
 const slog = logger("reports");
 
 /**
- * Nook as a built-in doc source (B4): a report's doc may be a note or a Files text document in this
- * workspace. The source has the fixed id `nook`, is listed first as "<APP_NAME> (this workspace)",
+ * Nook as a built-in doc source (B4): a report's doc may be a note, a Files text document, or a Files
+ * PDF's text layer (D511) in this workspace. The source has the fixed id `nook`, is listed first as "<APP_NAME> (this workspace)",
  * needs no sync, and is not a row in `agent_tool_servers` (`reports.doc_source = 'nook'`,
  * `doc_server_id` NULL).
  *
  * - **Refs**: a link on one of this instance's origins (APP_ORIGIN, APP_ORIGINS) to a note or a Files
  *   item, in any shape the router or the API produces, or a bare id (shared/nookDocRef.ts).
  * - **Access**: always the report OWNER's, live: a note they can read now with a published version
- *   (never a draft, never one in the Bin), a Files text document they can list. Anything else is
+ *   (never a draft, never one in the Bin), a Files text document or PDF they can list. Anything else is
  *   NOT_FOUND with one message, so a link never tells whether something exists.
- * - **Reading** uses the same service functions as the `read_note` and `read_document_text` MCP tools;
- *   snapshots, "Doc changed", and Check doc work as for a tool server.
+ * - **Reading** uses the same service functions as the `read_note` and `read_document_text` MCP tools
+ *   (`readDocumentTextLayer` with PDFs on, D510: the PDF worker and its 16 MiB, 300-page, 15 s caps; a
+ *   scan, a password, or a damaged PDF is DOC_FETCH with the reason); snapshots, "Doc changed", and
+ *   Check doc work as for a tool server. A PDF's text is the doc's markdown as it comes (pages joined
+ *   by a blank line).
  * - **Browse tools** (B3) for this source: `search_notes`, `read_note`, `read_document_text`, always
  *   Auto, run as the owner.
  */
@@ -34,7 +37,7 @@ export const nookSourceName = () => `${config.appName} (this workspace)`;
 /** This instance's origins: a link on any of them is a ref into Nook. */
 export const nookOrigins = (): string[] => [...new Set([config.appOrigin, ...config.appOrigins])];
 
-const notFound = () => new ReportError(404, "NOT_FOUND", `There is no published note or text file at that link in ${config.appName} that you can read`);
+const notFound = () => new ReportError(404, "NOT_FOUND", `There is no published note, text file, or PDF at that link in ${config.appName} that you can read`);
 
 /** The ref a doc link names in this Nook (NOT_FOUND when it is not one). */
 export function nookRefOf(ref: string): NookDocRef {
@@ -45,11 +48,12 @@ export function nookRefOf(ref: string): NookDocRef {
 
 type Read = { kind: "note" | "file"; id: string; title: string | null; markdown: string };
 
-/** Reads a note (published, readable by `ownerId` now) or a Files text document (listable by them), as the MCP tools do. */
+/** Reads a note (published, readable by `ownerId` now) or a Files text document or PDF (listable by them), as the MCP tools do. */
 export async function readNookItem(ownerId: string, ref: NookDocRef): Promise<Read> {
   const { readableNote } = await import("../access");
   const { listableDocument } = await import("../documentAccess");
-  const { readDocumentText, readPublishedMarkdown } = await import("../mcpTools");
+  const { readDocumentTextLayer, readPublishedMarkdown, MCP_MAX_TEXT_BYTES } = await import("../mcpTools");
+  const { PDF_TEXT_LIMITS } = await import("../pdfText");
   if (ref.kind !== "file") {
     const note = readableNote(ref.id, ownerId);
     if (note && note.current_version >= 1) {
@@ -61,10 +65,18 @@ export async function readNookItem(ownerId: string, ref: NookDocRef): Promise<Re
   const document = listableDocument(ref.id, ownerId);
   if (!document) throw notFound();
   try {
-    return { kind: "file", id: document.id, title: document.name, markdown: await readDocumentText(document) };
+    // The doc keeps at most docBytes * 2 characters (fetchNookDoc), so the worker stops there too.
+    const { text } = await readDocumentTextLayer(document, { pdf: true, pdfMaxChars: REPORT_LIMITS.docBytes * 2 });
+    return { kind: "file", id: document.id, title: document.name, markdown: text };
   } catch (error) {
     const code = (error as { code?: string }).code;
-    if (code === "NOT_TEXT" || code === "TOO_LARGE") throw new ReportError(502, "DOC_FETCH", code === "NOT_TEXT" ? "That file is not text; Nook reads notes and text files (.md, .txt, .csv, .json)" : "That file is too large to read as a doc (at most 1 MB)");
+    const pdf = document.preview_kind === "pdf";
+    // A PDF's own reason (a scan, a password, a damaged file, the time cap, a busy reader) is the message.
+    if (pdf && (code === "NOT_TEXT" || code === "TOO_LARGE" || code === "RATE_LIMITED") && error instanceof Error) {
+      throw new ReportError(502, "DOC_FETCH", error.message);
+    }
+    if (code === "NOT_TEXT") throw new ReportError(502, "DOC_FETCH", `That file is not text or a PDF; ${config.appName} reads notes, text files (.md, .txt, .csv, .json), and PDFs with a text layer`);
+    if (code === "TOO_LARGE") throw new ReportError(502, "DOC_FETCH", `That file is too large to read as a doc (at most ${MCP_MAX_TEXT_BYTES / 1024 / 1024} MB for a text file, ${PDF_TEXT_LIMITS.maxBytes / 1024 / 1024} MB for a PDF)`);
     throw new ReportError(502, "DOC_FETCH", "The file could not be read");
   }
 }
@@ -83,7 +95,7 @@ export function nookChoice(): DocServerChoice {
 
 const catalog: CatalogTool[] = [
   { name: "read_note", title: "Read a note", description: "Reads the latest published Markdown of a note the report's owner can read, by its id (noteId).", inputSchema: { type: "object", required: ["noteId"], properties: { noteId: { type: "string", description: "The note's id (from a link /notes/<id>)" } } }, readOnly: true, openWorld: false, destructive: false, policy: "auto" },
-  { name: "read_document_text", title: "Read a text file", description: "Reads a Files text document (.md, .txt, .csv, .json) the report's owner can see, by its id (documentId).", inputSchema: { type: "object", required: ["documentId"], properties: { documentId: { type: "string", description: "The file's id (from a link /files/<id>)" } } }, readOnly: true, openWorld: false, destructive: false, policy: "auto" },
+  { name: "read_document_text", title: "Read a text file or PDF", description: "Reads a Files text document (.md, .txt, .csv, .json), or the text layer of a PDF, the report's owner can see, by its id (documentId).", inputSchema: { type: "object", required: ["documentId"], properties: { documentId: { type: "string", description: "The file's id (from a link /files/<id>)" } } }, readOnly: true, openWorld: false, destructive: false, policy: "auto" },
   { name: "search_notes", title: "Search notes", description: "Full-text search over the published notes the report's owner can read; returns ids, titles, and snippets.", inputSchema: { type: "object", required: ["query"], properties: { query: { type: "string", maxLength: 200 }, limit: { type: "integer", minimum: 1, maximum: 20 } } }, readOnly: true, openWorld: false, destructive: false, policy: "auto" }
 ];
 

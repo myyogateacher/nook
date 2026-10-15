@@ -2,12 +2,17 @@ import type { PdfWorkerReply } from "./pdfTextWorker";
 
 /**
  * PDF text extraction (lane FILES, D496) with unpdf (pdf.js, pure JS, no native deps), for the Files
- * full-text index and `read_document_text`.
+ * full-text index and every text reader (`readDocumentTextLayer`, D510: `read_document_text`,
+ * `read_attachment_text`, the reports Nook doc source).
  *
  * - **Off the main thread.** One worker (server/pdfTextWorker.ts) runs one PDF at a time; callers
  *   queue. A PDF that takes longer than `timeoutMs` has its worker terminated (pdf.js cannot be
  *   interrupted any other way), and the next job starts a fresh one. An idle worker is closed.
  * - **Caps.** Callers check `maxBytes` before reading; the worker stops at `maxPages` and `maxChars`.
+ * - **Memory (D513).** Bun 1.4 ignores `resourceLimits` on a Worker (its docs say so, and a worker given
+ *   `maxOldGenerationSizeMb: 32` grew past 380 MB in a check), so there is no heap cap. The worker is
+ *   bounded by its input instead: one PDF at a time, at most 16 MiB and 300 pages, 15 s, and it runs
+ *   with `smol` (a smaller heap that collects more often). Revisit if Bun gains a worker heap limit.
  * - **Errors** are `PdfTextError` with a reason: `invalid` (not a PDF), `encrypted` (a password),
  *   `timeout`, or `failed`. Nothing is logged here: callers log counts, never names or text.
  */
@@ -39,7 +44,8 @@ function stopWorker() {
 
 function startWorker() {
   if (!worker) {
-    worker = new Worker(new URL("./pdfTextWorker.ts", import.meta.url).href);
+    // `smol`: a smaller heap, collected more often (D513); Bun has no worker heap limit to set.
+    worker = new Worker(new URL("./pdfTextWorker.ts", import.meta.url).href, { smol: true });
   }
   return worker;
 }

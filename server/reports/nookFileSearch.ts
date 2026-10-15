@@ -16,8 +16,11 @@ const slog = logger("reports");
  *
  * - **Access** is exactly `read_document_text`'s for the B4 doc source (`listableDocument`): the Files
  *   list predicate (ownership or Files sharing, never a card, row, or other host link), `purpose =
- *   'file'`, not binned; text only (`preview_kind = 'text'`), at most 1 MiB, read with the same
- *   integrity and UTF-8 checks. Whiteboards are left out.
+ *   'file'`, not binned; text files (`preview_kind = 'text'`) of at most 1 MiB, read with the same
+ *   integrity and UTF-8 checks, and PDFs (D512) of at most the PDF cap (16 MiB). Whiteboards are left out.
+ * - **PDFs**: the indexed search offers a PDF only when its indexed text layer is not empty (a scan, a
+ *   password, or a damaged PDF could only fail to read). The bounded scan never runs the PDF worker:
+ *   it matches a PDF by its name alone. Each hit says `pdf` so the picker can label it.
  * - **Match**: every word of the query (case-insensitive) in the name or the text. A name match needs
  *   no read. The answer has the id, name, owner, and a short plain snippet around the first word.
  * - **Caps, per request**: the newest 100 candidates after the cursor, 8 MiB read, 20 hits. `next` is
@@ -57,7 +60,8 @@ export const resetNookFileSearchRate = () => requests.clear();
 
 const candidatesSql = `
   SELECT d.*, u.display_name AS owner_name FROM documents d JOIN users u ON u.id = d.owner_id
-  WHERE ${readableDocumentPredicate} AND d.purpose = 'file' AND d.preview_kind = 'text' AND d.size_bytes <= $maxBytes
+  WHERE ${readableDocumentPredicate} AND d.purpose = 'file'
+    AND ((d.preview_kind = 'text' AND d.size_bytes <= $maxBytes) OR (d.preview_kind = 'pdf' AND d.size_bytes <= $maxPdfBytes))
     AND NOT EXISTS (SELECT 1 FROM whiteboards wk WHERE wk.document_id = d.id)
     AND ($at IS NULL OR d.updated_at < $at OR (d.updated_at = $at AND d.id < $id))
   ORDER BY d.updated_at DESC, d.id DESC LIMIT $limit`;
@@ -71,7 +75,7 @@ function snippetAt(text: string, index: number, length: number): string {
   return `${start > 0 ? "…" : ""}${body}${end < text.length ? "…" : ""}`;
 }
 
-/** One page of Files text documents `userId` can read whose name or text has every word of `query`. */
+/** One page of Files text documents and PDFs `userId` can read whose name or text has every word of `query`. */
 export async function searchNookFiles(userId: string, query: string, cursorValue?: string | null): Promise<NookFileSearch> {
   const words = query.toLowerCase().slice(0, NOOK_FILE_SEARCH_LIMITS.queryChars).split(/\s+/).filter(Boolean).slice(0, 8);
   if (!words.length) return { results: [], next: null };
@@ -81,20 +85,23 @@ export async function searchNookFiles(userId: string, query: string, cursorValue
   const cursor = decoded as Cursor | null;
   // Loaded when used, as nookSource.ts does (mcpTools imports most of the server).
   const { MCP_MAX_TEXT_BYTES, readDocumentText } = await import("../mcpTools");
+  const { PDF_TEXT_LIMITS } = await import("../pdfText");
   const started = performance.now();
-  const rows = db.query(candidatesSql).all({ userId, maxBytes: MCP_MAX_TEXT_BYTES, at: cursor?.at ?? null, id: cursor?.id ?? null, limit: NOOK_FILE_SEARCH_LIMITS.scan + 1 }) as Array<DocumentRow & { owner_name: string }>;
+  const rows = db.query(candidatesSql).all({ userId, maxBytes: MCP_MAX_TEXT_BYTES, maxPdfBytes: PDF_TEXT_LIMITS.maxBytes, at: cursor?.at ?? null, id: cursor?.id ?? null, limit: NOOK_FILE_SEARCH_LIMITS.scan + 1 }) as Array<DocumentRow & { owner_name: string }>;
   const results: NookFileHit[] = [];
   let read = 0;
   let scanned = 0;
   let last: Cursor | null = null;
   for (const row of rows.slice(0, NOOK_FILE_SEARCH_LIMITS.scan)) {
     if (results.length >= NOOK_FILE_SEARCH_LIMITS.hits) break;
-    if (read > 0 && read + row.size_bytes > NOOK_FILE_SEARCH_LIMITS.bytes) break;
+    const pdf = row.preview_kind === "pdf";
+    if (!pdf && read > 0 && read + row.size_bytes > NOOK_FILE_SEARCH_LIMITS.bytes) break;
     scanned += 1;
     last = { at: row.updated_at, id: row.id };
     const name = row.name.toLowerCase();
-    const hit = (matched: NookFileHit["matched"], snippet: string | null): NookFileHit => ({ id: row.id, name: row.name, ownerName: row.owner_name, isOwner: row.owner_id === userId, updatedAt: row.updated_at, matched, snippet });
+    const hit = (matched: NookFileHit["matched"], snippet: string | null): NookFileHit => ({ id: row.id, name: row.name, ownerName: row.owner_name, isOwner: row.owner_id === userId, updatedAt: row.updated_at, matched, snippet, pdf });
     if (words.every((word) => name.includes(word))) { results.push(hit("name", null)); continue; }
+    if (pdf) continue; // The scan never runs the PDF worker: a PDF matches by name (the index has its text).
     let text: string;
     try {
       read += row.size_bytes;
@@ -112,17 +119,17 @@ export async function searchNookFiles(userId: string, query: string, cursorValue
   return { results, next: more && last ? encodeCursor(last) : null };
 }
 
-/** The indexed answer: one ranked query, text files `read_document_text` can read, `hits` per page. */
+/** The indexed answer: one ranked query, text files and PDFs `read_document_text` can read, `hits` per page. */
 function searchIndexed(userId: string, query: string, offset: number): NookFileSearch {
   const started = performance.now();
-  const { rows, truncated } = searchDocumentRows(userId, query.slice(0, NOOK_FILE_SEARCH_LIMITS.queryChars), { limit: NOOK_FILE_SEARCH_LIMITS.hits, offset, textOnly: true });
+  const { rows, truncated } = searchDocumentRows(userId, query.slice(0, NOOK_FILE_SEARCH_LIMITS.queryChars), { limit: NOOK_FILE_SEARCH_LIMITS.hits, offset, readable: true });
   const results = rows.map((row): NookFileHit => {
     const segments = toSegments(row.snippet_marked);
     // Every word is in the name or the text; a snippet without a hit means the name alone matched.
     const inText = segments.some((segment) => segment.hit);
     return {
       id: row.id, name: row.name, ownerName: row.owner_name, isOwner: row.owner_id === userId, updatedAt: row.updated_at,
-      matched: inText ? "text" : "name", snippet: inText ? segments.map((segment) => segment.text).join("").replace(/\s+/g, " ").trim() : null
+      pdf: row.preview_kind === "pdf", matched: inText ? "text" : "name", snippet: inText ? segments.map((segment) => segment.text).join("").replace(/\s+/g, " ").trim() : null
     };
   });
   slog.info("Nook file search", { user: shortId(userId), indexed: true, hits: results.length, more: truncated, ms: Math.round(performance.now() - started) });

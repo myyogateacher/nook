@@ -7,6 +7,8 @@ const { createApiKey } = await import("../server/apiKeys");
 const { invokeMcpToolForTests, loadLiveKey, mcpToolSpecs, toolVisible } = await import("../server/mcpTools");
 const { resetMcpLimits } = await import("../server/mcpRateLimit");
 const { syncDerivedLinks } = await import("../server/attachments/service");
+const { PDF_TEXT_LIMITS } = await import("../server/pdfText");
+const { makePdf } = await import("./support/pdf");
 type Grant = import("../server/keyGrants").Grant;
 
 /**
@@ -74,6 +76,31 @@ describe("attachment tools over MCP and REST", () => {
     const response = await fetch(`${origin}/api/v1/tools/list_attachments`, { method: "POST", headers: { Authorization: `Bearer ${calendarKey.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ hostKind: "event", hostId: first.eventId }) });
     expect(response.status).toBe(200);
     expect(JSON.stringify(await response.json())).toContain("minutes.md");
+  });
+
+  test("an attached PDF's text layer is read through the PDF worker; a scan, a broken PDF, and the time cap are clear NOT_TEXT / TOO_LARGE errors (D510)", async () => {
+    const owner = await createUser("MCP attach pdf");
+    const { eventId } = await calendarWithEvent(owner, "PDF event");
+    const paper = await uploadAttachment(owner, "agenda.pdf", makePdf(["Agenda numbat", "Second page"]));
+    const scan = await uploadAttachment(owner, "scan.pdf", makePdf([""]));
+    const broken = await uploadAttachment(owner, "broken.pdf", "%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
+    for (const documentId of [paper, scan, broken]) expect((await link(owner, "event", eventId, { documentId })).status).toBe(201);
+    const calendarKey = key(owner, [all("calendar", "read")]);
+    const read = await call(calendarKey.id, "read_attachment_text", { hostKind: "event", hostId: eventId, documentId: paper });
+    expect(read.value).toEqual(expect.objectContaining({ id: paper, name: "agenda.pdf", hostKind: "event", text: "Agenda numbat\n\nSecond page", pdf: { pages: 2, pagesRead: 2, truncated: false } }));
+    expect((await call(calendarKey.id, "read_attachment_text", { hostKind: "event", hostId: eventId, documentId: scan })).value).toMatchObject({ code: "NOT_TEXT", error: expect.stringContaining("no text layer (scanned?)") });
+    expect((await call(calendarKey.id, "read_attachment_text", { hostKind: "event", hostId: eventId, documentId: broken })).value).toMatchObject({ code: "NOT_TEXT" });
+    // read_document_text answers the scan the same way (no empty text).
+    const filesKey = key(owner, [all("files", "read")]);
+    expect((await call(filesKey.id, "read_document_text", { documentId: scan })).value).toMatchObject({ code: "NOT_TEXT", error: expect.stringContaining("no text layer (scanned?)") });
+    const saved = PDF_TEXT_LIMITS.timeoutMs;
+    PDF_TEXT_LIMITS.timeoutMs = 1;
+    try {
+      expect((await call(calendarKey.id, "read_attachment_text", { hostKind: "event", hostId: eventId, documentId: paper })).value).toMatchObject({ code: "TOO_LARGE", error: expect.stringContaining("took too long") });
+    } finally {
+      PDF_TEXT_LIMITS.timeoutMs = saved;
+    }
+    expect((await call(calendarKey.id, "read_attachment_text", { hostKind: "event", hostId: eventId, documentId: paper })).value.text).toBe("Agenda numbat\n\nSecond page");
   });
 
   test("notes need notes:read; chats need a whole-module agents:read; a key over chosen knowledge bases is not offered the tools", async () => {

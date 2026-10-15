@@ -27,7 +27,10 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 - [ ] Settings → Report owners leftover (lane ORG, D500):
   - [ ] Each list shows the 200 most recently changed (a title search finds the rest); no paging. Both lists check every live report (admins only; not measured past a few hundred); measure at 50,000 and page by cursor if needed.
 
-- [ ] Files PDF text leftovers (lane FILES, D496): `read_attachment_text` and the reports Nook doc source still read text files only (`readDocumentText`); a scanned PDF has no text layer and gets no OCR; the PDF worker's memory is bounded only by the 16 MiB and 300-page caps (Bun workers take no heap limit); "Pick from Nook" (reports) still offers text files only.
+- [ ] PDF text leftovers (lanes FILES and PDF, D496, D510–D514):
+  - [ ] The PDF worker has no heap cap: Bun 1.4.2 ignores Worker `resourceLimits` (D513). It runs `smol`, bounded by 16 MiB, 300 pages, 15 s, one at a time. Set a heap limit if Bun gains one.
+  - [ ] Before the Files index's first backfill after boot, "Pick from Nook" matches PDFs by name only and can offer a scan (picking it gives the "no text layer" error); the indexed search never does (D512).
+  - Recorded non-goal: OCR for scanned PDFs (D514). Every usable engine is native (tesseract) or a large WASM bundle with language data; a scan says "no text layer (scanned?)" instead.
 - [ ] `tests/restV1.test.ts` parity: not reproduced in two full runs (lane FTS). The only cross-module read tool for its key is `get_today`, which lists other people's items shared with everyone that earlier files' background work can change between the MCP and REST calls; the check now brackets the REST call with two MCP reads. If it recurs, the failing tool name pins the shared state.
 
 ## Standing rules for agent briefs

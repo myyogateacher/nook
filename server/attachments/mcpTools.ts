@@ -65,8 +65,8 @@ export const attachmentTools: McpToolSpec[] = [
   }),
   defineTool({
     name: "read_attachment_text",
-    title: "Read an attached text file",
-    description: "Read a text file (such as .txt, .md, .csv, or .json) attached to an item you can read, up to 1048576 bytes as UTF-8. Other files return NOT_TEXT or TOO_LARGE. Needs the read scope of the item's module.",
+    title: "Read an attached text file or PDF",
+    description: "Read a text file (such as .txt, .md, .csv, or .json) attached to an item you can read, up to 1048576 bytes as UTF-8, or the text layer of an attached PDF up to 16777216 bytes (at most 300 pages and 1000000 characters, with pdf: { pages, pagesRead, truncated }; a scanned PDF with no text layer, a password-protected PDF, or a damaged one returns NOT_TEXT). Other files return NOT_TEXT or TOO_LARGE. Needs the read scope of the item's module.",
     scopes: READ_SCOPES,
     access: HOST_ACCESS(["hostId", "documentId"]),
     write: false,
@@ -77,9 +77,10 @@ export const attachmentTools: McpToolSpec[] = [
       const document = readableAttachment(hostKind, id, documentId.toLowerCase(), key.userId);
       if (!document || !keyMaySeeAttachmentId(key, { kind: hostKind, hostId: id }, document.id)) throw new McpToolError("NOT_FOUND", "Attachment not found");
       // Loaded at call time: server/mcpTools.ts registers these tools, so a static import would be a cycle.
-      const { readDocumentText } = await import("../mcpTools");
-      const text = await readDocumentText(document);
-      return { id: document.id, name: document.name, mimeType: document.mime_type, sizeBytes: document.size_bytes, hostKind, hostId: id, text };
+      const { readDocumentTextLayer } = await import("../mcpTools");
+      // D510: a PDF's text layer too, through the PDF worker, as read_document_text reads it.
+      const { text, pdf } = await readDocumentTextLayer(document, { pdf: true });
+      return { id: document.id, name: document.name, mimeType: document.mime_type, sizeBytes: document.size_bytes, hostKind, hostId: id, text, ...(pdf ? { pdf } : {}) };
     }
   })
 ];

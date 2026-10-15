@@ -446,7 +446,8 @@ export const MCP_MAX_PDF_TEXT_CHARS = 1_000_000;
 
 /**
  * The text layer of a PDF (D496): pages in order, read in the PDF worker (server/pdfText.ts) with
- * its page, size, and time caps. A PDF without a text layer (a scan) returns empty text.
+ * its page, size, and time caps. A PDF without a text layer (a scan) returns empty text here (the
+ * Files index then keeps its name only); readers go through `readDocumentTextLayer`, which refuses it.
  */
 export async function readDocumentPdfText(document: DocumentRow, maxChars = MCP_MAX_PDF_TEXT_CHARS) {
   if (document.preview_kind !== "pdf") throw new McpToolError("NOT_TEXT", "This file is not a PDF.");
@@ -462,6 +463,26 @@ export async function readDocumentPdfText(document: DocumentRow, maxChars = MCP_
     if (error.reason === "busy") throw new McpToolError("RATE_LIMITED", "PDF reading is busy. Try again in a moment.");
     throw new McpToolError("NOT_TEXT", "The text of this PDF could not be read");
   }
+}
+
+/** What a PDF whose pages hold no text (a scan) says instead of empty text (D510). Nook has no OCR. */
+export const PDF_NO_TEXT_LAYER = "This PDF has no text layer (scanned?), so there is no text to read";
+
+export type DocumentTextLayer = { text: string; pdf: { pages: number; pagesRead: number; truncated: boolean } | null };
+
+/**
+ * The one "read this file as text" path (D510): a text file exactly as `readDocumentText` reads it,
+ * and with `pdf: true` a PDF's text layer too (`read_document_text`, `read_attachment_text`, the
+ * reports Nook doc source), through the PDF worker and its caps. A PDF whose pages hold no text is
+ * NOT_TEXT `PDF_NO_TEXT_LAYER`, never empty text. `pdfMaxChars` stops the worker earlier.
+ * Callers that only want text files (the Files index's text pass, the "Pick from Nook" scan) keep
+ * `readDocumentText`; the index reads PDFs with `readDocumentPdfText`, where empty text means "name only".
+ */
+export async function readDocumentTextLayer(document: DocumentRow, options: { pdf?: boolean; pdfMaxChars?: number } = {}): Promise<DocumentTextLayer> {
+  if (!options.pdf || document.preview_kind !== "pdf") return { text: await readDocumentText(document), pdf: null };
+  const read = await readDocumentPdfText(document, options.pdfMaxChars ?? MCP_MAX_PDF_TEXT_CHARS);
+  if (!read.text.trim()) throw new McpToolError("NOT_TEXT", PDF_NO_TEXT_LAYER);
+  return { text: read.text, pdf: { pages: read.pages, pagesRead: read.pagesRead, truncated: read.truncated } };
 }
 
 const fileTools: McpToolSpec[] = [
@@ -492,7 +513,7 @@ const fileTools: McpToolSpec[] = [
   defineTool({
     name: "read_document_text",
     title: "Read a text file or PDF",
-    description: `Read a text file (such as .txt, .md, .csv, or .json) up to ${MCP_MAX_TEXT_BYTES} bytes as UTF-8, or the text layer of a PDF up to ${PDF_TEXT_LIMITS.maxBytes} bytes (at most ${PDF_TEXT_LIMITS.maxPages} pages and ${MCP_MAX_PDF_TEXT_CHARS} characters; a scanned PDF has no text). Other files return NOT_TEXT or TOO_LARGE.`,
+    description: `Read a text file (such as .txt, .md, .csv, or .json) up to ${MCP_MAX_TEXT_BYTES} bytes as UTF-8, or the text layer of a PDF up to ${PDF_TEXT_LIMITS.maxBytes} bytes (at most ${PDF_TEXT_LIMITS.maxPages} pages and ${MCP_MAX_PDF_TEXT_CHARS} characters; a scanned PDF with no text layer, a password-protected PDF, or a damaged one returns NOT_TEXT). Other files return NOT_TEXT or TOO_LARGE.`,
     scopes: ["files:read"],
     access: { mode: "items", items: [{ arg: "documentId", kind: "document" }] },
     write: false,
@@ -500,12 +521,8 @@ const fileTools: McpToolSpec[] = [
     handler: async ({ documentId }, key) => {
       const document = listableDocument(documentId, key.userId);
       if (!document) throw notFound("File");
-      const base = { id: document.id, name: document.name, mimeType: document.mime_type, sizeBytes: document.size_bytes };
-      if (document.preview_kind === "pdf") {
-        const pdf = await readDocumentPdfText(document);
-        return { ...base, text: pdf.text, pdf: { pages: pdf.pages, pagesRead: pdf.pagesRead, truncated: pdf.truncated } };
-      }
-      return { ...base, text: await readDocumentText(document) };
+      const { text, pdf } = await readDocumentTextLayer(document, { pdf: true });
+      return { id: document.id, name: document.name, mimeType: document.mime_type, sizeBytes: document.size_bytes, text, ...(pdf ? { pdf } : {}) };
     }
   }),
   defineTool({

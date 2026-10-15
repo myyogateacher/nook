@@ -11,6 +11,7 @@ const { syncSchema } = await import("../server/reports/schemaCatalog");
 const { fetchNookFetched } = await import("../server/reports/docSource");
 const { NOOK_FILE_SEARCH_LIMITS, resetNookFileSearchRate } = await import("../server/reports/nookFileSearch");
 const { documentIndexReady, resetDocumentIndexForTests, whenDocumentIndexIdle } = await import("../server/documentSearch");
+const { makePdf } = await import("./support/pdf");
 
 /**
  * B4: Nook as a built-in doc source (`nook`): listed first, no sync; a doc ref is a link to a note or a
@@ -55,7 +56,7 @@ async function note(session: Session, markdown: string, publish = true) {
   if (publish) expect((await send(session, "POST", `/notes/${id}/publish`)).status).toBe(200);
   return id;
 }
-async function upload(session: Session, name: string, text: string, type = "text/markdown") {
+async function upload(session: Session, name: string, text: string | Uint8Array, type = "text/markdown") {
   const form = new FormData();
   form.append("file", new Blob([text], { type }), name);
   return ((await (await request("/files", { method: "POST", body: form }, session)).json()) as { document: { id: string } }).document.id;
@@ -139,6 +140,31 @@ describe("the built-in source", () => {
     const state = await send(owner, "GET", `/reports/${reportId}/doc`);
     expect(state.body.doc).toMatchObject({ changed: false, doc: { serverId: "nook", serverName: "Nook (this workspace)", tool: "read_note" }, latest: { title: "Revenue metrics" } });
     expect((await send(owner, "GET", `/reports/${reportId}`)).body.report.doc).toMatchObject({ serverId: "nook" });
+  });
+});
+
+describe("a PDF as the doc (D511)", () => {
+  test("a PDF's text layer is the doc, read as the owner through the PDF worker; a scan or a broken PDF is DOC_FETCH with its reason", async () => {
+    const pdf = await upload(owner, "Revenue spec.pdf", makePdf(["Revenue spec from a PDF", "Sum amount by day"]), "application/pdf");
+    const doc = await fetchNookFetched(owner.userId, `${origin}/files/${pdf}`);
+    expect([doc.title, doc.tool, doc.markdown]).toEqual(["Revenue spec.pdf", "read_document_text", "Revenue spec from a PDF\n\nSum amount by day"]);
+    const scan = await upload(owner, "Scan.pdf", makePdf([""]), "application/pdf");
+    await expect(fetchNookFetched(owner.userId, scan)).rejects.toMatchObject({ code: "DOC_FETCH", message: expect.stringContaining("no text layer (scanned?)") });
+    const broken = await upload(owner, "Broken.pdf", "%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n", "application/pdf");
+    await expect(fetchNookFetched(owner.userId, broken)).rejects.toMatchObject({ code: "DOC_FETCH", message: expect.stringContaining("PDF") });
+    const binary = await upload(owner, "blob.bin", "\u0000\u0001", "application/octet-stream");
+    await expect(fetchNookFetched(owner.userId, binary)).rejects.toMatchObject({ code: "DOC_FETCH", message: expect.stringContaining("PDFs with a text layer") });
+    // Another person's PDF is the same NOT_FOUND as anything else they cannot read.
+    await expect(fetchNookFetched(other.userId, pdf)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  test("a generation from a Nook PDF: the PDF's text is the document the model reads", async () => {
+    const pdf = await upload(owner, "Orders brief.pdf", makePdf(["Orders brief", "Use analytics.orders and sum amount by day"]), "application/pdf");
+    const started = await generate(owner, `${origin}/files/${pdf}`);
+    expect(started.status).toBe(202);
+    expect(await waitForRun(started.body.run.id)).toMatchObject({ status: "succeeded" });
+    expect(db.query("SELECT doc_source, doc_tool FROM reports WHERE id = ?").get(started.body.report.id)).toEqual({ doc_source: "nook", doc_tool: "read_document_text" });
+    expect(String(provider.calls[0]!.messages![0]!.content)).toContain("<document>\nOrders brief\n\nUse analytics.orders and sum amount by day");
   });
 });
 
@@ -275,6 +301,35 @@ describe("K4: Pick from Nook searches Files text", () => {
     expect((await search(owner, "   ")).body).toEqual({ results: [], next: null });
     expect((await search(owner, word, "not-a-cursor")).status).toBe(400);
   }
+
+  // D512: PDFs are offered too. The index offers a PDF by its text, never one with no text layer; the
+  // bounded scan before the backfill never runs the PDF worker, so it matches a PDF by name only.
+  for (const indexed of [true, false]) test(`offers PDFs with a text layer, labelled pdf (${indexed ? "index" : "scan before the backfill"})`, async () => {
+    const word = `pd${crypto.randomUUID().slice(0, 8)}`;
+    const byText = await upload(owner, "Quarterly.pdf", makePdf([`The ${word} metric`, "net of refunds"]), "application/pdf");
+    const byName = await upload(owner, `${word} brief.pdf`, makePdf(["Nothing to see"]), "application/pdf");
+    const scan = await upload(owner, `${word} scan.pdf`, makePdf([""]), "application/pdf");
+    await whenDocumentIndexIdle();
+    const wasReady = documentIndexReady();
+    resetDocumentIndexForTests({ ready: indexed });
+    try {
+      const found = await search(owner, word);
+      expect(found.status).toBe(200);
+      const hits = new Map((found.body.results as Json[]).map((hit) => [hit.id as string, hit]));
+      expect(hits.get(byName)).toMatchObject({ matched: "name", pdf: true, snippet: null });
+      if (indexed) {
+        expect([...hits.keys()].sort()).toEqual([byText, byName].sort());
+        expect(hits.get(byText)).toMatchObject({ matched: "text", pdf: true, name: "Quarterly.pdf" });
+        expect(hits.get(byText)!.snippet).toContain(`The ${word} metric`);
+        // Every PDF the index offers reads as a doc.
+        for (const id of hits.keys()) expect((await fetchNookFetched(owner.userId, id)).tool).toBe("read_document_text");
+      } else {
+        expect([...hits.keys()].sort()).toEqual([byName, scan].sort());
+      }
+    } finally {
+      resetDocumentIndexForTests({ ready: wasReady });
+    }
+  });
 
   test("pages with a cursor (newest first among equals) when the scan or hit cap is reached; rate limited", async () => {
     const word = `pg${crypto.randomUUID().slice(0, 8)}`;

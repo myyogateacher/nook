@@ -200,8 +200,10 @@ describe("B4: Nook as a doc source in New report", () => {
   test("the picker: a pick becomes this instance's link; a Files hit (K4) says whether its text matched", () => {
     expect(nookLinkOf({ kind: "note", id }, "https://nook.example.test")).toBe(`https://nook.example.test/notes/${id}`);
     expect(nookLinkOf({ kind: "file", id }, "https://nook.example.test")).toBe(`https://nook.example.test/files/${id}`);
-    const hit = { id, name: "Revenue metrics.md", ownerName: "Ana", isOwner: true, updatedAt: "", matched: "text" as const, snippet: "…net revenue…" };
+    const hit = { id, name: "Revenue metrics.md", ownerName: "Ana", isOwner: true, updatedAt: "", matched: "text" as const, snippet: "…net revenue…", pdf: false };
     expect(filePick(hit)).toEqual({ kind: "file", id, title: "Revenue metrics.md", detail: "File · Ana · matches its text", snippet: "…net revenue…" });
     expect(filePick({ ...hit, matched: "name", snippet: null }).detail).toBe("File · Ana");
+    // D512: a PDF says so.
+    expect(filePick({ ...hit, name: "Revenue.pdf", pdf: true }).detail).toBe("PDF · Ana · matches its text");
   });
 });

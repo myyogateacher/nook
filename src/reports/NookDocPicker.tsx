@@ -5,20 +5,20 @@ import { appName } from "../appName";
 import { isSearchable, searchErrorMessage, searchNotes, SEARCH_DEBOUNCE_MS, SEARCH_MAX_CHARS } from "../search/searchApi";
 import type { NookFileHit, NookFileSearch } from "../../shared/reportsGenerate";
 
-/** One thing the picker offers: a note (published or draft hit) or a Files text document. */
+/** One thing the picker offers: a note (published or draft hit), a Files text document, or a Files PDF (D512). */
 export type NookPick = { kind: "note" | "file"; id: string; title: string; detail: string; /** K4: a file's text around the match. */ snippet?: string | null };
 
 /** The link a pick becomes: this instance's own route for it (shared/nookDocRef.ts reads it back). */
 export const nookLinkOf = (pick: Pick<NookPick, "kind" | "id">, origin = window.location.origin) => `${origin}/${pick.kind === "note" ? "notes" : "files"}/${pick.id}`;
 
 /** K4: a Files search hit as a pick. */
-export const filePick = (hit: NookFileHit): NookPick => ({ kind: "file", id: hit.id, title: hit.name, detail: `File · ${hit.ownerName}${hit.matched === "text" ? " · matches its text" : ""}`, snippet: hit.snippet });
+export const filePick = (hit: NookFileHit): NookPick => ({ kind: "file", id: hit.id, title: hit.name, detail: `${hit.pdf ? "PDF" : "File"} · ${hit.ownerName}${hit.matched === "text" ? " · matches its text" : ""}`, snippet: hit.snippet });
 export const searchNookFiles = (query: string, cursor: string | null, signal?: AbortSignal) =>
   api<NookFileSearch>(`/reports/nook-files?q=${encodeURIComponent(query)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal });
 
 /**
  * B4: "Pick from <APP_NAME>": search notes (GET /api/search, as the app's search) and Files text
- * documents (K4: GET /api/reports/nook-files, by name and text, a page at a time with "Search older
+ * documents and PDFs with a text layer (K4, D512: GET /api/reports/nook-files, by name and text, a page at a time with "Search older
  * files"), and pick one; it becomes this instance's link to it.
  */
 export function NookDocPicker({ onPick, onClose }: { onPick: (pick: NookPick) => void; onClose: () => void }) {
@@ -32,7 +32,7 @@ export function NookDocPicker({ onPick, onClose }: { onPick: (pick: NookPick) =>
   const inputId = useId();
   const listId = useId();
 
-  // K4: Files text documents by name and text, the first page; "Search older files" asks for the next.
+  // K4: Files text documents and PDFs (D512) by name and text, the first page; "Search older files" asks for the next.
   useEffect(() => {
     const trimmed = query.trim();
     if (!trimmed) { setFiles(null); setFileError(null); return undefined; }
@@ -78,11 +78,11 @@ export function NookDocPicker({ onPick, onClose }: { onPick: (pick: NookPick) =>
     <label htmlFor={inputId} className="sr-only">Search {appName()}</label>
     <div className="nook-doc-picker-search">
       <Search aria-hidden="true" />
-      <input id={inputId} type="search" value={query} maxLength={SEARCH_MAX_CHARS} autoFocus autoComplete="off" placeholder={`Search notes and text files in ${appName()}`} aria-controls={listId}
+      <input id={inputId} type="search" value={query} maxLength={SEARCH_MAX_CHARS} autoFocus autoComplete="off" placeholder={`Search notes, text files, and PDFs in ${appName()}`} aria-controls={listId}
         onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); } }} />
     </div>
     {(error ?? fileError) && <p className="file-dialog-hint" role="alert">{error ?? fileError}</p>}
-    {query.trim() && !busy && !error && !fileError && picks.length === 0 && !files?.next && <p className="file-dialog-hint" role="status">Nothing found. Notes need a published version; files must be text (.md, .txt, .csv, .json).</p>}
+    {query.trim() && !busy && !error && !fileError && picks.length === 0 && !files?.next && <p className="file-dialog-hint" role="status">Nothing found. Notes need a published version; files must be text (.md, .txt, .csv, .json) or PDFs with a text layer.</p>}
     <ul id={listId} className="nook-doc-picker-list">
       {picks.map((pick) => <li key={`${pick.kind}-${pick.id}`}>
         <button type="button" onClick={() => onPick(pick)}>

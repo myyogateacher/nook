@@ -118,7 +118,7 @@ export function DocSourceNotice({ state, admin, onRetry, onOpenToolServers, onAl
  * otherwise), or blank (a title and a data source; the SQL console). Generate reads the doc right
  * away, so a bad link or a refused credential answers here; the report page then follows the run.
  * One sheet, one history layer: Back or Escape closes it (D18), never while a request is in flight.
- * "From a doc" is always on: Nook's own notes and text files are a doc source (B4), listed first, and a
+ * "From a doc" is always on: Nook's own notes, text files, and PDFs are a doc source (B4), listed first, and a
  * pasted link picks its source. It says why the sources could not load (Retry) or why the chosen
  * server may not work (not synced, no read-only fetch tool), with admins' link to fix it.
  */
@@ -249,7 +249,7 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
         {servers === null
           ? <p className="file-dialog-hint" role="status">Loading doc sources…</p>
           : <Select labelledBy={ids.server} label="Doc source" value={serverId} onChange={(value) => { setServerId(value); setTool(AUTO); setArg(""); }}
-            options={servers.map((item) => ({ value: item.id, label: item.name, description: item.builtin ? "Notes and text files, read with your access" : !item.synced ? "Not synced yet" : item.pick ? `Uses ${item.pick.tool}` : "No fetch tool found; choose one below" }))} />}
+            options={servers.map((item) => ({ value: item.id, label: item.name, description: item.builtin ? "Notes, text files, and PDFs, read with your access" : !item.synced ? "Not synced yet" : item.pick ? `Uses ${item.pick.tool}` : "No fetch tool found; choose one below" }))} />}
         {server && !nook && <details className="new-report-advanced" open={!server.pick && server.synced}>
           <summary>How Nook reads the doc</summary>
           <div className="new-report-advanced-body">

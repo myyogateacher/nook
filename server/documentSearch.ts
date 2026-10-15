@@ -222,7 +222,12 @@ export type DocumentSearchHit = {
 };
 
 const SNIPPET_TOKENS = 16;
-const searchSql = (textOnly: boolean, keyCondition = "1") => `
+/**
+ * `readable` (D512) keeps the files `read_document_text` can read as text: text files of at most 1 MiB
+ * that were readable when indexed, and PDFs of at most the PDF cap whose indexed text layer is not
+ * empty (a scan, a password, or a broken PDF is left out: it could only fail to read).
+ */
+const searchSql = (readable: boolean, keyCondition = "1") => `
   SELECT d.id, d.name, d.folder_id, d.mime_type, d.size_bytes, d.preview_kind, d.owner_id, u.display_name AS owner_name,
          CASE WHEN d.owner_id = $userId THEN 1 ELSE 0 END AS is_owner, d.updated_at,
          highlight(document_fts, 0, $hitStart, $hitEnd) AS title_marked,
@@ -232,26 +237,27 @@ const searchSql = (textOnly: boolean, keyCondition = "1") => `
   JOIN documents d ON d.id = s.document_id AND d.purpose = 'file' AND d.purge_started_at IS NULL AND d.sha256 = s.source_sha256
   JOIN users u ON u.id = d.owner_id
   WHERE document_fts MATCH $query AND ${readableDocumentPredicate} AND ${notWhiteboard}
-    ${textOnly ? "AND d.preview_kind = 'text' AND d.size_bytes <= $maxBytes AND s.body_state <> 'unreadable'" : ""}
+    ${readable ? `AND s.body_state <> 'unreadable' AND ((d.preview_kind = 'text' AND d.size_bytes <= $maxBytes)
+      OR (d.preview_kind = 'pdf' AND d.size_bytes <= $maxPdfBytes AND s.body_state = 'text' AND document_fts.body <> ''))` : ""}
     AND ($folderId IS NULL OR d.folder_id = $folderId) AND ${keyCondition}
   ORDER BY bm25(document_fts, 8.0, 1.0), d.updated_at DESC, d.id DESC
   LIMIT $limit OFFSET $offset`;
-const searchQueries = { all: db.query(searchSql(false)), text: db.query(searchSql(true)) };
+const searchQueries = { all: db.query(searchSql(false)), readable: db.query(searchSql(true)) };
 
 /**
  * Files the caller can list in Files (the `read_document_text` access: ownership or Files sharing,
  * never a card, row, or other host link) whose name or text matches `q`, best first. The ACL is
- * part of the query, before LIMIT. `textOnly` keeps the files `read_document_text` can read.
+ * part of the query, before LIMIT. `readable` keeps the files `read_document_text` can read (text files and PDFs with text).
  */
-export function searchDocumentRows(userId: string, q: string, options: { limit: number; offset?: number; textOnly?: boolean; folderId?: string | null; keyScope?: SqlFilter }) {
+export function searchDocumentRows(userId: string, q: string, options: { limit: number; offset?: number; readable?: boolean; folderId?: string | null; keyScope?: SqlFilter }) {
   const query = buildFtsQuery(q);
   if (query === null) return { rows: [] as DocumentSearchRow[], truncated: false };
   const scope = options.keyScope ?? NO_FILTER;
-  const statement = scope.sql === "1" ? (options.textOnly ? searchQueries.text : searchQueries.all) : db.query(searchSql(!!options.textOnly, scope.sql));
+  const statement = scope.sql === "1" ? (options.readable ? searchQueries.readable : searchQueries.all) : db.query(searchSql(!!options.readable, scope.sql));
   const rows = statement.all({
     ...scope.params,
     userId, query, hitStart: HIT_START, hitEnd: HIT_END, limit: options.limit + 1, offset: options.offset ?? 0, folderId: options.folderId ?? null,
-    ...(options.textOnly ? { maxBytes: DOCUMENT_INDEX_LIMITS.textMaxBytes } : {})
+    ...(options.readable ? { maxBytes: DOCUMENT_INDEX_LIMITS.textMaxBytes, maxPdfBytes: PDF_TEXT_LIMITS.maxBytes } : {})
   }) as DocumentSearchRow[];
   return { rows: rows.slice(0, options.limit), truncated: rows.length > options.limit };
 }

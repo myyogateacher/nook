@@ -2,6 +2,34 @@
 
 Release notes for Nook, newest first. Upgrade steps for each release are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
+## v0.41.0 — 2026-10-15
+
+**Reports**
+
+- **The SQL console runs saved queries with parameters**: each `{name:Type}` placeholder gets a typed input (a date picker for `Date`, an array literal for `Array(String)`), prefilled from the values on screen when opened from Inspect, and bound safely as `param_<name>`.
+- **Search filters with many values**: a filter whose list stops at 200 choices now searches ClickHouse as you type.
+- **Settings → Report owners** (admins): reports nobody can manage (owners blocked, guests, viewers or gone) and reports you can't open, with **Manage owners** to add one (audited). MCP: `list_unmanaged_reports` (admins).
+- **Owner tags**: the Share sheet tags owners who are now Blocked, Guest or Viewer, and the owners API returns each owner's `state`.
+- **Faster report lists at scale**: the Owner and Favorites filters stay under ~14 ms a page at 50,000–200,000 reports (they took up to ~100 ms).
+
+**Files**
+
+- **PDF text is searchable**: the full-text index reads the text layer of PDFs (up to 16 MiB and 300 pages, in a worker thread), and existing PDFs are read again in the background after the upgrade. `read_document_text` returns a PDF's text too.
+- **`search_documents`** over MCP and REST (`files:read`): ranked results with snippets, only from files the key can read.
+- **Clearer counts**: when only file text matches, the header says "4 in file text" instead of "0 of 4 files".
+
+**Fixes**
+
+- Line-chart end labels no longer clip at the card edge (on phones and on wide screens), and the maximum's label stays visible.
+- "Updated N min ago" follows the filter set on screen.
+- KPI titles wrap between words on phones; a narrow horizontal bar chart no longer crowds its axis numbers; the Inspect tabs line up with the content.
+- The phone folder switcher shows a star for Favorites.
+- Settings → Report data sources: Forward reopens the data source sheet after leaving the section.
+
+**Upgrading**
+
+- No migration and no new settings. Back up first (`./scripts/backup.sh --force`), pull, rebuild with `APP_VERSION=0.41.0`, and restart. After boot, the background indexer reads existing PDFs' text once.
+
 ## v0.40.0 — 2026-10-15
 
 **Interactive reports**

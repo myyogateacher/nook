@@ -6,7 +6,7 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 - Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
 **Current state (2026-10-15).**
-- **v0.40.0** is released (tag and GitHub release, 2026-10-15): interactive report parameters (date range in the report's time zone, filters drawn from the data) and smarter chart choice. v0.39.0 brought report organization, Files full-text search and member as the default role.
+- **v0.41.0** is released (tag and GitHub release, 2026-10-15): PDF text in the Files index, `search_documents`, console parameters, option search, Settings → Report owners. v0.40.0 brought interactive report parameters.
 - Migrations: **001–063** are released and immutable (045 and 054 unused; 054 is reserved for Messages). Next free: **064**.
 - Development happens directly on `main`, pushed as each change passes its gates.
 

@@ -198,6 +198,17 @@
 .report-console-head h2 { margin: 0; color: #ededee; font-size: 1rem; }
 .report-sql { width: 100%; min-height: 150px; resize: vertical; border: 1px solid #2c2c31; border-radius: 10px; padding: 10px 12px; background: #0d0d0f; color: #ededee; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
 .report-sql:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+/* D490: one input per {name:Type} placeholder of the statement, bound as param_<name>. */
+.report-console-params { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 10px 12px; min-width: 0; margin: 0; border: 1px solid #26262b; border-radius: 10px; padding: 10px 12px 12px; }
+.report-console-params legend { padding: 0 4px; color: #c9c9ce; font-size: .82rem; font-weight: 600; }
+.report-console-params > .file-dialog-hint { grid-column: 1 / -1; margin: 0; }
+.report-console-param { display: grid; gap: 4px; min-width: 0; }
+.report-console-param > span { color: #9a9aa1; font-size: .8rem; overflow-wrap: anywhere; }
+.report-console-param input { width: 100%; min-width: 0; min-height: 40px; border: 1px solid #2c2c31; border-radius: 8px; padding: 0 10px; background: #0d0d0f; color: #ededee; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color-scheme: dark; }
+.report-console-param input:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+.report-console-param input[aria-invalid="true"]:not(:placeholder-shown) { border-color: #b4534a; }
+.report-console-param .form-error { margin: 0; font-size: .78rem; }
+@media (max-width: 760px), (pointer: coarse) { .report-console-param input { min-height: 44px; font-size: 16px; } }
 .report-console-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .report-console-actions .file-dialog-hint { flex: 1 1 260px; margin: 0; }
 .report-run-buttons { display: inline-flex; flex-wrap: wrap; gap: 8px; }

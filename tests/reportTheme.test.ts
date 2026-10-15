@@ -4,7 +4,7 @@ import {
   reportEchartsTheme, SEQUENTIAL_BLUE, STATUS, TYPE
 } from "../shared/reportTheme";
 import { reportLayout, upgradeSpec, type ChartBlock, type KpiBlock, type ReportSpecV1 } from "../shared/reports";
-import { buildChartOption, chartTheme, compactValue, formatValue, optionJson } from "../src/reports/chartOption";
+import { buildChartOption, chartTheme, compactValue, endLabelFit, formatValue, labelWidth, optionJson } from "../src/reports/chartOption";
 import { kpiValue, sparklinePath } from "../src/reports/KpiTile";
 import { checkPalette, contrast } from "./support/paletteCheck";
 
@@ -242,6 +242,28 @@ describe("chart options from the theme", () => {
     expect(label([705, 700, 560, 564], 0)).toMatchObject({ show: true, position: "top", align: "left" });
     expect(label([500, 705, 560, 564], 1)).toMatchObject({ show: true, position: "top" });
     expect(label([500, 705, 560, 564], 1)!.align).toBeUndefined();
+  });
+
+  test("D492: a line's end label fits its gutter (no unit at phone width); a late maximum reads leftwards; thinning never drops the dots", () => {
+    const rows = (values: number[]) => ({ columns: [{ name: "day", type: "Date" }, { name: "requests", type: "UInt64" }], rows: values.map((value, at) => [`2026-09-${String(at + 1).padStart(2, "0")}`, value]) });
+    const build = (values: number[], width?: number) => buildChartOption({ ...bar(), kind: "line", intent: "trend", x: "day", y: ["requests"], unit: "requests" }, rows(values), dark, { width }).option!;
+    const format = (option: Record<string, unknown>, value: number) => ((option.series as Array<{ endLabel: { formatter: (params: { value: number }) => string } }>)[0]!.endLabel.formatter)({ value });
+    const wide = build([705, 700, 560, 564], 560);
+    const gutter = (wide.grid as { right: number }).right;
+    // "564 requests" at the 10 px label size, plus the dot, its ring, and the gap: wider than the old fixed 56.
+    expect(format(wide, 564)).toBe("564 requests");
+    expect(gutter).toBeGreaterThanOrEqual(Math.ceil(labelWidth("564 requests")) + 16);
+    expect(gutter).toBeLessThan(120);
+    const phone = build([705, 700, 560, 564], 330);
+    expect(format(phone, 564)).toBe("564");
+    expect((phone.grid as { right: number }).right).toBeLessThan(48);
+    expect(endLabelFit([null], undefined, "requests", 330)).toEqual({ gutter: 16, short: false });
+    const series = (option: Record<string, unknown>) => (option.series as Array<{ showAllSymbol?: boolean; data: Array<{ label?: { align?: string } }> }>)[0]!;
+    expect(series(phone).showAllSymbol).toBe(true);
+    // The maximum on the second-to-last of 30 points reads leftwards, inside the plot; its label also drops the unit on a phone.
+    const late = Array.from({ length: 30 }, (_, at) => (at === 28 ? 900 : 500));
+    expect(series(build(late, 330)).data[28]!.label).toMatchObject({ show: true, position: "top", align: "right" });
+    expect(series(build(late, 330)).data[28]!.label).toHaveProperty("formatter");
   });
 
   test("emphasis: the named series (or one category) in slot 1, every other in the muted grey", () => {

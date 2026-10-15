@@ -12,7 +12,8 @@ export type ParamResultsView = ReportResultsView & { set: ParamSetInfo };
 export const getParamResults = (id: string, values: ParamValues) => api<ParamResultsView>(`/reports/${id}/results?values=${encodeURIComponent(JSON.stringify(values))}`);
 /** Runs a parameter set's missing queries (read access is enough) and answers with its results. */
 export const runParamSet = (id: string, values: ParamValues, force = false) => api<ParamResultsView>(`/reports/${id}/param-runs`, { method: "POST", body: JSON.stringify(force ? { values, force } : { values }) });
-export const getParamOptions = (id: string, paramId: string) => api<{ options: ParamOptions }>(`/reports/${id}/parameters/${paramId}/options`);
+/** A select's cached options; with `query`, ClickHouse's values that hold it (D491, past the first 200). */
+export const getParamOptions = (id: string, paramId: string, query?: string) => api<{ options: ParamOptions }>(`/reports/${id}/parameters/${paramId}/options${query ? `?q=${encodeURIComponent(query)}` : ""}`);
 export const refreshReport = (id: string, queryKey?: string) => api<{ run: ReportRun }>(`/reports/${id}/refresh`, { method: "POST", body: JSON.stringify(queryKey ? { queryKey } : {}) });
 export const getRun = (id: string, runId: string) => api<{ run: ReportRun }>(`/reports/${id}/runs/${runId}`);
 export const listRuns = (id: string) => api<RunHistoryView>(`/reports/${id}/runs`);

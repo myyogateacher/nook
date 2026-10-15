@@ -3,7 +3,7 @@ import { audit, db, now } from "../db";
 import { logger } from "../log";
 import { REPORT_LIMITS, type QueryOutcome, type ReportQuery, type ReportResult, type ReportSpec, type ResultColumn, type RunTrigger } from "../../shared/reports";
 import {
-  bindValues, boundRecord, canonicalValues, declaredPlaceholders, defaultValues, isDefaultSet, PARAM_LIMITS, resolveValues, todayUtc, valueLabel,
+  bindValues, boundRecord, canonicalValues, declaredPlaceholders, defaultValues, escapeParamString, isDefaultSet, PARAM_LIMITS, quotedElement, resolveValues, todayUtc, valueLabel,
   type BoundParam, type ParamOptions, type ParamSetInfo, type ParamValues, type ReportParameter
 } from "../../shared/reportParams";
 import type { QueryResultView, ReportResultsView } from "../../shared/reportsView";
@@ -121,14 +121,144 @@ export function paramSetsToCheck(params: readonly ReportParameter[], options: Re
 export async function runOptionsQuery(row: DatasourceRow, sql: string, context: { userId: string; queryId: string; signal?: AbortSignal }): Promise<{ options: string[]; truncated: boolean }> {
   const outcome = await runGuarded(row, sql, { classes: ["select"], maxRows: PARAM_LIMITS.options, queryId: context.queryId, userId: context.userId, signal: context.signal });
   if (!outcome.columns.length) throw new ReportError(400, "INVALID", "An options query must select at least one column");
+  rememberOptionColumn(sql, outcome.columns[0]!.name);
+  const options = optionTexts(outcome.rows);
+  // D491: a full list (200) may be the options query's own LIMIT 200 cutting it; it counts as cut, so search reaches the rest.
+  return { options, truncated: outcome.truncated || options.length >= PARAM_LIMITS.options };
+}
+
+/** The first column of option rows as the select lists them: distinct, at most 200, each cut at 200 characters. */
+function optionTexts(rows: readonly (readonly unknown[])[]): string[] {
   const seen = new Set<string>();
-  for (const line of outcome.rows) {
+  for (const line of rows) {
     const value = line[0];
     if (value === null || value === undefined) continue;
     const text = (typeof value === "string" ? value : JSON.stringify(value) ?? "").slice(0, PARAM_LIMITS.optionChars);
     seen.add(typeof value === "number" || typeof value === "bigint" ? String(value) : text.replace(/^"(.*)"$/, "$1"));
   }
-  return { options: [...seen].slice(0, PARAM_LIMITS.options), truncated: outcome.truncated };
+  return [...seen].slice(0, PARAM_LIMITS.options);
+}
+
+// ------------------------------------------------------------------------- option search (D491)
+
+/**
+ * Search-as-you-type for a select whose options query has more than 200 values (D491): the options
+ * query, its trailing LIMIT taken off, is wrapped and filtered on its first column with a bound ILIKE
+ * pattern (`toString(col) ILIKE {nook_search:String}`), through the same guard, at most 200 rows.
+ * Read access is enough; searches are rate-limited per person (OPTION_SEARCH.perMinute) and run under
+ * the person's query slots. The same wrap checks that a picked value past the first 200 is a real one.
+ */
+export const OPTION_SEARCH = { perMinute: 60, chars: 100 } as const;
+
+/** An options query's first column name, learned from its last run (the wrap filters on it). */
+const optionColumns = new Map<string, string>();
+function rememberOptionColumn(sql: string, column: string) {
+  optionColumns.delete(sql);
+  optionColumns.set(sql, column);
+  if (optionColumns.size > 1000) optionColumns.delete(optionColumns.keys().next().value!);
+}
+
+/**
+ * The options query without its trailing top-level `LIMIT n [OFFSET m]` (or `LIMIT m, n`), so a search
+ * reaches every value. Anything else after LIMIT (`BY`, `WITH TIES`) keeps the query as written.
+ */
+export function unlimitedOptionsSql(sql: string): string {
+  const classified = classify(sql);
+  if (classified.class !== "select") throw new GuardError("NOT_SELECT", "An options query is one SELECT");
+  const tokens = classified.tokens;
+  let depth = 0;
+  let limit = -1;
+  tokens.forEach((token, at) => {
+    if (token.kind === "punct" && token.text === "(") depth += 1;
+    else if (token.kind === "punct" && token.text === ")") depth -= 1;
+    else if (depth === 0 && token.kind === "word" && token.value === "limit") limit = at;
+  });
+  if (limit <= 0) return classified.sql;
+  const tail = tokens.slice(limit + 1);
+  const plain = tail.length > 0 && tail.every((token) => token.kind === "number" || (token.kind === "punct" && token.text === ",") || (token.kind === "word" && token.value === "offset"));
+  if (!plain) return classified.sql;
+  return classified.sql.slice(0, tokens[limit]!.start - tokens[0]!.start).trimEnd();
+}
+
+/** A column name as a quoted identifier; null for a name the wrap cannot quote safely. */
+const quotedColumn = (name: string) => name && !/[`\\\u0000-\u001f\u007f]/.test(name) && name.length <= 200 ? `\`${name}\`` : null;
+
+/** The options query wrapped and filtered on its first column (`filter` is a condition on `col`). */
+export function optionsFilterSql(inner: string, column: string, filter: (col: string) => string): string {
+  const quoted = quotedColumn(column);
+  if (!quoted) throw new ReportError(400, "INVALID", "This filter's choices cannot be searched");
+  return `SELECT * FROM (\n${inner}\n) AS nook_options WHERE ${filter(`toString(${quoted})`)}`;
+}
+
+/** A substring ILIKE pattern for a search term: `%term%` with `%`, `_`, and `\` escaped. */
+export const likePattern = (term: string) => `%${term.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+
+const searches = new Map<string, number[]>();
+function searchRateLimit(userId: string, nowMs = Date.now()) {
+  const kept = (searches.get(userId) ?? []).filter((at) => nowMs - at < 60_000);
+  if (kept.length >= OPTION_SEARCH.perMinute) {
+    searches.set(userId, kept);
+    throw new ReportError(429, "BUSY", "Too many searches in a minute; wait a moment and try again");
+  }
+  kept.push(nowMs);
+  searches.set(userId, kept);
+}
+
+/** Test hook: forget the per-person search counts. */
+export const resetOptionSearchLimit = () => searches.clear();
+
+/** The options query's first column: remembered from its last run, else read with a one-row run. */
+async function optionColumn(row: DatasourceRow, sql: string, inner: string, context: { userId: string; queryId: string }): Promise<string> {
+  const known = optionColumns.get(sql);
+  if (known) return known;
+  const outcome = await runGuarded(row, inner, { classes: ["select"], maxRows: 1, queryId: `${context.queryId}-c`, userId: context.userId });
+  const column = outcome.columns[0]?.name;
+  if (!column) throw new ReportError(400, "INVALID", "An options query must select at least one column");
+  rememberOptionColumn(sql, column);
+  return column;
+}
+
+type SelectParam = Extract<ReportParameter, { type: "select" | "multi_select" }>;
+
+function selectParam(spec: ReportSpec, paramId: string): SelectParam {
+  const param = spec.parameters.find((item) => item.id === paramId);
+  if (!param || (param.type !== "select" && param.type !== "multi_select")) throw new ReportError(404, "NOT_FOUND", "This report has no select parameter with that id");
+  return param;
+}
+
+/**
+ * GET …/parameters/:paramId/options?q=… (D491): the values of a select's options query whose text holds
+ * `q` (case-insensitive), at most 200. An empty `q` is the cached list (reportParamOptions).
+ */
+export async function searchParamOptions(reportId: string, userId: string, paramId: string, query: string): Promise<ParamOptions> {
+  const report = readableReport(reportId, userId);
+  const term = query.trim().slice(0, OPTION_SEARCH.chars);
+  if (!term) return reportParamOptions(reportId, userId, paramId, report);
+  const param = selectParam(parseSpec(report.spec_json), paramId);
+  const datasource = usableDatasource(report.datasource_id);
+  searchRateLimit(userId);
+  const queryId = queryIdFor("opts", reportId.replace(/-/g, "").slice(0, 12), paramId, crypto.randomUUID().slice(0, 8));
+  try {
+    const inner = unlimitedOptionsSql(param.optionsQuery);
+    const column = await optionColumn(datasource, param.optionsQuery, inner, { userId, queryId });
+    const outcome = await runGuarded(datasource, optionsFilterSql(inner, column, (col) => `${col} ILIKE {nook_search:String}`), {
+      classes: ["select"], maxRows: PARAM_LIMITS.options, queryId, userId, params: [{ name: "nook_search", type: "String", value: escapeParamString(likePattern(term)) }]
+    });
+    return { paramId, options: optionTexts(outcome.rows), truncated: outcome.truncated, error: null, at: now(), query: term };
+  } catch (failure) {
+    throw asReportError(failure);
+  }
+}
+
+/** The picked values that are real choices, read past the first 200 (D491): the wrap with `IN {nook_values:Array(String)}`. */
+async function existingOptionValues(datasource: DatasourceRow, param: SelectParam, values: readonly string[], userId: string): Promise<Set<string>> {
+  const queryId = queryIdFor("optx", param.id, crypto.randomUUID().slice(0, 8));
+  const inner = unlimitedOptionsSql(param.optionsQuery);
+  const column = await optionColumn(datasource, param.optionsQuery, inner, { userId, queryId });
+  const outcome = await runGuarded(datasource, optionsFilterSql(inner, column, (col) => `${col} IN {nook_values:Array(String)}`), {
+    classes: ["select"], maxRows: PARAM_LIMITS.selected, queryId, userId, params: [{ name: "nook_values", type: "Array(String)", value: `[${values.map(quotedElement).join(",")}]` }]
+  });
+  return new Set(optionTexts(outcome.rows));
 }
 
 type OptionsRow = { sql: string; values_json: string; truncated: number; error: string | null; created_at: string };
@@ -181,6 +311,16 @@ async function assertOptionValues(report: ReportRow, spec: ReportSpec, values: P
     const options = await reportParamOptions(report.id, userId, param.id, report);
     if (options.error) continue;
     const known = new Set(options.options);
+    // D491: a list cut at 200 may not hold a value found by search; ask ClickHouse whether it is a choice.
+    const beyond = picked.filter((item) => !known.has(item));
+    if (beyond.length && options.truncated) {
+      try {
+        for (const item of await existingOptionValues(usableDatasource(report.datasource_id), param, beyond, userId)) known.add(item);
+      } catch (failure) {
+        const error = asReportError(failure);
+        if (error.code === "BUSY") throw error;
+      }
+    }
     const unknown = picked.find((item) => !known.has(item));
     if (unknown !== undefined) throw new ReportError(400, "INVALID", `${unknown.slice(0, 60)} is not one of the choices for ${param.label}`, { paramId: param.id });
   }

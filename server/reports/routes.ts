@@ -3,6 +3,7 @@ import { z, ZodError } from "zod";
 import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
 import { REPORT_LIMITS, REPORT_PAGE_SIZE, REPORT_STATUSES } from "../../shared/reports";
+import { CONSOLE_PARAM_LIMITS } from "../../shared/reportParams";
 import { roleHasReports } from "./access";
 import { createDatasource, datasourceChoices, datasourceRow, datasourceSummary, deleteDatasource, listDatasources, previewAllowlist, SCHEMA_FIELDS, testConnection, updateDatasource } from "./datasources";
 import { asReportError, ReportError } from "./errors";
@@ -40,7 +41,11 @@ const datasourcePatch = datasourceCreate.partial().extend({ expectedRevision: z.
 const previewSchema = z.object({ allowlist }).strict();
 const reportCreate = z.object({ title: line(REPORT_LIMITS.title), datasourceId: uuid, folderId: uuid.nullish() }).strict();
 const reportPatch = z.object({ title: line(REPORT_LIMITS.title).optional(), datasourceId: uuid.optional(), expectedRevision: z.number().int().min(1) }).strict();
-const consoleSchema = z.object({ sql: z.string().min(1).max(REPORT_LIMITS.sqlChars) }).strict();
+/** D490: `params` are the values of the statement's `{name:Type}` placeholders, by name (bound as `param_<name>`). */
+const consoleSchema = z.object({
+  sql: z.string().min(1).max(REPORT_LIMITS.sqlChars),
+  params: z.record(z.string().max(60), z.string().max(CONSOLE_PARAM_LIMITS.chars)).refine((value) => Object.keys(value).length <= CONSOLE_PARAM_LIMITS.values, "too many values").optional()
+}).strict();
 const emptySchema = z.object({}).strict();
 
 const notFound = () => new ReportError(404, "NOT_FOUND", "Not found");
@@ -166,8 +171,8 @@ export function registerReportRoutes(app: Hono<AppEnv>) {
   // The guarded manual SQL console and the Schema browser (the report's data source).
   app.post("/api/reports/:reportId/console", handle(async (c) => {
     const reportId = id(c, "reportId");
-    const { sql } = await parseJson(c.req.raw, consoleSchema);
-    return { outcome: await runConsole(c.get("user").id, reportId, sql, c.req.raw.signal) };
+    const { sql, params } = await parseJson(c.req.raw, consoleSchema);
+    return { outcome: await runConsole(c.get("user").id, reportId, sql, c.req.raw.signal, params) };
   }));
   // Cancel: aborts the caller's running console query on this report and sends a best-effort KILL QUERY.
   app.post("/api/reports/:reportId/console/cancel", handle(async (c) => {

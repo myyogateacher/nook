@@ -253,7 +253,7 @@ export function resolveValues(params: readonly ReportParameter[], given: Record<
 /** A String value as ClickHouse reads a query parameter (the escaped text format: backslash, tab, line breaks). */
 export const escapeParamString = (value: string) => value.replace(/\\/g, "\\\\").replace(/\t/g, "\\t").replace(/\n/g, "\\n").replace(/\r/g, "\\r");
 /** One element of an Array(String) parameter: single-quoted, backslash-escaped. */
-const quotedElement = (value: string) => `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")}'`;
+export const quotedElement = (value: string) => `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")}'`;
 
 /**
  * The bound parameters for a set of values on `today`: a date range binds `<id>_from` and `<id>_to`,
@@ -289,6 +289,91 @@ export function bindValues(params: readonly ReportParameter[], values: ParamValu
   }
   return out;
 }
+
+// ------------------------------------------------------------------------- the SQL console
+
+/** The SQL console's limits for a placeholder's value (D490). */
+export const CONSOLE_PARAM_LIMITS = { values: 16, chars: 1000, items: PARAM_LIMITS.selected } as const;
+
+/** A bound String value back as typed (the inverse of escapeParamString), to prefill the console. */
+export const unescapeParamString = (value: string) => value.replace(/\\([\\tnr])/g, (_match, char: string) => char === "t" ? "\t" : char === "n" ? "\n" : char === "r" ? "\r" : "\\");
+
+/**
+ * Reads an array literal as the console takes it (`['a', 'b']`, `[1, 2]`, `[]`): single-quoted strings
+ * with backslash escapes, or whole numbers. Null when it is not one.
+ */
+export function parseArrayLiteral(text: string, element: string): string[] | null {
+  const source = text.trim();
+  if (!source.startsWith("[") || !source.endsWith("]")) return null;
+  const items: string[] = [];
+  let index = 1;
+  const end = source.length - 1;
+  const skip = () => { while (index < end && /\s/.test(source[index]!)) index += 1; };
+  skip();
+  if (index === end) return items;
+  for (;;) {
+    skip();
+    if (element === "String") {
+      if (source[index] !== "'") return null;
+      let value = "";
+      index += 1;
+      for (;;) {
+        if (index >= end) return null;
+        const char = source[index]!;
+        if (char === "\\") {
+          const next = source[index + 1];
+          if (next === undefined || index + 1 >= end) return null;
+          value += next === "n" ? "\n" : next === "t" ? "\t" : next === "r" ? "\r" : next;
+          index += 2;
+          continue;
+        }
+        if (char === "'") { index += 1; break; }
+        value += char;
+        index += 1;
+      }
+      items.push(value);
+    } else {
+      const match = /^-?\d{1,20}/.exec(source.slice(index, end));
+      if (!match) return null;
+      items.push(match[0]);
+      index += match[0].length;
+    }
+    skip();
+    if (index === end) return items;
+    if (source[index] !== ",") return null;
+    index += 1;
+  }
+}
+
+/**
+ * A console value for a placeholder `{name:Type}` (D490): what the person typed, checked against the
+ * type and encoded as ClickHouse parses `param_<name>` (the same encoding report parameters use), so a
+ * value is never SQL text. Dates are `YYYY-MM-DD`, numbers plain, text as typed, arrays as a literal.
+ */
+export function placeholderValue(type: string, raw: string): { value: string } | { problem: string } {
+  if (raw.length > CONSOLE_PARAM_LIMITS.chars) return { problem: `may be at most ${CONSOLE_PARAM_LIMITS.chars} characters` };
+  if (!PLACEHOLDER_TYPES.has(type)) return { problem: `the type ${type} is not supported` };
+  const text = type === "String" ? raw : raw.trim();
+  if (type === "Date") return validDay(text) ? { value: text } : { problem: "must be a day, YYYY-MM-DD" };
+  if (type === "Float64") return text !== "" && Number.isFinite(Number(text)) ? { value: String(Number(text)) } : { problem: "must be a number" };
+  if (type === "String") return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text) ? { problem: "must not hold control characters" } : { value: escapeParamString(text) };
+  if (isInteger(type)) {
+    const problem = scalarProblem(type, text);
+    return problem ? { problem } : { value: String(BigInt(text)) };
+  }
+  const element = elementType(type);
+  const items = parseArrayLiteral(text, element);
+  if (!items) return { problem: element === "String" ? "must be a list such as ['a', 'b'] (or [] for none)" : "must be a list such as [1, 2] (or [] for none)" };
+  if (items.length > CONSOLE_PARAM_LIMITS.items) return { problem: `may hold at most ${CONSOLE_PARAM_LIMITS.items} values` };
+  for (const item of items) {
+    if (element === "String") { if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(item)) return { problem: "must not hold control characters" }; }
+    else { const problem = scalarProblem(element, item); if (problem) return { problem }; }
+  }
+  return { value: `[${items.map((item) => element === "String" ? quotedElement(item) : String(BigInt(item))).join(",")}]` };
+}
+
+/** A bound value back as the console's input shows it (a String unescaped; the rest as sent). */
+export const placeholderInput = (type: string, bound: string) => type === "String" ? unescapeParamString(bound) : bound;
 
 /** The bound values as the inspect panel shows them (`name` → value as sent). */
 export const boundRecord = (bound: readonly BoundParam[]) => Object.fromEntries(bound.map((item) => [item.name, item.value]));
@@ -353,5 +438,5 @@ export type ParamSetInfo = {
   missing: string[];
 };
 
-/** A select's options (GET …/parameters/:id/options). */
-export type ParamOptions = { paramId: string; options: string[]; truncated: boolean; error: string | null; at: string | null };
+/** A select's options (GET …/parameters/:id/options); with `query`, the values that hold it (D491 search). */
+export type ParamOptions = { paramId: string; options: string[]; truncated: boolean; error: string | null; at: string | null; query?: string };

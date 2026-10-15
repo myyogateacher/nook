@@ -28,13 +28,17 @@ export type SelectProps<V extends string> = {
   /** Tests and special hosts: force the popup or the sheet instead of following the viewport. */
   presentation?: Presentation;
   defaultOpen?: boolean;
+  /** D491: told each change of the search box ("" when it closes), so a host can look further than `options` (a report filter's server search). */
+  onSearch?: (query: string) => void;
+  /** What the list says when nothing matches (default "No matches"), e.g. "Searching…" while the host looks. */
+  emptyText?: string;
 };
 
 /**
  * A select-only combobox (APG) that replaces the native select (D91). Desktop: a popup under the
  * trigger with type-ahead. Phones: a bottom sheet with 44 px rows that Back closes (D69).
  */
-export function Select<V extends string>({ value, onChange, options, label, labelledBy, placeholder = "Choose…", disabled = false, variant = "field", searchable = "auto", id, autoFocus, className, swatchOnly, presentation = "auto", defaultOpen = false }: SelectProps<V>) {
+export function Select<V extends string>({ value, onChange, options, label, labelledBy, placeholder = "Choose…", disabled = false, variant = "field", searchable = "auto", id, autoFocus, className, swatchOnly, presentation = "auto", defaultOpen = false, onSearch, emptyText }: SelectProps<V>) {
   const autoId = useId();
   const triggerId = id ?? `${autoId}-trigger`;
   const listId = `${autoId}-listbox`;
@@ -51,9 +55,13 @@ export function Select<V extends string>({ value, onChange, options, label, labe
   const current = options.find((option) => option.value === value) ?? null;
   const name = label ?? current?.label ?? placeholder;
 
+  const changeQuery = (next: string) => {
+    setQuery(next);
+    onSearch?.(next);
+  };
   const close = (focusTrigger = true) => {
     setState((previous) => ({ ...previous, open: false }));
-    setQuery("");
+    changeQuery("");
     if (focusTrigger) triggerRef.current?.focus();
   };
   const commit = (index: number | undefined) => {
@@ -80,7 +88,7 @@ export function Select<V extends string>({ value, onChange, options, label, labe
       event.stopPropagation();
     }
     setState(result.state);
-    if (!result.state.open && state.open) setQuery("");
+    if (!result.state.open && state.open) changeQuery("");
     commit(result.commit);
     // Tab: hand focus back to the trigger first, so the browser moves it on from there.
     if (result.close || (event.key === "Tab" && state.open)) triggerRef.current?.focus();
@@ -111,9 +119,9 @@ export function Select<V extends string>({ value, onChange, options, label, labe
     </button>
     {open && <DropdownSurface sheet={sheet} anchorRef={triggerRef} title={label ?? placeholder} onClose={() => close()}
       search={search ? <DropdownSearch inputRef={searchRef} value={query} label={`Search ${label ?? "options"}`} listId={listId} active={state.active}
-        onChange={(next) => { setQuery(next); setState((previous) => ({ ...previous, active: firstEnabled(filterOptions(options, next)) })); }}
+        onChange={(next) => { changeQuery(next); setState((previous) => ({ ...previous, active: firstEnabled(filterOptions(options, next)) })); }}
         onKeyDown={(event) => onKey(event, true)} /> : undefined}>
-      <ListboxOptions id={listId} label={label ?? placeholder} options={shown} active={state.active} isSelected={(candidate) => candidate === value}
+      <ListboxOptions id={listId} label={label ?? placeholder} options={shown} active={state.active} emptyText={emptyText} isSelected={(candidate) => candidate === value}
         onPick={pick} onActive={(index) => setState((previous) => ({ ...previous, active: index }))}
         focusable={sheet && !search} activeDescendant={sheet && !search} listRef={listRef}
         onKeyDown={sheet && !search ? (event) => onKey(event, false) : undefined} />

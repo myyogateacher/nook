@@ -18,15 +18,12 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 - [ ] Reports: measure chart-kind choice with a real model (left from the chart-kinds lane, D488): run `scripts/reportEval.ts` with `REPORT_EVAL_*` set on the five kind cases (`onboarding_funnel`, `cohort_retention`, `quota_attainment`, `latency_spread`, `plan_flow`) and compare against a run with the shape line and the kind check off; only the scripted golden/trap runs were done.
 
 - [ ] Reports parameters, left from lane PARAMS (D489, migration 063):
-  - [ ] The SQL console refuses a saved query with `{name:Type}` placeholders (Inspect → Open in console): prompt for each placeholder's value (a typed input per `{name:Type}`) and bind it as `param_<name>`; not cheap enough for the v0.40.0 fix (the console's guard path, its UI, and its tests).
   - [ ] Measure parameter adoption with a real model (`scripts/reportEval.ts` with `REPORT_EVAL_*`): a doc that names a window or a dimension should get a date range or filter; only the scripted provider was run.
-  - [ ] A select's options are read per report (cached 6 h and after each default refresh); a very high-cardinality column still lists only the first 200 (no search-as-you-type against ClickHouse).
 
 ## Known LOW leftovers
 
-- [ ] Reports phone nav: the Favorites entry in the folder switcher shows an archive icon instead of a star (v0.39.0 QA).
-- [ ] Reports line charts at 390 px: the end-of-line label is clipped at the card edge ("198 reques"), and the maximum's label can drop out (v0.40.0 QA).
-- [ ] Report parameters: "Updated N min ago" keeps the default set's time after a new period or route runs; show the shown set's run time (v0.40.0 QA).
+- [ ] Reports at 390 px (lane RUI QA): a KPI title breaks inside a word ("Request / s" on a half-width tile), and a horizontal bar chart's value-axis labels crowd together ("500 1,000 1,500 2,000…"); the Inspect sheet's "Data" tab is under the 64 px button-lint width at 390 and 1280.
+- [ ] Report option search (D491) has no MCP tool: an agent passing a select value past the first 200 to `get_report`/`refresh_report` must already know it (the run checks it against ClickHouse); a `search_report_options` tool would let it look one up.
 
 - [ ] Report organization phase 2 leftovers (062 shipped): an admin can manage the owners of a report they cannot read only over REST/MCP (`/api/reports/:id/owners`, `add_report_owner`); a Settings view listing reports whose owners are all blocked or guests would let them find one in the UI (a block hands such reports to an admin today, so it only matters for data from before 062 or a guest demotion with no admin left). The folder-subtree list may walk `reports_live_recent` instead of `reports_folder` now that folders are shared; fine at 2,000 reports, worth a check past ~50,000. Deleting a report folder stays app-only (no MCP tool), as before.
 

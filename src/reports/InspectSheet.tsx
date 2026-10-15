@@ -174,7 +174,7 @@ function QueryTab({ block, query, result, failed, canRerun, busy, onRerun }: { b
     {!query && <p className="form-error">This block names the query <code>{block.queryKey}</code>, which the report does not have.</p>}
     {query?.purpose && <p className="report-inspect-purpose">{query.purpose}</p>}
     <div className="report-inspect-head"><h3>SQL as saved</h3>{query && <span className="report-inspect-head-actions">
-      {openConsole && <button type="button" className="secondary-button" onClick={() => openConsole(query.sql)}><FileTerminal aria-hidden="true" />Open in console</button>}
+      {openConsole && <button type="button" className="secondary-button" onClick={() => openConsole(query.sql, latest?.params)}><FileTerminal aria-hidden="true" />Open in console</button>}
       <CopyButton text={query.sql} label="Copy" />
     </span>}</div>
     <pre className="report-code"><code>{query?.sql ?? "—"}</code></pre>

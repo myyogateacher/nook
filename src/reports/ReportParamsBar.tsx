@@ -45,6 +45,38 @@ export function useParamOptions(reportId: string, parameters: readonly ReportPar
 }
 
 const optionList = (state: OptionsState[string] | undefined): string[] => state && state !== "loading" && "options" in state ? state.options : [];
+/** Whether a select's list stopped at 200 (its options query has more): then the search asks the server (D491). */
+const optionsCut = (state: OptionsState[string] | undefined) => Boolean(state && state !== "loading" && "options" in state && state.truncated);
+
+/** The report the bar belongs to, for the option search (D491). */
+const ReportIdContext = createContext<string>("");
+
+/**
+ * D491: search-as-you-type against ClickHouse for a select whose list stops at 200. Debounced (250 ms);
+ * the latest answer is kept while the next one loads, so the list never empties under the pointer. An
+ * empty box is the cached list (nothing is asked).
+ */
+export function useOptionSearch(reportId: string, paramId: string, enabled: boolean, query: string) {
+  const [found, setFound] = useState<{ query: string; options: string[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const term = query.trim();
+  useEffect(() => {
+    if (!enabled || !term || !reportId) { setError(null); return undefined; }
+    let alive = true;
+    const timer = setTimeout(() => {
+      getParamOptions(reportId, paramId, term).then(
+        ({ options }) => { if (alive) { setFound({ query: term, options: options.options }); setError(null); } },
+        (reason) => { if (alive) setError(messageOf(reason, "Could not search the choices")); }
+      );
+    }, 250);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [reportId, paramId, enabled, term]);
+  const active = enabled && term !== "";
+  return { found: active ? found?.options ?? [] : [], searching: active && found?.query !== term && !error, error: active ? error : null };
+}
+
+/** The listed choices, then the server's matches not listed (D491), each once. */
+const withFound = (listed: readonly string[], found: readonly string[]) => found.length ? [...listed, ...found.filter((item) => !listed.includes(item))] : [...listed];
 const optionsNote = (state: OptionsState[string] | undefined) => state === "loading" ? "Loading choices…" : state && "error" in state && state.error ? state.error : null;
 
 /** "Sep 1 – Sep 30" for a custom range (the pill is short); presets read as their label. */
@@ -84,13 +116,9 @@ function ParamField({ param, value, options, variant, disabled, onChange, onShee
         onChange={(preset) => preset === "custom" ? onSheet({ kind: "range", param }) : onChange({ preset })} />;
       break;
     }
-    case "select": {
-      const choices = optionList(options[param.id]);
-      const all = choices.includes(value as string) ? choices : [value as string, ...choices];
-      control = <Select<string> variant={variant} label={param.label} value={value as string} searchable="auto" disabled={disabled}
-        options={all.map((choice) => ({ value: choice, label: choice || "(blank)" }))} onChange={onChange} />;
+    case "select":
+      control = <SelectParamControl param={param} value={value as string} state={options[param.id]} variant={variant} disabled={disabled} onChange={onChange} />;
       break;
-    }
     case "multi_select": {
       const picked = value as string[];
       // The shared Select's trigger look; the choices open as a checkbox sheet (none checked is All).
@@ -107,6 +135,19 @@ function ParamField({ param, value, options, variant, disabled, onChange, onShee
   return variant === "chip"
     ? <span className={`report-param${isDefault ? "" : " active"}`} title={param.label}>{control}</span>
     : <div className="report-param-field"><span className="report-param-label">{param.label}</span>{control}</div>;
+}
+
+/** A single select: the cached choices; past 200 its search box also asks ClickHouse (D491). */
+function SelectParamControl({ param, value, state, variant, disabled, onChange }: { param: ReportParameter; value: string; state: OptionsState[string] | undefined; variant: "chip" | "field"; disabled: boolean; onChange: (value: ParamValue) => void }) {
+  const reportId = useContext(ReportIdContext);
+  const [query, setQuery] = useState("");
+  const cut = optionsCut(state);
+  const search = useOptionSearch(reportId, param.id, cut, query);
+  const choices = withFound(optionList(state), search.found);
+  const all = choices.includes(value) ? choices : [value, ...choices];
+  return <Select<string> variant={variant} label={param.label} value={value} searchable={cut ? true : "auto"} disabled={disabled}
+    onSearch={cut ? setQuery : undefined} emptyText={search.searching ? "Searching…" : search.error ?? undefined}
+    options={all.map((choice) => ({ value: choice, label: choice || "(blank)" }))} onChange={onChange} />;
 }
 
 /** A number or text parameter: applied on Enter or when the field loses focus, if it fits. */
@@ -143,7 +184,7 @@ export function ReportParamsBar({ reportId, parameters, values, busy, onChange, 
   const set = (param: ReportParameter, value: ParamValue) => onChange({ ...values, [param.id]: value });
   const reset = () => onChange(defaultValues(parameters));
   const summary = (param: ReportParameter) => param.type === "date_range" ? rangeText((values[param.id] ?? param.default) as DateRangeValue, timeZone) : valueLabel(param, values[param.id] ?? param.default);
-  return <ZoneContext.Provider value={timeZone}><div className="report-params" role="group" aria-label="Report filters">
+  return <ReportIdContext.Provider value={reportId}><ZoneContext.Provider value={timeZone}><div className="report-params" role="group" aria-label="Report filters">
     <div className="report-params-chips">
       {parameters.map((param) => <ParamField key={param.id} param={param} value={values[param.id] ?? param.default} options={options} variant="chip" disabled={false}
         onChange={(value) => set(param, value)} onSheet={setSheet} />)}
@@ -163,7 +204,7 @@ export function ReportParamsBar({ reportId, parameters, values, busy, onChange, 
       onApply={(value) => { setSheet(null); set(sheet.param, value); }} />}
     {phoneOpen && <ParamsSheet parameters={parameters} values={values} options={options} onClose={() => setPhoneOpen(false)} reopen={() => setPhoneOpen(true)}
       onApply={(next) => { setPhoneOpen(false); onChange(next); }} />}
-  </div></ZoneContext.Provider>;
+  </div></ZoneContext.Provider></ReportIdContext.Provider>;
 }
 
 /** Custom from–to days (both included); Apply keeps a valid range only. */
@@ -192,15 +233,18 @@ function MultiSelectSheet({ param, value, options, onApply, onClose }: { param: 
   const [picked, setPicked] = useState<string[]>(value ?? []);
   const [query, setQuery] = useState("");
   useHistoryDialogGuard(true, onClose, { reopen: null });
+  // D491: a list cut at 200 searches ClickHouse too.
+  const cut = optionsCut(options);
+  const search = useOptionSearch(useContext(ReportIdContext), param.id, cut, query);
   // The options in their order (a pick never moves under the pointer), then any picked value no longer listed.
   const listed = optionList(options);
   const choices = [...listed, ...picked.filter((item) => !listed.includes(item))];
-  const shown = query ? choices.filter((choice) => choice.toLowerCase().includes(query.toLowerCase())) : choices;
-  const note = optionsNote(options);
+  const shown = query ? withFound(choices, search.found).filter((choice) => choice.toLowerCase().includes(query.trim().toLowerCase())) : choices;
+  const note = optionsNote(options) ?? (search.error ? search.error : query.trim() && search.searching ? "Searching…" : cut && !query.trim() ? `Showing the first ${listed.length}; search to find more.` : null);
   const toggle = (choice: string) => setPicked((current) => current.includes(choice) ? current.filter((item) => item !== choice) : current.length >= PARAM_LIMITS.selected ? current : [...current, choice]);
   return <ModalDialog title={param.label} eyebrow={picked.length ? `${picked.length} selected` : "All"} onClose={onClose} variant="sheet" className="reports-dialog report-params-sheet">
     <div className="report-params-fields">
-      {choices.length > 8 && <input className="report-param-input" type="search" placeholder={`Search ${param.label.toLowerCase()}`} aria-label={`Search ${param.label}`} value={query} onChange={(event) => setQuery(event.target.value)} />}
+      {(choices.length > 8 || cut) && <input className="report-param-input" type="search" placeholder={`Search ${param.label.toLowerCase()}`} aria-label={`Search ${param.label}`} value={query} onChange={(event) => setQuery(event.target.value)} />}
       <label className="report-param-check"><input type="checkbox" checked={picked.length === 0} onChange={() => setPicked([])} />All</label>
       <div className="report-param-checks" role="group" aria-label={param.label}>
         {shown.map((choice) => <label key={choice} className="report-param-check"><input type="checkbox" checked={picked.includes(choice)} onChange={() => toggle(choice)} />{choice || "(blank)"}</label>)}

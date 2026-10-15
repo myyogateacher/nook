@@ -27,6 +27,7 @@ import { newVersionsMemory, VersionsSheet } from "./VersionsSheet";
 import { MetricsSheet } from "./MetricsSheet";
 import { ReportCommandsContext, ReportOverflowMenu, type MenuItem, type ReportCommands } from "./reportCommands";
 import { ReportParamsContext } from "./ReportParamsBar";
+import { placeholderInput, placeholdersIn, placeholderValue } from "../../shared/reportParams";
 import type { ReportParamsSearch } from "../router";
 
 type PageProps = {
@@ -62,6 +63,10 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   const [report, setReport] = useState<ReportDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sql, setSql] = useState(() => readDraft(reportId));
+  // D490: the values of the statement's {name:Type} placeholders, by name, as typed.
+  const [paramValues, setParamValues] = useState<Record<string, string>>({});
+  const placeholders = useMemo(() => consolePlaceholders(sql), [sql]);
+  const paramProblems = placeholders.map(({ name, type }) => { const checked = placeholderValue(type, paramValues[name] ?? ""); return "problem" in checked ? checked.problem : null; });
   const [running, setRunning] = useState(false);
   const runAbort = useRef<AbortController | null>(null);
   const [outcome, setOutcome] = useState<QueryOutcome | null>(null);
@@ -138,7 +143,8 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     setRunning(true);
     setRunError(null);
     try {
-      setOutcome((await runConsole(reportId, sql, controller.signal)).outcome);
+      const given = placeholders.length ? Object.fromEntries(placeholders.map(({ name }) => [name, paramValues[name] ?? ""])) : undefined;
+      setOutcome((await runConsole(reportId, sql, controller.signal, given)).outcome);
     } catch (reason) {
       if (controller.signal.aborted || codeOf(reason).code === "CANCELLED") setRunError({ message: "Cancelled." });
       else {
@@ -187,8 +193,12 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   const copyLink = useCallback(() => {
     void copyReportLink(reportLink(reportId), { flash, onFallback: () => setLinkSheet(true) });
   }, [flash, reportId]);
-  const openConsole = useCallback((prefill?: string) => {
-    if (prefill !== undefined) { setSql(prefill); setOutcome(null); setRunError(null); }
+  const openConsole = useCallback((prefill?: string, bound?: Record<string, string> | null) => {
+    if (prefill !== undefined) {
+      setSql(prefill); setOutcome(null); setRunError(null);
+      // D490: Inspect hands over the values the shown result was bound with; each input shows them as typed.
+      setParamValues(Object.fromEntries(consolePlaceholders(prefill).flatMap(({ name, type }) => bound && Object.hasOwn(bound, name) ? [[name, placeholderInput(type, bound[name]!)]] : [])));
+    }
     setConsoleOpen(true);
   }, []);
   const generateFromDoc = useCallback(() => {
@@ -212,11 +222,27 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
       <textarea id={consoleId} className="report-sql" value={sql} spellCheck={false} autoCapitalize="off" autoCorrect="off" maxLength={REPORT_LIMITS.sqlChars}
         placeholder={"SELECT toStartOfWeek(day) AS week, sum(revenue)\nFROM analytics.orders\nGROUP BY week ORDER BY week"}
         onChange={(event) => setSql(event.target.value)} onKeyDown={onKeyDown} rows={7} />
+      {placeholders.length > 0 && <fieldset className="report-console-params">
+        <legend>Parameters</legend>
+        <p className="file-dialog-hint">Each <code>{"{name:Type}"}</code> is sent as <code>param_name</code>, never pasted into the SQL.</p>
+        {placeholders.map(({ name, type }, index) => {
+          const value = paramValues[name] ?? "";
+          const problem = paramProblems[index];
+          return <label key={name} className="report-console-param">
+            <span><code>{`{${name}:${type}}`}</code></span>
+            <input type={type === "Date" ? "date" : "text"} value={value} spellCheck={false} autoCapitalize="off" autoCorrect="off" autoComplete="off"
+              inputMode={/^UInt\d+$/.test(type) ? "numeric" : type === "Float64" ? "decimal" : undefined}
+              placeholder={PARAM_HINTS[type] ?? (type.startsWith("Array(String") ? "['a', 'b']" : type.startsWith("Array(") ? "[1, 2]" : "")}
+              aria-invalid={problem ? true : undefined} onChange={(event) => { const next = event.target.value; setParamValues((current) => ({ ...current, [name]: next })); }} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void run(); } }} />
+            {problem && value !== "" && <small className="form-error">{problem}</small>}
+          </label>;
+        })}
+      </fieldset>}
       <div className="report-console-actions">
         <p className="file-dialog-hint">One SELECT, or SHOW, DESCRIBE, EXISTS, EXPLAIN. Read-only, at most {REPORT_LIMITS.consoleRows.toLocaleString()} rows; no SETTINGS, FORMAT, or external table functions.</p>
         {canWrite && <span className="report-run-buttons">
           {running && <button type="button" className="secondary-button" onClick={() => { void cancel(); }}><CircleStop />Cancel</button>}
-          <button type="button" className="primary-button" onClick={() => { void run(); }} disabled={running || !sql.trim() || !report.datasourceId} aria-busy={running || undefined}>
+          <button type="button" className="primary-button" onClick={() => { void run(); }} disabled={running || !sql.trim() || !report.datasourceId || paramProblems.some(Boolean)} aria-busy={running || undefined}>
             {running ? <LoaderCircle className="spin" /> : <Play />}{running ? "Running…" : "Run"}
           </button>
         </span>}
@@ -302,6 +328,16 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     {renaming && report && <RenameSheet report={report} reopen={() => setRenaming(true)} onCancel={() => setRenaming(false)} onSaved={(next) => { setReport(next); setRenaming(false); }} />}
     {confirm.confirmElement}
   </main>;
+}
+
+/** D490: the console's placeholder inputs' hints by type. */
+const PARAM_HINTS: Record<string, string> = { String: "Text", Int32: "Whole number", Int64: "Whole number", UInt32: "Whole number", UInt64: "Whole number", Float64: "Number" };
+
+/** D490: the `{name:Type}` placeholders a console statement holds, each name once (its first type; the server refuses two). */
+export function consolePlaceholders(sql: string): Array<{ name: string; type: string }> {
+  const seen = new Map<string, string>();
+  for (const item of placeholdersIn(sql)) if (!seen.has(item.name)) seen.set(item.name, item.type);
+  return [...seen].map(([name, type]) => ({ name, type }));
 }
 
 /** Item 4: the owner's console sits on the page of an empty report; with blocks it is a panel (⋯, Inspect). Readers never get one. */

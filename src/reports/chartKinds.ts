@@ -5,7 +5,7 @@ import {
 } from "../../shared/reportTheme";
 import { boxStats, findCycle, histogramBins } from "../../shared/reportStats";
 import {
-  cellLabel, compactValue, escapeHtml, formatValue, MAX_CHART_POINTS, named, TEXTURE_DECALS, toNumber,
+  cellLabel, compactValue, endLabelFit, escapeHtml, formatValue, MAX_CHART_POINTS, named, TEXTURE_DECALS, toNumber,
   type ChartBuild, type ChartData, type ChartSize, type ChartTheme
 } from "./chartOption";
 
@@ -611,7 +611,7 @@ const waterfall: Builder = (block, data, theme, width) => {
   };
 };
 
-const combo: Builder = (block, data, theme) => {
+const combo: Builder = (block, data, theme, width) => {
   const xi = columnOf(data, block.x);
   const bi = columnOf(data, block.y[0]);
   const li = columnOf(data, block.y[1]);
@@ -628,9 +628,12 @@ const combo: Builder = (block, data, theme) => {
   const unit = block.unit;
   const [barColor, lineColor] = [theme.series[0]!, theme.series[1]!];
   const values = (index: number) => rows.map((row) => toNumber(row[index]));
-  const endLabel = named(`label:${format ?? "number"}`, (params: { value?: unknown }) => {
+  // D492: the line's end label fits its gutter (no unit on a narrow chart).
+  const lineValues = values(li);
+  const fit = endLabelFit([[...lineValues].reverse().find((value) => value !== null) ?? null], format, unit, width);
+  const endLabel = named(`label:${format ?? "number"}${fit.short ? ":short" : ""}`, (params: { value?: unknown }) => {
     const value = toNumber(params.value);
-    return value === null ? "" : compactValue(value, format, unit);
+    return value === null ? "" : compactValue(value, format, fit.short ? undefined : unit);
   });
   return {
     option: {
@@ -640,13 +643,13 @@ const combo: Builder = (block, data, theme) => {
       }), "axis"),
       color: [barColor, lineColor],
       legend: legendOption(theme),
-      grid: { left: 8, right: 56, top: 36, bottom: 8, containLabel: true },
+      grid: { left: 8, right: fit.gutter, top: 36, bottom: 8, containLabel: true },
       xAxis: categoryAxis(theme, categories, { boundaryGap: true }),
       // One value axis, shared: there is never a second one (D465 rule 21).
       yAxis: valueAxis(theme, format),
       series: [
         { type: "bar", name: block.y[0], barMaxWidth: MARKS.bar.maxThickness, itemStyle: { color: barColor, borderRadius: [MARKS.bar.radius, MARKS.bar.radius, 0, 0], borderColor: theme.ink.surface, borderWidth: MARKS.bar.gap / 2 }, data: values(bi) },
-        { type: "line", name: block.y[1], symbol: "circle", symbolSize: MARKS.line.dotRadius * 2, showSymbol: categories.length <= 24, lineStyle: { width: MARKS.line.width, join: "round", cap: "round", color: lineColor }, itemStyle: { color: lineColor, borderColor: theme.ink.surface, borderWidth: MARKS.line.dotRing }, endLabel: { show: true, ...labelStyle(theme), formatter: endLabel, distance: 6 }, data: values(li) }
+        { type: "line", name: block.y[1], symbol: "circle", symbolSize: MARKS.line.dotRadius * 2, showSymbol: categories.length <= 24, lineStyle: { width: MARKS.line.width, join: "round", cap: "round", color: lineColor }, itemStyle: { color: lineColor, borderColor: theme.ink.surface, borderWidth: MARKS.line.dotRing }, endLabel: { show: true, ...labelStyle(theme), formatter: endLabel, distance: 6 }, data: lineValues }
       ]
     },
     height: chartHeight("combo"),

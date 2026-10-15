@@ -92,6 +92,8 @@ describe("stars", () => {
     await view.waitFor(() => rowTitles().join() === "Weekly revenue");
     expect(document.querySelector("#reports-title")?.textContent).toBe("Favorites · 1");
     expect(navLink("Favorites").getAttribute("aria-current")).toBe("page");
+    // The phone's folder switcher shows the view's own icon: a star for Favorites, as the nav does.
+    expect(document.querySelector(".reports-folder-chip svg")?.getAttribute("class")).toContain("lucide-star");
     await view.click(starOf("Weekly revenue"));
     await view.waitFor(() => document.querySelector(".reports-state h2")?.textContent === "No favorites yet");
     expect(document.querySelector(".reports-state p")?.textContent).toContain("Star a report");

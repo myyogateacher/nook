@@ -17,7 +17,7 @@ import { handle, id } from "./routes";
 import { getSchedule, saveSchedule } from "./scheduler";
 import { runHistory, runLog } from "./runHistory";
 import { storedPlan } from "./planner";
-import { paramResults, reportParamOptions, runParamSet } from "./params";
+import { paramResults, reportParamOptions, runParamSet, searchParamOptions } from "./params";
 
 /**
  * docs/plan/API_CONTRACTS.md § Analytics reports (Wave 47): what the viewer reads (each query's last
@@ -113,6 +113,9 @@ export function registerReportViewRoutes(app: Hono<AppEnv>) {
   app.get("/api/reports/:reportId/parameters/:paramId/options", handle(async (c) => {
     const paramId = c.req.param("paramId") ?? "";
     if (!/^[a-z][a-z0-9_]{0,29}$/.test(paramId)) throw new ReportError(404, "NOT_FOUND", "Not found");
+    // D491: `q` searches the options query past its first 200 values (empty: the cached list).
+    const query = c.req.query("q");
+    if (query !== undefined && query.trim()) return { options: await searchParamOptions(id(c, "reportId"), c.get("user").id, paramId, query.slice(0, 400)) };
     return { options: await reportParamOptions(id(c, "reportId"), c.get("user").id, paramId) };
   }));
   app.post("/api/reports/:reportId/refresh", handle(async (c) => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import { Archive, CalendarClock, ChartColumn, Check, ChevronDown, Copy, Database, ExternalLink, FolderInput, House, ListFilter, LoaderCircle, Pencil, Plus, RotateCcw, Search, Sparkles, Star, Trash2, TriangleAlert } from "lucide-react";
+import { CalendarClock, ChartColumn, Check, ChevronDown, Copy, Database, ExternalLink, Folder as FolderIcon, FolderInput, House, Inbox, ListFilter, LoaderCircle, Pencil, Plus, RotateCcw, Search, Sparkles, Star, Trash2, TriangleAlert, Users } from "lucide-react";
 import { AccountActions, AppPageName } from "../AppShell";
 import { appName } from "../appName";
 import { notifyBinned, onBinRestored } from "../bin/binUndo";
@@ -344,7 +344,7 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
       <aside className="reports-sidebar" aria-label="Folders">{nav(false)}</aside>
       <section className="reports-body reports-main" aria-labelledby="reports-title">
         <button type="button" className="reports-folder-chip" onClick={() => setDrawer(true)} aria-haspopup="dialog" aria-label={`Folders: ${title}`}>
-          <Archive aria-hidden="true" /><span>{title}</span>{reports && <small>{shownCount}</small>}<ChevronDown aria-hidden="true" />
+          <ViewIcon view={view} /><span>{title}</span>{reports && <small>{shownCount}</small>}<ChevronDown aria-hidden="true" />
         </button>
         <div className="reports-toolbar">
           <h1 id="reports-title">{title}{reports && <span className="reports-count"> · {shownCount}</span>}</h1>
@@ -435,4 +435,13 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
     {linkFor && <LinkSheet url={reportLink(linkFor.id)} title={linkFor.title} onClose={() => setLinkFor(null)} flash={flash} />}
     {confirm.confirmElement}
   </main>;
+}
+
+/** The phone's folder switcher shows the view's own icon, as the nav does: All, Favorites (a star), Unfiled, Shared, a folder. */
+function ViewIcon({ view }: { view: string | null }) {
+  if (view === null) return <ChartColumn aria-hidden="true" />;
+  if (view === "favorites") return <Star aria-hidden="true" />;
+  if (view === "unfiled") return <Inbox aria-hidden="true" />;
+  if (view === "shared") return <Users aria-hidden="true" />;
+  return <FolderIcon aria-hidden="true" />;
 }

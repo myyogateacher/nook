@@ -422,6 +422,15 @@ export function buildChartOption(block: ChartBlock, data: ChartData, theme: Char
   const maxIndex = (values: Array<number | null>) => values.reduce<number>((best, value, at) => value !== null && (best < 0 || value > (values[best] ?? -Infinity)) ? at : best, -1);
   const labelStyle = { color: ink.inkSecondary, fontSize: TYPE.label.size, formatter: compactLabel };
   const stackedLast = series.length - 1;
+  const showsEnd = (name: string) => (emphasisSeries === null || name === emphasisSeries) && !(stacked && series.length > 1);
+  const endFit = endLabelFit(lineLike ? series.filter((item) => showsEnd(item.name)).map((item) => item.values[lastIndex(item.values)] ?? null) : [], format, unit, size.width);
+  const shortLabel = named(`label:${format ?? "number"}:short`, (params: { value?: unknown }) => {
+    const raw = Array.isArray(params.value) ? params.value[params.value.length - 1] : params.value;
+    const number = toNumber(raw);
+    return number === null ? "" : compactValue(number, format);
+  });
+  const lineLabel = endFit.short ? { ...labelStyle, formatter: shortLabel } : labelStyle;
+  const endGutter = endFit.gutter;
   const percentAxis = percent ? { min: 0, max: 1 } : {};
   const echartsSeries: Array<Record<string, unknown>> = series.map((item, at) => {
     const color = colorOf(at, item.name);
@@ -449,18 +458,21 @@ export function buildChartOption(block: ChartBlock, data: ChartData, theme: Char
     }
     const end = lastIndex(item.values);
     const top = series.length === 1 ? maxIndex(item.values) : -1;
+    // A maximum in the last quarter reads leftwards from its dot, so it stays inside the plot.
+    const topAlign = top === 0 ? { align: "left" } : categories.length > 2 && top > (categories.length - 1) * 0.75 ? { align: "right" } : {};
     return {
-      type: "line", name: item.name, symbol: "none", showSymbol: true, connectNulls: false,
+      // showAllSymbol: the end and maximum dots (and the maximum's label) stay when a narrow axis thins its points.
+      type: "line", name: item.name, symbol: "none", showSymbol: true, showAllSymbol: true, connectNulls: false,
       lineStyle: { width: MARKS.line.width, join: "round", cap: "round", color }, itemStyle: { color },
       ...(kind === "area" ? { areaStyle: { color, opacity: stacked ? MARKS.stackedAreaOpacity : MARKS.areaOpacity } } : {}),
       ...(stacked ? { stack: "total" } : {}),
       emphasis: { focus: "series" },
       // Direct labels on the line's end and (one series) its maximum; the end dot wears a ring in the surface colour.
-      endLabel: { show: (emphasisSeries === null || item.name === emphasisSeries) && !(stacked && series.length > 1), ...labelStyle, distance: 6 },
+      endLabel: { show: showsEnd(item.name), ...lineLabel, distance: END_LABEL_DISTANCE },
       data: item.values.map((value, position) => {
         if (position === end) return { value, symbol: "circle", symbolSize: MARKS.line.dotRadius * 2, itemStyle: { color, borderColor: ink.surface, borderWidth: MARKS.line.dotRing } };
         // A maximum on the first point reads rightwards from its dot, clear of the y-axis labels.
-        if (position === top && top !== end) return { value, symbol: "circle", symbolSize: 6, itemStyle: { color, borderColor: ink.surface, borderWidth: MARKS.line.dotRing }, label: { show: true, position: "top", ...(position === 0 ? { align: "left" } : {}), ...labelStyle } };
+        if (position === top && top !== end) return { value, symbol: "circle", symbolSize: 6, itemStyle: { color, borderColor: ink.surface, borderWidth: MARKS.line.dotRing }, label: { show: true, position: "top", ...topAlign, ...lineLabel } };
         return value;
       })
     };
@@ -475,11 +487,39 @@ export function buildChartOption(block: ChartBlock, data: ChartData, theme: Char
   return result({
     ...base,
     ...(compare && !legend ? { legend: { ...(base.legend as object), show: true, top: 0, left: 0, type: "scroll", icon: "roundRect", itemWidth: 10, itemHeight: 10, itemGap: 16, textStyle: { color: ink.inkSecondary, fontSize: TYPE.axis.size } } } : {}),
-    grid: { left: 8, right: lineLike ? 56 : horizontal ? 84 : 16, top: withLegend ? 36 : 18, bottom: 8, containLabel: true },
+    grid: { left: 8, right: lineLike ? endGutter : horizontal ? 84 : 16, top: withLegend ? 36 : 18, bottom: 8, containLabel: true },
     xAxis: horizontal ? { ...valueAxis, ...percentAxis } : categoryAxis,
     yAxis: horizontal ? { ...categoryAxis, inverse: true } : { ...valueAxis, ...percentAxis },
     series: echartsSeries
   }, categories.length);
+}
+
+/** The gap between a line's last dot and its end label, px. */
+const END_LABEL_DISTANCE = 6;
+/** What the right gutter adds to the end label's text: the dot's radius and ring, the gap, and a little air. */
+const END_LABEL_PAD = MARKS.line.dotRadius + MARKS.line.dotRing + END_LABEL_DISTANCE + 6;
+
+/**
+ * A label's width in px at the label size, estimated (no canvas here): Inter's digits and lower case
+ * run about 0.6 em, separators and spaces less, capitals more. It errs wide, so a label is never cut.
+ */
+export function labelWidth(text: string, fontSize: number = TYPE.label.size): number {
+  let em = 0;
+  for (const char of text) em += /[.,:;'| ]/.test(char) ? 0.32 : /[A-Z%@MW]/.test(char) ? 0.72 : 0.6;
+  return em * fontSize;
+}
+
+/**
+ * The right gutter for a line's end labels, which sit right of its last dot (D492): sized from the widest
+ * label so it is never clipped at the card edge. When that would take more than a fifth of a narrow chart
+ * (a phone), the labels drop the unit (`short`: "564", not "564 requests"). 16 px with no end label.
+ */
+export function endLabelFit(ends: ReadonlyArray<number | null>, format: ValueFormat | undefined, unit: string | undefined, width?: number): { gutter: number; short: boolean } {
+  const values = ends.filter((value): value is number => value !== null);
+  if (!values.length) return { gutter: 16, short: false };
+  const widest = (withUnit: boolean) => Math.max(...values.map((value) => labelWidth(compactValue(value, format, withUnit ? unit : undefined))));
+  const short = Boolean(unit) && width !== undefined && widest(true) + END_LABEL_PAD > width * 0.2;
+  return { gutter: Math.max(16, Math.ceil(widest(!short) + END_LABEL_PAD)), short };
 }
 
 /** The option as the Mapping tab shows it: formatters by name (`ƒ axis:currency`), not code. */

@@ -241,7 +241,7 @@ A report may declare **parameters**: a date range and filters a reader changes o
 | `number` | `chType` Int32, Int64, UInt32, UInt64, Float64; `default`; `min?`, `max?` | `{<id>:<chType>}` |
 | `text` | `default`; `maxLength?` (≤ 200; one line) | `{<id>:String}` |
 
-Every parameter has an `id` (`[a-z][a-z0-9_]{0,29}`), a `label`, a `type`, a `default`, and its ClickHouse type. At most 8 per report. An options query is a guarded SELECT whose first column lists the choices (at most 200), with no placeholders.
+Every parameter has an `id` (`[a-z][a-z0-9_]{0,29}`), a `label`, a `type`, a `default`, and its ClickHouse type. At most 8 per report. An options query is a guarded SELECT whose first column lists the choices (at most 200), with no placeholders. When the list reaches 200, its search box asks ClickHouse for the values that hold what is typed (D491: the options query without its trailing LIMIT, filtered on its first column with a bound ILIKE), and a value found that way can be picked.
 
 **Binding, never pasting.** Queries read parameters only as ClickHouse typed query parameters. The server binds the values over HTTP (`param_<name>`); nothing a reader picks is ever written into the SQL text. The guard accepts exactly `{name:Type}` with a type above (never `Identifier`, so a parameter can never name a table or a column) only in a report's saved queries; every placeholder must be declared with exactly its type, and every parameter must be read by a query. `EXPLAIN QUERY TREE` runs with the same bound values (ClickHouse 26.6 folds them into CONSTANT nodes: `tests/fixtures/clickhouse-26.6/params_*`).
 

@@ -40,9 +40,9 @@ function orders(values: { period?: { preset: string }; country?: string[] } | nu
   const days = DAYS[values?.period?.preset ?? "30d"] ?? 30;
   return days * 10 * (values?.country?.length || 4);
 }
-const result = (count: number, params: Record<string, string> | null): ReportResult => ({
+const result = (count: number, params: Record<string, string> | null, createdAt = "2026-10-13T09:00:00.000Z"): ReportResult => ({
   runId: "", queryKey: "totals", sql: spec.queries[0]!.sql, sentSql: `SELECT * FROM (\n${spec.queries[0]!.sql}\n) LIMIT 10001`, columns: [{ name: "orders", type: "UInt64" }], rows: [[String(count)]], rowCount: 1,
-  truncated: false, rowsRead: null, bytesRead: null, chQueryId: "nook-x-totals", ms: 4, error: null, errorCode: null, createdAt: "2026-10-13T09:00:00.000Z", params
+  truncated: false, rowsRead: null, bytesRead: null, chQueryId: "nook-x-totals", ms: 4, error: null, errorCode: null, createdAt, params
 });
 
 /** The report page's route state, as ReportsApp keeps it: the URL is the source; a change pushes an entry; popstate re-reads it. */
@@ -96,7 +96,8 @@ function api() {
       const body = JSON.parse(String(init?.body));
       runs.push(body.values);
       cached.add(JSON.stringify(body.values));
-      return new Response(JSON.stringify({ results: [{ queryKey: "totals", result: result(orders(body.values), { period_from: "2026-10-07", period_to: "2026-10-13", country: "['DE']" }), failed: null, stale: false }], running: null, set: { isDefault: false, values: body.values, bound: {}, missing: [] } }), { status: 200 });
+      // A set's run is now: "Updated just now", where the default set's run was days ago.
+      return new Response(JSON.stringify({ results: [{ queryKey: "totals", result: result(orders(body.values), { period_from: "2026-10-07", period_to: "2026-10-13", country: "['DE']" }, new Date().toISOString()), failed: null, stale: false }], running: null, set: { isDefault: false, values: body.values, bound: {}, missing: [] } }), { status: 200 });
     }
     return original(input, init);
   }) as typeof fetch;
@@ -116,10 +117,14 @@ describe("the control bar and the URL (D489)", () => {
       expect(window.location.search).toBe("?p.period=7d");
       await view.waitFor(() => kpiText().includes("280"));
       expect(mocked.runs).toEqual([{ period: { preset: "7d" }, country: [] }]);
+      // D489 follow-up: "Updated" is the shown set's run time, not the default set's.
+      const status = () => document.querySelector(".report-view-status")?.textContent ?? "";
+      expect(status()).toContain("Updated just now");
       // Back: the defaults and the stored results, with no run.
       await move(view, "back");
       expect(window.location.search).toBe("");
       await view.waitFor(() => kpiText().includes("1,200") || kpiText().includes("1.2K"));
+      await view.waitFor(() => !status().includes("just now"));
       // Forward: 7 days again, now from the cache (no second run).
       await move(view, "forward");
       expect(window.location.search).toBe("?p.period=7d");
@@ -175,5 +180,48 @@ describe("the control bar and the URL (D489)", () => {
     await view.waitFor(() => kpiText().includes("280"), 8000);
     expect(attempts).toBe(2);
     expect(mocked.calls.filter((call) => call.path.endsWith("/param-runs")).length).toBe(2);
+  });
+});
+
+describe("option search past the first 200 (D491)", () => {
+  const SEARCH_ID = "0b5d3c55-4a8e-4f8b-9a43-1f2e3d4c5b6b";
+  const customerSpec: ReportSpec = {
+    version: 1, specVersion: 3, sections: [],
+    parameters: [{ id: "customer", label: "Customer", type: "select", chType: "String", default: "Customer 1", optionsQuery: "SELECT DISTINCT name FROM shop.customers ORDER BY name LIMIT 200" }],
+    queries: [{ key: "totals", sql: "SELECT count() AS orders FROM shop.orders WHERE name = {customer:String}", purpose: "Orders", createdBy: "agent" }],
+    blocks: [{ id: "kpi", type: "kpi", title: "Orders", intent: "headline", queryKey: "totals", column: "orders", unit: "orders" }]
+  };
+  const customerReport = { ...report, id: SEARCH_ID, spec: customerSpec } as ReportDetail;
+
+  function Searched() {
+    const [search, setSearch] = useState<Record<string, string[]> | undefined>(undefined);
+    return <ReportParamsContext.Provider value={{ search, onChange: (next) => setSearch(next) }}><ReportView report={customerReport} canWrite={false} /></ReportParamsContext.Provider>;
+  }
+
+  test("a cut list's search box asks the server (debounced); a found value can be picked", async () => {
+    const listed = Array.from({ length: 200 }, (_, at) => `Customer ${at + 1}`);
+    const mocked = mockApi({
+      [`GET /reports/${SEARCH_ID}/results`]: () => ({ results: [{ queryKey: "totals", result: result(5, { customer: "Customer 1" }), failed: null, stale: false }], running: null }),
+      [`GET /reports/${SEARCH_ID}/runs`]: () => ({ runs: [], schedule: null }),
+      [`GET /reports/${SEARCH_ID}/parameters/customer/options`]: () => ({ options: { paramId: "customer", options: listed, truncated: true, error: null, at: null } }),
+      [`GET /reports/${SEARCH_ID}/parameters/customer/options?q=Customer%204999`]: () => ({ options: { paramId: "customer", options: ["Customer 4999"], truncated: false, error: null, at: null, query: "Customer 4999" } }),
+      [`GET /reports/${SEARCH_ID}/results?values=${encodeURIComponent(JSON.stringify({ customer: "Customer 4999" }))}`]: () => ({ results: [{ queryKey: "totals", result: result(7, { customer: "Customer 4999" }), failed: null, stale: false }], running: null, set: { isDefault: false, values: { customer: "Customer 4999" }, bound: {}, missing: [] } })
+    });
+    const view = await render(<Searched />);
+    const trigger = await view.waitFor(() => document.querySelector<HTMLButtonElement>(".report-params-chips .report-param button[role=\"combobox\"]"));
+    await view.waitFor(() => mocked.calls.some((call) => call.path.endsWith("/parameters/customer/options")));
+    await view.click(trigger);
+    const box = await view.waitFor(() => document.querySelector<HTMLInputElement>(".ui-search input"));
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(box, "Customer 4999");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // Nothing listed matches yet: the list says it is searching, then shows the server's match.
+    expect(document.querySelector(".ui-listbox-empty")?.textContent).toBe("Searching…");
+    const found = await view.waitFor(() => [...document.querySelectorAll<HTMLElement>("[role=\"option\"]")].find((item) => item.textContent?.trim() === "Customer 4999") ?? null, 3000);
+    expect(mocked.calls.filter((call) => call.path.includes("options?q=")).length).toBe(1);
+    await view.click(found);
+    await view.waitFor(() => kpiText().includes("7"));
+    expect(document.querySelector(".report-params-chips .report-param button[role=\"combobox\"]")?.textContent).toContain("Customer 4999");
   });
 });

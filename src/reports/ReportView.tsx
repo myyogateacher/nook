@@ -24,6 +24,17 @@ import { CommentOnBlockButton } from "./reportComment";
 import { useHeaderActions, useRegisterReportCommands } from "./reportCommands";
 import "./reportView.css";
 
+/** "Updated 3 min ago", kept current (every 30 s) without re-rendering the report. */
+export function UpdatedAgo({ at }: { at: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, [at]);
+  return <>{`Updated ${timeAgo(at, now)}`}</>;
+}
+
 /** ECharts and its option renderer load only when a report with a chart opens (charts.tsx). */
 const EChart = lazy(() => import("./charts"));
 
@@ -253,6 +264,12 @@ export function ReportView({ report, canWrite, generating = false, initial, read
   const badge = scheduleBadge(schedule);
   const staleCount = [...results.values()].filter((item) => item.stale || (!item.result && item.failed)).length;
   const lastRun = runs.find((run) => run.status !== "running");
+  // D489 follow-up: with other filters, "Updated" is when the shown set's results ran (its newest), not the default set's run.
+  const shownSet = view && "set" in view ? canonicalValues(parameters, (view as { set: { values: ParamValues } }).set.values) : null;
+  const setRanAt = setKey ? (view?.results ?? []).reduce<string | null>((newest, item) => {
+    const at = (item.result ?? item.failed)?.createdAt ?? null;
+    return at && (!newest || at > newest) ? at : newest;
+  }, null) : null;
   const layout = useMemo(() => reportLayout(report.spec), [report.spec]);
   const cssVars = useMemo(() => reportCssVariables(palette.mode) as React.CSSProperties, [palette.mode]);
   const lookup = useCallback<ResultLookup>((key) => results.get(key)?.result ?? null, [results]);
@@ -277,7 +294,9 @@ export function ReportView({ report, canWrite, generating = false, initial, read
     {!readOnly && <div className="report-view-toolbar">
       <p className="report-view-status" role="status">
         {busy ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{!running || running.kind === "generate" ? "Generating…" : previewVersionOf(running.queryKeys) !== null ? `Running v${previewVersionOf(running.queryKeys)} on today's data…` : running.queryKeys?.[0] === PAGE_METRICS_RUN_MARKER ? "Re-reading metrics…" : running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>
-          : <span><Clock3 aria-hidden="true" />{report.lastRunAt ? `Updated ${timeAgo(lastRun?.finishedAt ?? report.lastRunAt)}` : "Not refreshed yet"}</span>}
+          : <span><Clock3 aria-hidden="true" />{setKey
+            ? shownSet === setKey ? (setRanAt ? <UpdatedAgo at={setRanAt} /> : "Not run yet") : "Loading…"
+            : report.lastRunAt ? <UpdatedAgo at={lastRun?.finishedAt ?? report.lastRunAt} /> : "Not refreshed yet"}</span>}
         {staleCount > 0 && <span className="reports-status reports-status-stale">{`${staleCount} stale`}</span>}
         {badge && <span className={`reports-status reports-status-${badge.tone}`}><CalendarClock aria-hidden="true" />{badge.text}</span>}
       </p>

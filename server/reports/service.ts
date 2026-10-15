@@ -7,6 +7,8 @@ import { usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
 import { liveFolder } from "./folderAccess";
 import { adHocQueryId, killQuery, runGuarded } from "./runner";
+import { classify, GuardError } from "./sqlGuard";
+import { placeholderValue, type BoundParam } from "../../shared/reportParams";
 import { logger } from "../log";
 import { INSTRUCTION_LIMITS } from "../../shared/reportsEdit";
 import { renameNote } from "../../shared/reportVersions";
@@ -234,8 +236,36 @@ export function reportDatasource(id: string, userId: string): DatasourceRow {
 const consoleRuns = new Map<string, { queryId: string; controller: AbortController; row: DatasourceRow }>();
 const consoleKey = (userId: string, reportId: string) => `${userId}:${reportId}`;
 
-export async function runConsole(userId: string, reportId: string, sql: string, signal?: AbortSignal): Promise<QueryOutcome> {
+/**
+ * D490: the values for a console statement's `{name:Type}` placeholders, checked against each one's type
+ * and encoded as report parameters are (shared/reportParams.ts placeholderValue). Every placeholder needs
+ * a value; one name written with two types, or a value that does not fit, is refused (400 INVALID).
+ * A statement the guard refuses binds nothing here: runGuarded then refuses it with the guard's error.
+ */
+export function consoleBindings(sql: string, given: Readonly<Record<string, string>>): BoundParam[] {
+  let placeholders: Array<{ name: string; type: string }>;
+  try { placeholders = classify(sql, { params: true }).placeholders; } catch (error) { if (error instanceof GuardError) return []; throw error; }
+  const types = new Map<string, string>();
+  for (const placeholder of placeholders) {
+    const known = types.get(placeholder.name);
+    if (known && known !== placeholder.type) throw new ReportError(400, "INVALID", `{${placeholder.name}} is written with two types (${known} and ${placeholder.type}); use one`, { param: placeholder.name });
+    types.set(placeholder.name, placeholder.type);
+  }
+  const bound: BoundParam[] = [];
+  for (const [name, type] of types) {
+    const raw = Object.hasOwn(given, name) ? given[name] : undefined;
+    if (raw === undefined) throw new ReportError(400, "INVALID", `Enter a value for {${name}:${type}}`, { param: name });
+    const value = placeholderValue(type, raw);
+    if ("problem" in value) throw new ReportError(400, "INVALID", `{${name}:${type}} ${value.problem}`, { param: name });
+    bound.push({ name, type, value: value.value });
+  }
+  return bound;
+}
+
+export async function runConsole(userId: string, reportId: string, sql: string, signal?: AbortSignal, given?: Readonly<Record<string, string>>): Promise<QueryOutcome> {
   const row = reportDatasource(reportId, userId);
+  // D490: with values, the statement may hold typed placeholders, bound as param_<name> on the reports' guarded path.
+  const params = given ? consoleBindings(sql, given) : undefined;
   const maxRows = Math.min(row.max_rows, REPORT_LIMITS.consoleRows);
   const queryId = adHocQueryId("console");
   const sha256 = createHash("sha256").update(sql).digest("hex");
@@ -246,8 +276,8 @@ export async function runConsole(userId: string, reportId: string, sql: string, 
   const key = consoleKey(userId, reportId);
   consoleRuns.set(key, { queryId, controller, row });
   try {
-    const result = await runGuarded(row, sql, { classes: ["select", "metadata"], maxRows, queryId, userId, signal: controller.signal });
-    audit(userId, null, "reports.console.run", { reportId, datasourceId: row.id, class: result.class, queryId, sha256, rows: result.rows.length });
+    const result = await runGuarded(row, sql, { classes: ["select", "metadata"], maxRows, queryId, userId, signal: controller.signal, ...(params ? { params } : {}) });
+    audit(userId, null, "reports.console.run", { reportId, datasourceId: row.id, class: result.class, queryId, sha256, rows: result.rows.length, ...(params?.length ? { params: params.map((item) => item.name) } : {}) });
     return result;
   } catch (error) {
     if (controller.signal.aborted) {

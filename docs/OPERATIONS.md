@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.42.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.42.1 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -426,7 +426,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
 | `AGENT_IMAGE_PROXY_TEST_HOSTS` | empty | Tests and local QA only: hosts (names, addresses, or CIDR ranges) the chat image proxy may reach over http on any port, standing in for a public picture host. Refused at startup when `NODE_ENV=production`. The proxy never uses `AGENT_ALLOWED_PRIVATE_HOSTS`: in production it loads public https addresses on port 443 only. |
-| `APP_VERSION` | `0.42.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.42.1` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 | `LOG_LEVEL` | `info` | `error`, `warn`, `info`, or `debug` (see *Logs*). `debug` adds health checks, static files, single 401/404s, successful polls, and query SQL. Any other value means `info`. |
 | `LOG_FORMAT` | `pretty` | `pretty` (one readable line per event with `key=value` fields) or `json` (one JSON object per line, for a log shipper). |
@@ -610,6 +610,10 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+### Upgrading to 0.42.1 (no migration)
+
+A fix release: no migration and no new settings. Pull, rebuild with `APP_VERSION=0.42.1`, and restart as above.
 
 ### Upgrading to 0.42.0 (no migration)
 

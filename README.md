@@ -102,7 +102,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.42.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.42.1 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -114,7 +114,7 @@ Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations
 
 ## What's new
 
-Release notes for every version are in [CHANGELOG.md](CHANGELOG.md). Latest (v0.42.0):
+Release notes for every version are in [CHANGELOG.md](CHANGELOG.md). Latest (v0.42.1, a fix release on v0.42.0; the eval now uses your Settings → AI model by default):
 
 - **PDFs everywhere**: a Files PDF can be a report's doc ("Pick from Nook"), `read_attachment_text` reads PDFs, and scanned PDFs say they have no text layer.
 - **Reports**: agents search filter values with `search_report_options`; Settings → Report owners pages with Load more.

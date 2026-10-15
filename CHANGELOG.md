@@ -2,6 +2,20 @@
 
 Release notes for Nook, newest first. Upgrade steps for each release are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
+## v0.42.1 — 2026-10-16
+
+**Fixes**
+
+- Settings → Report owners: going Forward back into the section reopens a later page's Owners sheet with the report's title instead of "Report" (the owners API now returns the title to owners and admins).
+
+**Report eval**
+
+- `scripts/reportEval.ts` falls back to the model your Nook already has in Settings → AI (the report generation model, else the default provider) when `REPORT_EVAL_*` is not set, sends OpenAI the parameters it expects (`max_completion_tokens`, full `tool_choice`), and stops after the first case when the provider refuses the key.
+
+**Upgrading**
+
+- No migration and no new settings. Pull, rebuild with `APP_VERSION=0.42.1`, and restart.
+
 ## v0.42.0 — 2026-10-15
 
 **PDFs everywhere**

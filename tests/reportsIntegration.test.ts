@@ -302,4 +302,20 @@ describe("final review L3 and M3", () => {
     const { registeredMigrationIds } = await import("../server/migrations");
     expect(registeredMigrationIds.filter((id) => id >= 50)).toEqual([50, 51, 52, 53, 55, 56, 57, 58, 59, 60, 61, 62]);
   });
+
+  test("docs/OPERATIONS.md has the 0.39.0 upgrade section: 060–062, backup, the background index, the folder rebuild, and SIGNUP_ROLE", async () => {
+    const text = await Bun.file(new URL("../docs/OPERATIONS.md", import.meta.url)).text();
+    const start = text.indexOf("### Upgrading to 0.39.0 (report organization and Files search, migrations 060–062)");
+    expect(start).toBeGreaterThan(0);
+    const section = text.slice(start, text.indexOf("### Upgrading to 0.38.0", start));
+    for (const word of ["**060**", "document_fts", "background", "**061**", "report_favorites", "**062**", "report_owners", "report_folders", "created_by", "SIGNUP_ROLE=guest", "APP_VERSION=0.39.0", "Back up first", "./scripts/backup.sh --force", "Migration failed", "FOREIGN KEY constraint failed", "PRAGMA foreign_key_check(report_folders)", "Files search index paused: storage is unavailable"]) expect([word, section.includes(word)]).toEqual([word, true]);
+    // The log lines it quotes are the server's own.
+    const indexer = await Bun.file(new URL("../server/documentSearch.ts", import.meta.url)).text();
+    expect(indexer).toContain("Files search index paused: storage is unavailable");
+    const runner = await Bun.file(new URL("../server/migrations/index.ts", import.meta.url)).text();
+    expect(runner).toContain('"Migration failed"');
+    expect(section).not.toMatch(/next release|unreleased/i);
+    const { registeredMigrationIds } = await import("../server/migrations");
+    expect(registeredMigrationIds.filter((id) => id >= 60)).toEqual([60, 61, 62]);
+  });
 });

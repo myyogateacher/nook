@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.38.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.39.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -425,7 +425,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
 | `AGENT_IMAGE_PROXY_TEST_HOSTS` | empty | Tests and local QA only: hosts (names, addresses, or CIDR ranges) the chat image proxy may reach over http on any port, standing in for a public picture host. Refused at startup when `NODE_ENV=production`. The proxy never uses `AGENT_ALLOWED_PRIVATE_HOSTS`: in production it loads public https addresses on port 443 only. |
-| `APP_VERSION` | `0.38.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.39.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 | `LOG_LEVEL` | `info` | `error`, `warn`, `info`, or `debug` (see *Logs*). `debug` adds health checks, static files, single 401/404s, successful polls, and query SQL. Any other value means `info`. |
 | `LOG_FORMAT` | `pretty` | `pretty` (one readable line per event with `key=value` fields) or `json` (one JSON object per line, for a log shipper). |
@@ -610,9 +610,25 @@ curl http://localhost:2026/api/health
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
 
-### Upgrading to the next release (unreleased)
+### Upgrading to 0.39.0 (report organization and Files search, migrations 060–062)
 
-New accounts now default to the **member** team role: `SIGNUP_ROLE` defaults to `member` (registration and Google sign-in), and the Team → Invites form pre-selects Member. Existing accounts keep their roles; nothing is migrated. To keep the old behaviour, set `SIGNUP_ROLE=guest` in `.env` before starting the new image (and pick Guest on invites).
+0.39.0 adds the Files full-text index, report favorites and filters, several owners per report, and one shared report folder tree, and changes the default role of new accounts. Its three migrations run once, in order, on the first boot, before the HTTP server answers; each is recorded in `schema_migrations` and none can be undone except by restoring a backup.
+
+| Migration | What it does | Cost |
+| --- | --- | --- |
+| **060** `document_fts` | Creates `document_search` (one row per indexed Files document, with the `sha256` it was built from) and the full-text index `document_fts` (name and text). The migration itself only creates empty tables: the **background indexer builds the index after boot**, in batches of at most 50 files or 8 MiB, newest first, and never blocks startup. It reads the text of text files up to 1 MiB (local or S3), keeps at most 256 KiB per file, and indexes other files by name only. | Small at boot. The backfill reads every text file once afterwards; the index grows by up to 256 KiB per text file. |
+| **061** `report_favorites` | Creates `report_favorites` (each person's ★ on a report) and two partial indexes on `reports` for the status filter and the paged list. | Small. |
+| **062** `report_owners` | Creates `report_owners` and **copies each report's `owner_id` into it** (that person stays the report's primary owner), with triggers that keep the primary owner in the list. **Rebuilds `report_folders`** into one workspace-wide tree: `owner_id` becomes `created_by`; ids, names, parents, positions, Bin columns, and every report's `folder_id` are kept. Two people's top-level folders with the same name both stay. | Proportional to the number of reports and folders (usually small). |
+
+Steps:
+
+1. **Back up first:** `./scripts/backup.sh --force`. Restoring this backup is the only way back.
+2. **Decide the signup role.** `SIGNUP_ROLE` now defaults to `member` (registration and Google sign-in), and Team → Invites pre-selects Member. Existing accounts keep their roles; nothing is migrated. To keep the old behaviour, set `SIGNUP_ROLE=guest` in `.env` before starting the new image (and pick Guest on invites).
+3. Pull, rebuild with `APP_VERSION=0.39.0`, and restart as above. `/api/health` answers once the migrations are done; the Files index then fills in the background, and the log shows `Files search index` lines with counts (never names or text).
+4. **Until the backfill finishes**, Files search's "In file text" and the global Files facet may miss older files, and "Pick from Nook" in reports keeps its previous bounded scan. If storage is unreachable, the log says "Files search index paused: storage is unavailable" and the indexer retries a minute later; nothing else is affected. A file that is not UTF-8 text or fails its integrity check is indexed by name only.
+5. **If a migration fails** (the server exits after logging "Migration failed" with the migration's number), nothing was changed: each migration runs in one transaction. 062 copies folder rows that name people; if its commit fails with `FOREIGN KEY constraint failed`, the old `report_folders` already held rows pointing at a missing person or folder. Stop the server, list them with `sqlite3 <data>/mynotes.sqlite "PRAGMA foreign_key_check(report_folders)"`, fix or clear them (for a missing `deleted_by`: `UPDATE report_folders SET deleted_by = NULL WHERE deleted_by NOT IN (SELECT id FROM users)`) or restore the backup, then start again.
+
+After the upgrade, every folder is visible to every member on the Reports home: folders only group reports, and access stays on each report. Any member creates folders; only admins rename, move, reorder, or delete them. No new settings.
 
 ### Upgrading to 0.38.0 (analytics reports, migrations 050–053 and 055–059)
 

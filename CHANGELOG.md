@@ -2,11 +2,43 @@
 
 Release notes for Nook, newest first. Upgrade steps for each release are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
-## Unreleased
+## v0.39.0 — 2026-10-15
+
+**Report organization**
+
+- **Favorites**: star (★) any report you can open, on its row or its header, and find them under **Favorites** in the Reports nav. A favorite is your own shortcut, never access: it drops out when you lose access to the report.
+- **Filters in the URL**: filter the Reports list by owner, status, data source and schedule; the filters live in the address, so a filtered list can be bookmarked, shared, and reopened with Back and Forward. On a phone the filters open in a bottom sheet.
+- **Search and paging**: search report titles, and the list pages through hundreds of reports (Load more and infinite scroll).
+- **Several owners per report**: the **Owners** section in Share lists them; owners and admins add owners, and remove them in the app only (never the last one). Each row shows your level on the report.
+- **One shared folder tree** for the whole workspace: any member creates folders; only admins rename, move, reorder or delete them. Folders only group reports: access stays on each report.
+- **Blocked users' reports are handed over**: when the last owner of a report is blocked or demoted, the report passes to an admin.
+
+**Files**
+
+- **Full-text search over file contents**: Files indexes the name of every file and the text of text files (up to 1 MiB). Files search gains an **In file text** section with highlighted snippets, global search a **Files** facet, and **Pick from Nook** in reports ranks its matches.
+
+**Reports**
+
+- **Inspect reopens on Forward** after you leave the report page with Back, on the tab it was showing.
+
+**Team**
+
+- **New accounts default to member**: `SIGNUP_ROLE`, Google sign-in, and the pre-selected role on a new invite. Existing accounts keep their roles.
+
+**Fixes**
+
+- Inbox "expires in" counts local calendar days, so a proposal expiring tomorrow morning no longer reads "expires today" late in the evening.
+
+**Development**
+
+- More reliable tests (the report scheduler and REST parity reads), and Vite resolves the Excalidraw fonts through the package rather than the working directory.
 
 **Upgrading**
 
-- New accounts now default to the **member** role (`SIGNUP_ROLE`, Google sign-in, and the pre-selected role on a new invite). Existing accounts keep their roles. Operators who want the old behaviour set `SIGNUP_ROLE=guest` in `.env`. See [Upgrades](docs/OPERATIONS.md#upgrades).
+- Migrations **060–062** run once on the first boot. **Back up first** (`./scripts/backup.sh --force`).
+- **060** adds the Files search index; the server builds it in the background after boot (in small batches, never blocking startup). Until it finishes, "In file text" may miss older files and Pick from Nook uses its previous scan.
+- **062** rebuilds `report_folders` into one shared tree (every folder, its place and the reports in it are kept) and copies each report's owner into the new owners list.
+- **`SIGNUP_ROLE` now defaults to `member`**. To keep the old behaviour, set `SIGNUP_ROLE=guest` in `.env`. See [Upgrading to 0.39.0](docs/OPERATIONS.md#upgrades).
 
 ## v0.38.0 — 2026-10-15
 

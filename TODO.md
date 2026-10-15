@@ -12,7 +12,7 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 
 ## Waiting on the operator
 
-- [ ] **Real-model eval of report generation** (D488 chart kinds, D489 parameters): only the scripted provider has run. Run `scripts/reportEval.ts` with `REPORT_EVAL_BASE_URL`, `REPORT_EVAL_MODEL` and `REPORT_EVAL_API_KEY` (Z.ai or OpenAI; see docs/OPERATIONS.md "Report generation eval"), or regenerate reports on the VM. Check: the five kind cases (`onboarding_funnel`, `cohort_retention`, `quota_attainment`, `latency_spread`, `plan_flow`) get fitting chart kinds, and a doc that names a window or a dimension gets a date range or filter. Tune the prompts from the scores.
+- [ ] **Real-model eval of report generation** (D488 chart kinds, D489 parameters): only the scripted provider has run. Run `bun --no-env-file scripts/reportEval.ts --clickhouse <test ClickHouse>` on a host whose Nook has a working model provider (it falls back to Settings → AI; the local instance's OpenAI key is a placeholder), or set `REPORT_EVAL_*`, or regenerate reports on the VM (docs/OPERATIONS.md "Report generation eval"). Check: the five kind cases (`onboarding_funnel`, `cohort_retention`, `quota_attainment`, `latency_spread`, `plan_flow`) get fitting chart kinds, and a doc that names a window or a dimension gets a date range or filter. Tune the prompts from the scores.
 - [ ] **Report Lists** ([plan](docs/plan/REPORTS_ORG.md) phase 3, optional, migration 064): a report in many lists; a list never grants access. Start only if the operator asks.
 
 ## Small fixes

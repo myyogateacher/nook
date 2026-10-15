@@ -5,11 +5,16 @@
  *
  *   bun --no-env-file scripts/reportEval.ts [--cases a,b] [--provider scripted|openai] [--variant golden|trap|both]
  *     [--clickhouse http://user:password@127.0.0.1:22200 | --fixtures] [--no-seed] [--record]
- *     [--out <dir>] [--data-dir <dir>] [--port 22241] [--origin http://e.localhost:22241] [--serve] [--tool-choice auto|full] [--token-param max_tokens|max_completion_tokens] [--timeout <s>]
+ *     [--out <dir>] [--data-dir <dir>] [--port 22241] [--origin http://e.localhost:22241] [--serve] [--provider-from <nook data dir>] [--tool-choice auto|full] [--token-param max_tokens|max_completion_tokens] [--timeout <s>]
  *   bun --no-env-file scripts/reportEval.ts --compare a.json b.json
  *
  * A real model is read from the environment, never from a file in the repository:
  * REPORT_EVAL_BASE_URL (an OpenAI-compatible base URL), REPORT_EVAL_MODEL, REPORT_EVAL_API_KEY.
+ * Without them it uses the model a Nook instance has in Settings → AI (the report generation model,
+ * else the default provider): --provider-from <data dir>, else REPORT_EVAL_INSTANCE_DIR, else
+ * MYNOTES_DATA_DIR (environment or .env), with that instance's AGENT_SECRETS_KEY (environment or .env).
+ * The scripted provider runs with --provider scripted, --variant golden|trap|both, --record or --fixtures,
+ * or when no instance is found.
  * api.openai.com gets `max_completion_tokens` and the full `tool_choice`; any other base URL is treated
  * like Z.ai's GLM (`max_tokens`, `tool_choice: auto` only). `--tool-choice` and `--token-param` override.
  * The ClickHouse comes from --clickhouse, REPORT_EVAL_CLICKHOUSE_URL, or CLICKHOUSE_TEST_URL; each
@@ -34,6 +39,20 @@ export function evalCompat<C extends { tokenParam: string }>(defaults: C, baseUr
   const param = tokenParam === "max_tokens" || tokenParam === "max_completion_tokens" ? tokenParam : openai ? defaults.tokenParam : "max_tokens";
   return { ...defaults, tokenParam: param as "max_completion_tokens" | "max_tokens", ...(full ? {} : { namedToolChoice: false, requiredToolChoice: false }) };
 }
+
+/**
+ * The connection for an instance's provider: its own compatibility options (what Nook sends it), and
+ * its key opened in memory. Import only after the eval's server environment is set.
+ */
+async function instanceConnection(instance: NonNullable<ReturnType<typeof import("../evals/reports/instanceProvider").instanceProvider>>, key: Buffer | null, toolChoice?: string, tokenParam?: string) {
+  const { parseCompat } = await import("../server/agents/providers");
+  const { openSecret } = await import("../server/agents/secrets");
+  const stored = parseCompat(instance.compatJson);
+  const overridden = toolChoice || tokenParam ? evalCompat(stored, instance.baseUrl, toolChoice, tokenParam) : stored;
+  return { id: "eval", baseUrl: instance.baseUrl, apiKey: instance.apiKeyCt && key ? openSecret("provider", instance.providerId, instance.apiKeyCt, key) : null, model: instance.model, compat: overridden };
+}
+
+class KeyRefused extends Error {}
 
 type Flags = Record<string, string | boolean>;
 
@@ -67,9 +86,30 @@ async function main() {
     console.log(compareReports(JSON.parse(readFileSync(rest[0]!, "utf8")), JSON.parse(readFileSync(rest[1]!, "utf8"))));
     return;
   }
-  const baseUrl = process.env.REPORT_EVAL_BASE_URL?.trim() || null;
+  const envBaseUrl = process.env.REPORT_EVAL_BASE_URL?.trim() || null;
+  // No REPORT_EVAL_BASE_URL: fall back to the model a Nook instance has in Settings → AI (instanceProvider.ts),
+  // unless the run asks for the scripted provider (golden or trap specs, --record, --fixtures).
+  const wantsScripted = flagString(flags, "provider") === "scripted" || Boolean(flags.record) || Boolean(flags.fixtures) || ["golden", "trap", "both"].includes(flagString(flags, "variant") ?? "");
+  const { readDotEnv, instanceDirOf, instanceProvider, instanceSecretsKey } = await import("../evals/reports/instanceProvider");
+  let instance: ReturnType<typeof instanceProvider> = null;
+  let instanceKey: Buffer | null = null;
+  if (!envBaseUrl && !wantsScripted) {
+    const dotEnv = readDotEnv(join(import.meta.dir, "..", ".env"), ["MYNOTES_DATA_DIR", "AGENT_SECRETS_KEY", "AGENT_SECRETS_KEY_FILE"]);
+    const instanceDir = instanceDirOf(flagString(flags, "provider-from"), process.env, dotEnv);
+    instance = instanceDir ? instanceProvider(instanceDir) : null;
+    if (instance) {
+      instanceKey = instanceSecretsKey(process.env, dotEnv);
+      if (instance.apiKeyCt && !instanceKey) throw new Error(`The provider "${instance.providerName}" in ${instance.dataDir} has an API key; set that instance's AGENT_SECRETS_KEY (or keep it in the repository's .env)`);
+      console.log(`Model: ${instance.model} via "${instance.providerName}" (${instance.source === "setting" ? "the report generation model" : "the default provider"} of ${instance.dataDir})`);
+    } else if (flagString(flags, "provider-from") || flagString(flags, "provider") === "openai") {
+      throw new Error(`No model provider found in ${instanceDir ?? "(no instance directory)"}; set REPORT_EVAL_BASE_URL and REPORT_EVAL_MODEL, or point --provider-from at a Nook data directory`);
+    } else {
+      console.log("No REPORT_EVAL_BASE_URL and no Nook instance with a model provider (--provider-from or MYNOTES_DATA_DIR): using the scripted provider");
+    }
+  }
+  const baseUrl = envBaseUrl ?? instance?.baseUrl ?? null;
   const providerKind = (flagString(flags, "provider") ?? (baseUrl && !flags.record ? "openai" : "scripted")) as "scripted" | "openai";
-  if (providerKind === "openai" && (!baseUrl || !process.env.REPORT_EVAL_MODEL)) throw new Error("--provider openai needs REPORT_EVAL_BASE_URL and REPORT_EVAL_MODEL (and REPORT_EVAL_API_KEY) in the environment");
+  if (providerKind === "openai" && (!baseUrl || (envBaseUrl && !process.env.REPORT_EVAL_MODEL))) throw new Error("--provider openai needs REPORT_EVAL_BASE_URL and REPORT_EVAL_MODEL (and REPORT_EVAL_API_KEY) in the environment, or a Nook instance with a model provider");
   const variantFlag = flagString(flags, "variant") ?? (flags.record ? "both" : providerKind === "openai" ? "model" : "golden");
   const variants: Array<CaseResult["variant"]> = providerKind === "openai" ? ["model"] : variantFlag === "both" ? ["golden", "trap"] : [variantFlag as CaseResult["variant"]];
   const replay = Boolean(flags.fixtures);
@@ -129,10 +169,12 @@ async function main() {
   const scripted = providerKind === "scripted" ? startScriptedProvider(0) : null;
   const connection = scripted
     ? { id: "scripted", baseUrl: scripted.baseUrl, apiKey: null, model: "scripted-eval", compat: DEFAULT_COMPAT }
-    : {
-      id: "eval", baseUrl: baseUrl!, apiKey: process.env.REPORT_EVAL_API_KEY ?? null, model: process.env.REPORT_EVAL_MODEL!,
-      compat: evalCompat(DEFAULT_COMPAT, baseUrl!, flagString(flags, "tool-choice"), flagString(flags, "token-param"))
-    };
+    : instance && !envBaseUrl
+      ? await instanceConnection(instance, instanceKey, flagString(flags, "tool-choice"), flagString(flags, "token-param"))
+      : {
+        id: "eval", baseUrl: baseUrl!, apiKey: process.env.REPORT_EVAL_API_KEY ?? null, model: process.env.REPORT_EVAL_MODEL!,
+        compat: evalCompat(DEFAULT_COMPAT, baseUrl!, flagString(flags, "tool-choice"), flagString(flags, "token-param"))
+      };
   const startedAt = new Date().toISOString();
   const results: CaseResult[] = [];
   const timeoutMs = Number(flagString(flags, "timeout") ?? 600) * 1000;
@@ -153,6 +195,8 @@ async function main() {
           const result = await runCase(host, testCase, { variant, clickhouse: target, connection, scripted, timeoutMs, datasources: made });
           console.log(`${result.passed}/${result.facts.length} facts${result.error ? ` (${result.error})` : ""}`);
           results.push(result);
+          // A refused key fails every case the same way: stop instead of running the rest.
+          if (!scripted && result.error && /refused the API key|HTTP 401/.test(result.error)) throw new KeyRefused(result.error);
         }
       } finally {
         standIn?.stop();
@@ -165,6 +209,9 @@ async function main() {
       }
       if (replay && standIn?.missing.length) console.log(`  ${standIn.missing.length} statements were not in the fixtures; re-record with --record`);
     }
+  } catch (error) {
+    if (!(error instanceof KeyRefused)) throw error;
+    console.log(`Stopped: the model provider refused the API key. Fix the key (Settings → AI → Model providers, or REPORT_EVAL_API_KEY) and run again.`);
   } finally {
     scripted?.stop();
   }

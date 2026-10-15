@@ -79,17 +79,54 @@ describe("Inbox copy", () => {
     expect(failureText("CARD_CHANGED")).toBe("The card changed since the agent read it (CARD_CHANGED). Nothing was applied.");
     expect(failureText(null)).toBe("The change could not be applied. Nothing was applied.");
     expect(statusLabel("applied", "PUBLISHED_IN_EDITOR")).toBe("Published in the editor");
-    expect(expiresText(new Date(Date.now() + 13.5 * 86_400_000).toISOString())).toBe("expires in 14 days");
-    // A fresh 14-day proposal reads 14 days, not 13 (rounded to the nearest day).
-    expect(expiresText(new Date(Date.now() + 14 * 86_400_000 - 60_000).toISOString())).toBe("expires in 14 days");
-    expect(expiresText(new Date(Date.now() + 1.2 * 86_400_000).toISOString())).toBe("expires in 1 day");
-    expect(expiresText(new Date(Date.now() + 0.4 * 86_400_000).toISOString())).toBe("expires today");
+    // A fresh 14-day proposal reads 14 days at any hour (one "now" for both sides, never two clock reads).
+    const now = Date.now();
+    expect(expiresText(new Date(now + 14 * 86_400_000).toISOString(), now)).toBe("expires in 14 days");
+    expect(expiresText("not a date", now)).toBe("");
     expect(groupTitle({ routine: null, key: { name: "laptop" } })).toBe("Key “laptop”");
     expect(bulkSummary([{ id: "a", status: "applied" }, { id: "b", status: "applied" }, { id: "c", status: "failed", code: "CARD_CHANGED" }])).toBe("2 applied · 1 failed (card changed)");
     expect(bulkConfirmText([{ kind: "card_create" }, { kind: "card_update" }, { kind: "row_update" }])).toBe("Apply 3 changes: 2 cards, 1 row");
     const diff = lineDiff("a\nb", "a\nc\nd");
     expect(diff.map((line) => `${line.kind}:${line.text}`)).toEqual(["same:a", "remove:b", "add:c", "add:d"]);
     expect(diffStats(diff).label).toBe("+2 −1 lines");
+  });
+});
+
+describe("Inbox expiry copy counts local calendar days", () => {
+  // Pinned to 23:25 IST (seen failing then on 2026-10-14): the day count follows local midnight.
+  const withZone = (zone: string, fn: () => void) => {
+    // Back to the zone in force before (the system's when TZ was unset), so later files see no change.
+    const saved = process.env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    process.env.TZ = zone;
+    try { fn(); } finally { process.env.TZ = saved; }
+  };
+  const day = 86_400_000;
+  const at = (iso: string) => Date.parse(iso);
+  const expires = (now: number, offset: number) => expiresText(new Date(now + offset).toISOString(), now);
+
+  test("at 23:25 IST", () => withZone("Asia/Kolkata", () => {
+    const now = at("2026-10-14T23:25:00+05:30");
+    expect(new Date(now).getHours()).toBe(23);
+    expect(expires(now, 13.5 * day)).toBe("expires in 14 days"); // 28 Oct, 11:25
+    expect(expires(now, 14 * day)).toBe("expires in 14 days");
+    expect(expires(now, 14 * day - 60_000)).toBe("expires in 14 days");
+    expect(expires(now, 30 * 60_000)).toBe("expires today"); // 23:55 the same evening
+    expect(expires(now, 0.4 * day)).toBe("expires in 1 day"); // 09:01 tomorrow, not "today"
+    expect(expires(now, 1.2 * day)).toBe("expires in 2 days"); // 04:13 the day after tomorrow
+  }));
+
+  test("at 09:00 IST, and across a DST change elsewhere", () => {
+    withZone("Asia/Kolkata", () => {
+      const now = at("2026-10-14T09:00:00+05:30");
+      expect(expires(now, 13.5 * day)).toBe("expires in 13 days"); // 27 Oct, 21:00
+      expect(expires(now, 0.4 * day)).toBe("expires today");
+      expect(expires(now, 1.2 * day)).toBe("expires in 1 day");
+    });
+    withZone("Europe/Berlin", () => {
+      // Clocks go back on 25 Oct 2026: that day has 25 hours.
+      const now = at("2026-10-24T23:30:00+02:00");
+      expect(expires(now, 14 * day)).toBe("expires in 14 days");
+    });
   });
 });
 

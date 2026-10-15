@@ -22,7 +22,6 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 ## Known LOW leftovers
 
 - [ ] Files full-text index leftovers (lane FTS, 060 shipped): an MCP/REST `search_documents` tool on the index (files:read, ranked, snippets) so agents and keys get Files content search; a Back/Forward check at 390 px for a file opened from the notes search Files facet and from "In file text"; PDF text is not indexed because `read_document_text` reads text files only.
-- [ ] (Lane FTS) `tests/inboxApp.test.tsx` "Inbox copy" fails late in the evening IST (seen 23:25 on 2026-10-14: `expiresText` of now + 13.5 days read "expires in 13 days"). It is probably a local-midnight boundary in the day count, not the rounding the test means to check.
 - [ ] (Lane FTS) `tests/reportsScheduler.test.ts` "at most two scheduled refreshes run at once" failed once in a full-suite run (lane L, 2026-10-14) and passes on its own (3/3). It is probably timing under load.
 - [ ] (Lane FTS) Lane worktrees without `node_modules` cannot run the `vite build` gate: the Excalidraw fonts copy reads `node_modules/…/fonts` relative to the working directory, so the build fails at writeBundle after emitting `dist`. Lane L was not allowed to install or link `node_modules` in its worktree.
 - [ ] (Lane FTS) `tests/restV1.test.ts` "agents" fails in some full-suite runs but passes on its own (7/7) and in lane G's six proof runs. It is probably order-dependent shared state: agents, providers, or keys left behind by an earlier file.

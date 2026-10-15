@@ -46,10 +46,19 @@ const KIND_VERB: Record<ProposalKind, string> = {
 /** "Approve: update card Pay insurance" (§9.5). */
 export const actionLabel = (verb: "Approve" | "Reject", proposal: Pick<ProposalSummary, "kind" | "title">) => `${verb}: ${KIND_VERB[proposal.kind]} ${proposal.title}`;
 
-/** "expires in 14 days", "expires today": rounded to the nearest day, so a fresh 14-day proposal reads 14. */
+/** Local midnight of the day `ms` falls on. */
+const localDayStart = (ms: number) => { const day = new Date(ms); day.setHours(0, 0, 0, 0); return day.getTime(); };
+
+/**
+ * "expires in 14 days", "expires today": local calendar days from today to the expiry date, the same
+ * day the detail's "Expires" date shows. A fresh 14-day proposal reads 14 at any hour; late in the
+ * evening, one that expires tomorrow morning reads "in 1 day", not "today" (the old rounding of the
+ * remaining time ignored local midnight). Rounding the midnight difference absorbs DST's 23- and 25-hour days.
+ */
 export function expiresText(expiresAt: string, nowMs = Date.now()) {
-  const days = Math.round((Date.parse(expiresAt) - nowMs) / 86_400_000);
-  if (!Number.isFinite(days)) return "";
+  const expires = Date.parse(expiresAt);
+  if (!Number.isFinite(expires) || !Number.isFinite(nowMs)) return "";
+  const days = Math.round((localDayStart(expires) - localDayStart(nowMs)) / 86_400_000);
   if (days < 1) return "expires today";
   return `expires in ${days} day${days === 1 ? "" : "s"}`;
 }

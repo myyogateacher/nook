@@ -15,9 +15,9 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 
 - [ ] Files full-text index (migration 060, approved 2026-10-15): a `document_fts` index over Files text and Markdown documents, so "Pick from Nook" (K4, today a bounded scan of `GET /api/reports/nook-files`) and Files search become one ranked query, with access exactly as `read_document_text`.
 - [ ] Forward after Back past a page (D480) does not reopen Inspect yet, because it has no `layerKey` or `useLayerOpener`. v0.38.0 is out, so this can be done now.
-- [ ] Report organization at scale ([plan](docs/plan/REPORTS_ORG.md), Tableau-style; replaces "readers' own placement" and the D460 `group_grants` fold). The open questions in the plan need the operator's answers before phase 2.
+- [ ] Report organization at scale ([plan](docs/plan/REPORTS_ORG.md), Tableau-style; replaces "readers' own placement"; the D460 `group_grants` fold becomes optional cleanup). Phase 2 follows the operator's simple model; one question remains open (shared folder tree or per person).
   - [ ] Phase 1 (061): favorites (★, a Favorites nav entry), filters (owner, status, data source, schedule), search and keyset pagination for hundreds of reports, MCP star tools.
-  - [ ] Phase 2 (062, optional 063): shared folders whose access passes down to subfolders and reports; a new `edit` level; report shares folded into `group_grants` and the Access sheet; a confirm when a move widens access.
+  - [ ] Phase 2 (062): simple permissions (operator decision, 2026-10-15). Folders are only for grouping and never grant access. A report can have several owners, and an owner or an admin can make others owners. An owner can change the report's folder, its sharing and its other permissions. A report always keeps at least one owner. Folders are one workspace-wide tree (to be confirmed).
   - [ ] Phase 3 (064, optional): report Lists. A report can sit in many lists, and a list never grants access.
 
 ## Known LOW leftovers

@@ -1,6 +1,6 @@
 # Report organization at scale: favorites, shared folders, lists
 
-Status: **planned (2026-10-15)**, modelled on Tableau.
+Status: **planned (2026-10-15)**. Phase 1 follows Tableau's favorites. **Phase 2 was simplified by the operator**: folders only group, permissions sit on each report, and reports can have several owners.
 - Content lives in shared folders whose access passes down to everything inside.
 - People keep personal shortcuts as favorites.
 - Optional lists group reports without moving them.
@@ -46,79 +46,51 @@ Next free ids at planning time: migration **061** (060 is the Files `document_ft
 
 **Test:** 2,000 reports, 300 folders and 50 groups. The list must return in under 50 ms, and the query plans must use the indexes.
 
-## Phase 2: shared folders with inherited access (migration 062, optional 063)
+## Phase 2: simple permissions; folders only group (migration 062)
 
-### Migration 062
+**Operator decision (2026-10-15).** Keep permissions simple:
+- Permissions live on the **report**.
+- **Folders are only for grouping** and never grant or limit access (no inheritance).
+- A report can have **several owners**. An owner or an admin can make someone else an owner.
+- An owner can change the report's folder, its sharing, and its other permissions.
 
-- **Rebuild `group_grants`** on the 050 pattern:
-  - `resource_kind` gains `report`, `report_folder` and `report_list`. Adding `report_list` now avoids another rebuild later.
-  - Every row, index and trigger is copied.
-  - Add the index `group_grants_group_kind`.
-  - Running it again changes nothing.
-- **Folders:** `report_folders` gains `visibility` (`private|selected|all_users`), `all_users_level` and `created_by`.
-- **New table:** `report_folder_members(folder_id, user_id, level view|comment|edit, …)`.
-- **`report_members`:** gains the `edit` level.
-- **Existing group shares:** `report_group_shares` rows move into `group_grants('report')`, then the table is dropped. This closes D460.
-- **Views and triggers:**
-  - `access_grants_v` is re-created to include report and report-folder member rows.
-  - Purge triggers on reports and report folders remove their grants.
-- **Optional 063:** an `api_key_grants` rebuild that adds `report_folder`, so keys can be scoped by folder.
+**Data**
+- `report_owners(report_id, user_id, added_by, created_at)`.
+- Migrate every `reports.owner_id` into this table. Keep `owner_id` as the creator, or drop it if that is cleaner.
+- `report_folders` becomes a **workspace-wide grouping tree** (needs the operator's confirmation):
+  - Every member sees the same folders.
+  - A folder shows only the reports that person can read.
+  - Empty folders are visible to members; guests see none.
+- Any member can create and rename folders. Only the folder's creator or an admin can delete an empty folder to the Bin.
+- Folders have no sharing and no levels.
 
-### Access
+**Access**
+- Report sharing stays as it is today (view / comment, people, groups, everyone). The `group_grants` fold (D460) is optional cleanup, not required.
+- Everything owner-only today (D455, D459) becomes "any owner of the report".
+- An admin can manage the owners of any report, so an orphaned report can always be recovered.
+- A report must keep at least one owner. Removing the last owner is refused.
+- Blocking or deleting a user who is the last owner hands the report to an admin, or flags it. This uses the existing module's ownership-transfer pattern if one exists.
 
-A person's effective level on a report is the highest of:
-- owner;
-- a direct share on the report;
-- a group grant on the report;
-- the report's "everyone" level;
-- the member, group and "everyone" levels of every **live** ancestor folder.
+**UI**
+- The Share sheet gets an **Owners** section: add or remove owners, shown to owners and admins.
+- Owners can also move the report to another folder. Folder navigation is the same tree for everyone.
+- Row badges show the person's level on that report.
 
-The result is then capped by role (`capByRole`):
-- Guests, disabled users and integrations get nothing.
-- Team viewers are capped at view.
+**MCP**
+- `list_report_owners`.
+- Owners can call `add_report_owner` and `remove_report_owner` under `reports:write`. Audited, never the last owner.
 
-Shares only add access, so a report can't narrow its folder's access in v1.
+**Threats**
+| Id | Threat | Mitigation |
+|---|---|---|
+| T389 | An extra owner gets doc or proposal access | Expected: they are an owner. The audit records who added them. |
+| T390 | Removing the last owner orphans the report | Refused. Admin recovery. |
+| T391 | Folder titles leak report titles | A folder lists only readable reports, and the counts are per-viewer. |
 
-**What each level can do:**
-
-| Level | Rights |
-|---|---|
-| view | Read the report (D456). |
-| comment | Also add instructions. |
-| **edit** (new) | Also rename, refresh, edit by hand, `update_report_query`, restore a version, and file reports they own into folders they can edit. |
-| owner only | Apply/Reject, auto-apply, the source doc, the schedule, direct sharing, the Bin. |
-
-D459 redaction applies to editors exactly as it does to commenters.
-
-**Folders:**
-- An **editor** can create, rename and reorder subfolders.
-- Only the **owner** can delete a folder to the Bin, share it, or move it.
-- A subfolder belongs to the root folder's owner; `created_by` records the editor who made it.
-
-**Moves that widen access need a confirm.** Moving a report or a folder recomputes who can see it. If the move widens access, the server answers 409 `CONFIRM_REQUIRED` with the new audience, and the client asks before retrying. This is the same pattern Files uses.
-
-**The Bin breaks inheritance.** A binned folder no longer passes access down. Its reports go to their owners' Unfiled, and restoring the folder files them back.
-
-**Readable predicate.** `readableReportSql` keeps its signature. It gains one branch: a single uncorrelated recursive query over the granted folders and their descendants.
-
-**Team tooling:**
-- Group counts and guest checks become plain `group_grants` checks.
-- Member access and Reset access cover folder shares.
-- The central Access sheet lists `report` and `report_folder`.
-
-### UI
-
-- **Left nav:** Favorites, All, My folders, Shared folders, Shared with me (direct shares only), Unfiled.
-- **Shared folder roots:** a folder shared partway down someone's tree appears as its own root, with its full path in a tooltip.
-- **Share sheet:** one sheet serves reports and folders. A folder shows how many reports and subfolders inherit its access. A report shows its inherited access read-only, for example "From Finance: Growth team, edit".
-- **Row badges:** "Shared via Finance", plus the person's level.
-- **History:** every new sheet registers a `layerKey`, so Back and Forward work across them (D478–D480).
-
-### MCP
-
-- `list_report_folders` returns the shared tree, with each person's level.
-- `move_report_to_folder` refuses a move that widens access (`ACCESS_WIDENS`) unless `confirmAudience` is passed.
-- There is still no sharing over MCP (D457).
+**Decisions**
+- D481: Folders only group and never grant access.
+- D482: Reports have several owners, and admins manage owners.
+- D483: The workspace-wide folder tree.
 
 ## Phase 3: report lists (optional, migration 064)
 
@@ -129,28 +101,7 @@ D459 redaction applies to editors exactly as it does to commenters.
 
 ## Threats and decisions
 
-**Threats**
-
-| Id | Threat | Mitigation |
-|---|---|---|
-| T389 | Inherited access widens silently on a move or a share | Confirm before widening, and audit the change |
-| T390 | A folder editor reaches the doc or proposals | D459 applies to editors |
-| T391 | The `group_grants` rebuild loses rows, triggers or the view | A migration test covers them |
-| T392 | A binned or purged folder still grants access | Only live ancestors pass access down, and purge triggers remove grants |
-| T393 | Favorites or lists leak titles or access | Always filtered through `readableReportSql` |
-| T394 | Inheritance queries slow listing down enough to deny service | The depth cap and the indexes |
-
-**Decisions**
-
-| Id | Decision |
-|---|---|
-| D481 | Report folders pass access down (an exception to D3/D271) |
-| D482 | The `edit` level on reports |
-| D483 | Subfolders belong to the root folder's owner |
-| D484 | A move that widens access needs a confirm |
-| D485 | Report group shares move into `group_grants` (closes D460) |
-| D486 | Favorites |
-| D487 | Lists never grant access |
+Phase 2's threats and decisions are listed in its section. Phase 1 adds D486 (Favorites) and T393 (favorites never leak, because they are filtered through `readableReportSql`). Phase 3 adds D487 (Lists never grant access).
 
 ## Order and parallelism
 
@@ -159,12 +110,7 @@ D459 redaction applies to editors exactly as it does to commenters.
 - **Phase 3** is optional.
 - Each phase is its own release-sized slice.
 
-## Open questions (defaults in brackets)
+## Open questions
 
-1. Can a folder editor apply or reject proposals and set schedules? [No: owner only.]
-2. Who owns a subfolder an editor creates? [The root folder's owner.]
-3. Can the folder owner take other people's reports out of the folder? [Only the report owner or the folder owner.]
-4. Should keys be scoped by folder now (063)? [Later.]
-5. Should report collections be called "Lists"? [Yes.]
-6. Can a report opt out of its folder's access? [Not in v1.]
-7. Can a folder be shared with everyone, and at what level? [Yes, view or comment.]
+1. Are folders one shared tree for the whole workspace, so everyone sees the same folders but only the reports they can read? Or are they per person? [Recommended: one shared tree.]
+2. Who can create and rename folders? [Any member; deleting is limited to the folder's creator or an admin, and only when the folder is empty.]

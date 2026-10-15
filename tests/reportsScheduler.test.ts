@@ -15,7 +15,13 @@ const refresh = await import("../server/reports/refresh");
  */
 
 const fake = startFakeClickhouse(0);
-afterAll(() => fake.stop());
+// The shared server's real once-a-minute tick would claim this file's schedules (due in March 2026 on
+// the fake clock, so long past on the real one) whenever it fired mid-test; it is off for this file.
+scheduler.stopReportScheduler();
+afterAll(() => {
+  fake.stop();
+  scheduler.startReportScheduler();
+});
 beforeEach(() => {
   fake.reset();
   fake.state.select = (sql) => sampleAnswer(sql);
@@ -167,11 +173,15 @@ describe("the tick", () => {
   test("at most two scheduled refreshes run at once; the rest wait for the next tick", async () => {
     const reports = [await seededReport(), await seededReport(), await seededReport()];
     for (const reportId of reports) scheduler.saveSchedule(owner.userId, reportId, daily(), FRIDAY_NOON);
-    fake.state.delayMs = 60;
+    // The two runs wait on the warehouse until the checks below are done (a condition, not a delay).
+    let release = () => {};
+    fake.state.hold = new Promise<void>((resolve) => { release = resolve; });
     const first = scheduler.schedulerTick(Date.parse("2026-03-06T14:00:00Z"));
     expect(first).toMatchObject({ claimed: 2, started: 2 });
     expect(scheduler.scheduledInFlight()).toBe(2);
     expect(scheduler.schedulerTick(Date.parse("2026-03-06T14:00:05Z")).claimed).toBe(0);
+    fake.state.hold = null;
+    release();
     await first.done;
     expect(scheduler.scheduledInFlight()).toBe(0);
     const second = scheduler.schedulerTick(Date.parse("2026-03-06T14:01:00Z"));

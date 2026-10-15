@@ -190,3 +190,9 @@ export function startReportScheduler() {
   timer = setInterval(tick, SCHEDULER_TICK_MS);
   (timer as { unref?: () => void }).unref?.();
 }
+
+/** Stops the once-a-minute tick (tests that drive `schedulerTick` on a fake clock, so the real tick never claims their schedules). */
+export function stopReportScheduler() {
+  if (timer) clearInterval(timer);
+  timer = null;
+}

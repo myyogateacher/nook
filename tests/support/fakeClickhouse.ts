@@ -29,6 +29,8 @@ export type FakeClickhouseState = {
   select: (sql: string, request: FakeRequest) => FakeAnswer;
   /** Milliseconds to wait before answering a wrapped select. */
   delayMs: number;
+  /** When set, wrapped selects wait for it (a test releases them when its condition is checked). */
+  hold: Promise<void> | null;
 };
 
 const json = (meta: Array<{ name: string; type: string }>, data: unknown[][], rowsRead = data.length) =>
@@ -72,7 +74,7 @@ export function startFakeClickhouse(port: number, options: { database?: string }
   const database = options.database ?? "analytics";
   const requests: FakeRequest[] = [];
   const defaults = (): FakeClickhouseState => ({
-    tables: [], systemDenied: false, grants: ["GRANT SELECT ON analytics.* TO nook_ro"], readonly: 2, version: "24.8.1.1", queryTree: null, delayMs: 0,
+    tables: [], systemDenied: false, grants: ["GRANT SELECT ON analytics.* TO nook_ro"], readonly: 2, version: "24.8.1.1", queryTree: null, delayMs: 0, hold: null,
     select: (sql) => {
       const limit = /LIMIT (\d+)\s*$/.exec(sql);
       const count = Math.min(3, limit ? Number(limit[1]) : 3);
@@ -142,6 +144,7 @@ export function startFakeClickhouse(port: number, options: { database?: string }
       requests.push(record);
       // Only the statements themselves are slow (never probes, tree checks, or KILL QUERY).
       if (state.delayMs && record.sql.startsWith("SELECT * FROM (")) await Bun.sleep(state.delayMs);
+      if (state.hold && record.sql.startsWith("SELECT * FROM (")) await state.hold;
       const { status, body, headers } = answer(record);
       return new Response(body, { status, headers: { "Content-Type": status === 200 ? "application/json; charset=UTF-8" : "text/plain; charset=UTF-8", ...(headers ?? {}) } });
     }

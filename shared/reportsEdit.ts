@@ -153,7 +153,9 @@ export type ReportVersion = {
 export type ReportShare = { kind: "user" | "group"; id: string; name: string; level: ShareLevel };
 export type ReportSharing = { visibility: ReportVisibility; shares: ReportShare[] };
 /** Phase 2 (D482): one owner of a report; `primary` is the one scheduled refreshes run as. */
-export type ReportOwner = { id: string; name: string; primary: boolean; active: boolean; addedBy: string | null; addedAt: string };
+/** `state` (D503): `active` (a member or an admin who is not blocked), `blocked`, `guest`, or `viewer`, as Settings → Report owners shows it. */
+export type ReportOwnerState = "active" | "blocked" | "guest" | "viewer";
+export type ReportOwner = { id: string; name: string; primary: boolean; active: boolean; state: ReportOwnerState; addedBy: string | null; addedAt: string };
 /** The owners and what the caller may do with them (owners and admins manage; never the last owner). */
 export type ReportOwners = { owners: ReportOwner[]; canManage: boolean };
 /**
@@ -162,7 +164,7 @@ export type ReportOwners = { owners: ReportOwner[]; canManage: boolean };
  * place only, never content. `state` is an owner's: `active` (a member or an admin), `blocked`, `guest`, `viewer`.
  */
 export type OwnerReviewScope = "unmanaged" | "unopenable";
-export type OwnerReviewOwner = { id: string; name: string; state: "active" | "blocked" | "guest" | "viewer" };
+export type OwnerReviewOwner = { id: string; name: string; state: ReportOwnerState };
 export type OwnerReviewReport = { id: string; title: string; folder: { id: string; name: string } | null; owners: OwnerReviewOwner[]; updatedAt: string; canOpen: boolean; managed: boolean };
 export type OwnerReview = { scope: OwnerReviewScope; reports: OwnerReviewReport[]; total: number; limit: number };
 export type SharingInput ={ visibility: ReportVisibility; shares: Array<{ kind: "user" | "group"; id: string; level: ShareLevel }> };

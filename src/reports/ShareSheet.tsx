@@ -6,7 +6,7 @@ import { ModalDialog } from "../files/Dialog";
 import { errorText, notify } from "../ui/notify";
 import { Select } from "../ui/Select";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
-import type { ReportOwner, ReportShare, ReportVisibility, ShareLevel } from "../../shared/reportsEdit";
+import type { ReportOwner, ReportOwnerState, ReportShare, ReportVisibility, ShareLevel } from "../../shared/reportsEdit";
 import { addOwner, getOwners, getSharing, removeOwner, saveSharing } from "./reportEditApi";
 import { messageOf } from "./reportsApi";
 import { CopyLinkRow } from "./reportLink";
@@ -16,6 +16,10 @@ const AUDIENCES: Array<{ value: ReportVisibility; label: string; hint: string }>
   { value: "selected", label: "Chosen people and groups", hint: "They see the report and its results; with “Can comment” they can also ask the AI for changes, which an owner reviews." },
   { value: "all_users", label: "Everyone on the team", hint: "Every member and viewer can see the report and its results (never guests)." }
 ];
+
+/** D503: an owner who can't act as one, tagged as Settings → Report owners shows them. */
+export const OWNER_STATE_LABELS: Record<Exclude<ReportOwnerState, "active">, string> = { blocked: "Blocked", guest: "Guest", viewer: "Viewer" };
+const OWNER_STATE_HINTS: Record<Exclude<ReportOwnerState, "active">, string> = { blocked: "Blocked: can’t sign in", guest: "A guest now: can’t act as an owner", viewer: "A viewer now: can’t change the report" };
 
 const LAST_OWNER = "A report always keeps at least one owner. Add another owner first.";
 
@@ -75,7 +79,7 @@ function OwnersSection({ reportId, people, onLeft, onChanged }: { reportId: stri
         {owners.map((owner) => <li key={owner.id}>
           <span className="report-share-name"><Crown aria-hidden="true" />{owner.name}
             {owner.primary && <small className="report-owner-tag" title="Scheduled refreshes run as this owner">Primary</small>}
-            {!owner.active && <small className="report-owner-tag report-owner-tag-off">Can’t sign in</small>}
+            {owner.state !== "active" && <small className="report-owner-tag report-owner-tag-off" title={OWNER_STATE_HINTS[owner.state]}>{OWNER_STATE_LABELS[owner.state]}</small>}
           </span>
           <button type="button" className="icon-button" aria-label={`Remove ${owner.name} as owner`} disabled={busy || last} aria-describedby={last ? reasonId : undefined}
             title={last ? LAST_OWNER : undefined} onClick={() => remove(owner)}><Trash2 /></button>

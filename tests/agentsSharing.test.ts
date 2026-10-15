@@ -508,14 +508,20 @@ describe("public links (AC-O1, D362, T315, T316)", () => {
 
   test("60 requests a minute per address, then 429 with Retry-After", async () => {
     await setPolicy(true);
-    resetPublicLimitsForTests();
-    const unknown = "b".repeat(43);
-    for (let index = 0; index < PUBLIC_LIMIT.perMinute; index += 1) expect((await publicGet(unknown)).status).toBe(404);
-    const limited = await publicGet(unknown);
-    expect(limited.status).toBe(429);
-    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
-    expect(limited.headers.get("cache-control")).toBe("no-store");
-    resetPublicLimitsForTests();
+    // The limiter's clock is pinned 15 s into a minute: the 61 requests never straddle a minute (whose
+    // rollover discounts the earlier count, so the 61st passed), and Retry-After is exact.
+    const minute = Math.floor(Date.now() / 60_000) * 60_000;
+    resetPublicLimitsForTests(minute + 15_000);
+    try {
+      const unknown = "b".repeat(43);
+      for (let index = 0; index < PUBLIC_LIMIT.perMinute; index += 1) expect((await publicGet(unknown)).status).toBe(404);
+      const limited = await publicGet(unknown);
+      expect(limited.status).toBe(429);
+      expect(limited.headers.get("retry-after")).toBe("45");
+      expect(limited.headers.get("cache-control")).toBe("no-store");
+    } finally {
+      resetPublicLimitsForTests();
+    }
   });
 });
 

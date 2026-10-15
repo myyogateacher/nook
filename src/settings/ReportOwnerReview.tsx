@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Crown, RotateCcw, Search } from "lucide-react";
 import { relativeTime } from "../files/format";
-import { ShareSheet } from "../reports/ShareSheet";
+import { OWNER_STATE_LABELS, ShareSheet } from "../reports/ShareSheet";
 import { ownerReview } from "../reports/reportEditApi";
 import { messageOf } from "../reports/reportsApi";
-import type { OwnerReview, OwnerReviewOwner, OwnerReviewScope } from "../../shared/reportsEdit";
+import type { OwnerReview, OwnerReviewScope } from "../../shared/reportsEdit";
 import { useLayerOpener } from "../historyDialogs";
 import { HUB_TITLE_ID } from "./hubModel";
 import "../reports/reports.css";
@@ -16,7 +16,6 @@ const SCOPES: ReadonlyArray<{ value: OwnerReviewScope; label: string }> = [
   { value: "unopenable", label: "You can’t open" }
 ];
 const LAYER = "settings.reportOwners";
-const STATE_LABELS: Record<Exclude<OwnerReviewOwner["state"], "active">, string> = { blocked: "Blocked", guest: "Guest", viewer: "Viewer" };
 
 /**
  * Settings → Report owners (D500, admins): the reports an admin may need to recover. "Nobody can manage"
@@ -82,7 +81,7 @@ export function ReportOwnerReview() {
         </div>
         <dl className="report-source-facts">
           <div><dt>{report.owners.length === 1 ? "Owner" : "Owners"}</dt><dd>{report.owners.length === 0 ? "None left" : <span className="report-owner-review-owners">
-            {report.owners.map((owner) => <span key={owner.id}>{owner.name}{owner.state !== "active" && <span className="reports-status">{STATE_LABELS[owner.state]}</span>}</span>)}
+            {report.owners.map((owner) => <span key={owner.id}>{owner.name}{owner.state !== "active" && <span className="reports-status">{OWNER_STATE_LABELS[owner.state]}</span>}</span>)}
           </span>}</dd></div>
         </dl>
         <div className="report-source-actions">

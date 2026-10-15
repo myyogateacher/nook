@@ -2,6 +2,7 @@ import { audit, db } from "../db";
 import type { OwnerReview, OwnerReviewOwner, OwnerReviewReport, OwnerReviewScope } from "../../shared/reportsEdit";
 import { readableReportSql } from "./access";
 import { ReportError } from "./errors";
+import { ownerStateOf } from "./owners";
 
 /**
  * Settings → Report owners (D500, admins only): the reports an admin may need to recover, so they can add
@@ -26,9 +27,6 @@ const ACTIVE_OWNER_SQL = `EXISTS (SELECT 1 FROM report_owners o_rv JOIN users u_
 
 type Row = { id: string; title: string; updated_at: string; folder_id: string | null; folder_name: string | null; can_open: number; managed: number };
 
-const stateOf = (row: { disabled_at: string | null; role: string }): OwnerReviewOwner["state"] =>
-  row.disabled_at !== null ? "blocked" : row.role === "guest" ? "guest" : row.role === "viewer" ? "viewer" : "active";
-
 export function ownerReview(actor: { id: string; role: string }, options: { scope?: OwnerReviewScope; q?: string; ids?: readonly string[] | null; via?: { keyId?: string } } = {}): OwnerReview {
   if (actor.role !== "admin") throw new ReportError(403, "ADMIN_ONLY", "Only admins review report owners");
   const scope = options.scope ?? "unmanaged";
@@ -47,7 +45,7 @@ export function ownerReview(actor: { id: string; role: string }, options: { scop
     const ownerRows = db.query(`SELECT o.report_id, u.id, u.display_name AS name, u.disabled_at, u.role FROM report_owners o JOIN users u ON u.id = o.user_id
       WHERE o.report_id IN (SELECT value FROM json_each(?)) ORDER BY o.created_at, u.display_name COLLATE NOCASE, u.id`)
       .all(JSON.stringify(rows.map((row) => row.id))) as Array<{ report_id: string; id: string; name: string; disabled_at: string | null; role: string }>;
-    for (const row of ownerRows) owners.set(row.report_id, [...owners.get(row.report_id) ?? [], { id: row.id, name: row.name, state: stateOf(row) }]);
+    for (const row of ownerRows) owners.set(row.report_id, [...owners.get(row.report_id) ?? [], { id: row.id, name: row.name, state: ownerStateOf(row) }]);
   }
   const reports = rows.map((row): OwnerReviewReport => ({
     id: row.id, title: row.title, folder: row.folder_id && row.folder_name !== null ? { id: row.folder_id, name: row.folder_name } : null,

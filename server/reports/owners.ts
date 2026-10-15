@@ -1,6 +1,6 @@
 import { audit, db, now } from "../db";
 import { logger } from "../log";
-import type { ReportOwner, ReportOwners } from "../../shared/reportsEdit";
+import type { ReportOwner, ReportOwners, ReportOwnerState } from "../../shared/reportsEdit";
 import { isReportOwner } from "./access";
 import { ReportError, reportNotFound } from "./errors";
 
@@ -32,6 +32,13 @@ function manageable(reportId: string, actor: Actor): { id: string; owner_id: str
   return row;
 }
 
+/**
+ * An owner's state (D503), the same in the Share sheet's Owners list and Settings → Report owners:
+ * `active` only for a member or an admin who is not blocked (who can act as an owner, as `activeOwners`).
+ */
+export const ownerStateOf = (row: { disabled_at: string | null; role: string }): ReportOwnerState =>
+  row.disabled_at !== null ? "blocked" : row.role === "guest" ? "guest" : row.role === "viewer" ? "viewer" : "active";
+
 export function canManageOwners(reportId: string, actor: Actor): boolean {
   try {
     manageable(reportId, actor);
@@ -47,7 +54,7 @@ export function listOwners(reportId: string, actor: Actor): ReportOwners {
     FROM report_owners o JOIN users u ON u.id = o.user_id LEFT JOIN users a ON a.id = o.added_by WHERE o.report_id = ? ORDER BY o.created_at, u.display_name COLLATE NOCASE, o.user_id`)
     .all(reportId) as Array<{ id: string; name: string; disabled_at: string | null; role: string; created_at: string; added_by: string | null }>;
   return {
-    owners: rows.map((row): ReportOwner => ({ id: row.id, name: row.name, primary: row.id === report.owner_id, active: row.disabled_at === null && row.role !== "guest", addedBy: row.added_by, addedAt: row.created_at })),
+    owners: rows.map((row): ReportOwner => ({ id: row.id, name: row.name, primary: row.id === report.owner_id, active: row.disabled_at === null && row.role !== "guest", state: ownerStateOf(row), addedBy: row.added_by, addedAt: row.created_at })),
     canManage: true
   };
 }

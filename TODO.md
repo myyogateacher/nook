@@ -25,10 +25,8 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 - [ ] Reports at 390 px (lane RUI QA): a KPI title breaks inside a word ("Request / s" on a half-width tile), and a horizontal bar chart's value-axis labels crowd together ("500 1,000 1,500 2,000…"); the Inspect sheet's "Data" tab is under the 64 px button-lint width at 390 and 1280.
 - [ ] Report option search (D491) has no MCP tool: an agent passing a select value past the first 200 to `get_report`/`refresh_report` must already know it (the run checks it against ClickHouse); a `search_report_options` tool would let it look one up.
 
-- [ ] Settings → Report owners leftovers (lane ORG, D500):
-  - [ ] The Share sheet's Owners list (`listOwners`) calls an owner who is now a viewer `active` (no tag), while Settings → Report owners counts them as unable to manage (`activeOwners` needs a member or an admin). Show "Viewer" there too, or say why it differs.
+- [ ] Settings → Report owners leftover (lane ORG, D500):
   - [ ] Each list shows the 200 most recently changed (a title search finds the rest); no paging. Both lists check every live report (admins only; not measured past a few hundred); measure at 50,000 and page by cursor if needed.
-  - [ ] Settings → Report data sources: Forward after Back left the section does not reopen the data source sheet (no `useLayerOpener`, D480); Report owners does.
 
 - [ ] Files PDF text leftovers (lane FILES, D496): `read_attachment_text` and the reports Nook doc source still read text files only (`readDocumentText`); a scanned PDF has no text layer and gets no OCR; the PDF worker's memory is bounded only by the 16 MiB and 300-page caps (Bun workers take no heap limit); "Pick from Nook" (reports) still offers text files only.
 - [ ] `tests/restV1.test.ts` parity: not reproduced in two full runs (lane FTS). The only cross-module read tool for its key is `get_today`, which lists other people's items shared with everyone that earlier files' background work can change between the MCP and REST calls; the check now brackets the REST call with two MCP reads. If it recurs, the failing tool name pins the shared state.

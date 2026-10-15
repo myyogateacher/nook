@@ -527,7 +527,7 @@ export const reportTools: McpToolSpec[] = [
   defineTool({
     name: "list_report_owners",
     title: "List a report's owners",
-    description: `A report's owners: id, name, whether they are the primary owner (scheduled refreshes run as them), whether they can act (not blocked), who added them, and when. Every owner has every owner right. Only an owner of the report or an admin may list them. ${UNTRUSTED}`,
+    description: `A report's owners: id, name, whether they are the primary owner (scheduled refreshes run as them), whether they can sign in (active), their state (active: a member or admin who can act as an owner; blocked, guest, or viewer: cannot), who added them, and when. Every owner has every owner right. Only an owner of the report or an admin may list them. ${UNTRUSTED}`,
     scopes: ["reports:read"],
     access: { mode: "items", items: reportItem },
     write: false,

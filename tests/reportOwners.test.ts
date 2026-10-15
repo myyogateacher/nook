@@ -194,7 +194,7 @@ describe("several owners (D482)", () => {
     await send(solo, "DELETE", `/reports/${binned.id}`);
 
     blockUser({ id: admin.userId, role: "admin" }, solo.userId, null, { via: "web" });
-    expect((await owners(admin, alone.id))!.map((item) => [item.id, item.primary, item.active])).toEqual([[solo.userId, false, false], [admin.userId, true, true]]);
+    expect((await owners(admin, alone.id))!.map((item) => [item.id, item.primary, item.active, item.state])).toEqual([[solo.userId, false, false, "blocked"], [admin.userId, true, true, "active"]]);
     expect(db.query("SELECT COUNT(*) AS count FROM report_owners WHERE report_id = ? AND user_id = ?").get(binned.id, admin.userId)).toEqual({ count: 1 });
     expect(JSON.parse(audits("reports.owner.handover", alone.id)[0]!.metadata_json)).toMatchObject({ from: solo.userId, to: admin.userId });
     // The admin now owns it, so they can open it and restore the binned one.

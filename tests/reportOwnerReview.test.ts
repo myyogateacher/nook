@@ -93,7 +93,8 @@ describe("GET /api/reports/admin/owner-review", () => {
     expect(JSON.parse(event.metadata_json)).toMatchObject({ reportId: ownerless.id, userId: admin.userId });
     const viewerFix = await send(admin, "POST", `/reports/${viewerOwned.id}/owners`, { userId: member.userId });
     expect(JSON.parse((db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'reports.owner.add' AND metadata_json LIKE ?").get(`%${viewerOwned.id}%`) as { metadata_json: string }).metadata_json)).toMatchObject({ asAdmin: true });
-    expect(viewerFix.body.owners.map((item: Json) => [item.id, item.active])).toEqual([[demoted.userId, true], [member.userId, true]]);
+    // D503: the Share sheet's Owners list tags the demoted owner "Viewer", as Settings → Report owners does (`active` still means "can sign in").
+    expect(viewerFix.body.owners.map((item: Json) => [item.id, item.active, item.state])).toEqual([[demoted.userId, true, "viewer"], [member.userId, true, "active"]]);
     const titles = ((await review(admin, "q=zq%20review")).body.reports as Json[]).map((report) => report.title);
     expect(titles).toEqual(["Zq review blocked owner"]);
   });

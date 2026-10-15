@@ -144,10 +144,11 @@ export function readPublicShare(token: string): PublicChatSnapshot | null {
 /** 60 requests a minute per address (sliding window of two fixed minutes), for the page and its API. */
 export const PUBLIC_LIMIT = { perMinute: 60 } as const;
 const windows = new Map<string, { start: number; count: number; previous: number }>();
+let limitClock: () => number = Date.now;
 let checks = 0;
 
 /** Counts one request; returns the seconds to wait when over the limit, else 0. */
-export function publicShareLimited(bucket: string, address: string, nowMs = Date.now()): number {
+export function publicShareLimited(bucket: string, address: string, nowMs = limitClock()): number {
   const key = `${bucket}:${address}`;
   const minute = Math.floor(nowMs / 60_000) * 60_000;
   let entry = windows.get(key);
@@ -163,8 +164,8 @@ export function publicShareLimited(bucket: string, address: string, nowMs = Date
   return 0;
 }
 
-/** Test hook. */
-export const resetPublicLimitsForTests = () => windows.clear();
+/** Test hook: empties the windows and, with `nowMs`, pins the clock the routes count by (null: the real one), so a count never straddles a minute. */
+export const resetPublicLimitsForTests = (nowMs: number | null = null) => { windows.clear(); limitClock = nowMs === null ? Date.now : () => nowMs; };
 
 /** The strict header set for the public page and its API (no-index, no-store, a CSP that allows only Nook's own scripts). */
 export const PUBLIC_PAGE_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'";

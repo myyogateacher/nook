@@ -7,8 +7,11 @@ import { useConfirm } from "../ui/useConfirm";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { REPORT_LIMITS, type ConnectionTest, type DatasourceSummary } from "../../shared/reports";
 import { codeOf, createDatasource, deleteDatasource, listDatasources, messageOf, parseAllowlistText, previewAllowlist, syncDatasource, testDatasource, updateDatasource } from "../reports/reportsApi";
+import { useLayerOpener } from "../historyDialogs";
 import { HUB_TITLE_ID } from "./hubModel";
 import "../reports/reports.css";
+
+const DATASOURCE_LAYER = "settings.datasource";
 
 /**
  * Settings → Report data sources (Wave 45, admins): the ClickHouse connections reports may query.
@@ -33,6 +36,16 @@ export function ReportDataSources() {
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  // D480/D504: Forward after Back left this section reopens the sheet its layer names ("new" or a data
+  // source id); an id waits for the list, which the section loads as it mounts.
+  const [reopening, setReopening] = useState<string | null>(null);
+  useLayerOpener(DATASOURCE_LAYER, (arg) => { if (arg === "new") setEditing("new"); else if (arg) setReopening(arg); });
+  useEffect(() => {
+    if (!reopening || !list) return;
+    const source = list.find((item) => item.id === reopening);
+    if (source) setEditing(source);
+    setReopening(null);
+  }, [list, reopening]);
 
   async function test(source: DatasourceSummary) {
     setBusy(`test:${source.id}`);
@@ -128,7 +141,7 @@ function DatasourceSheet({ source, onCancel, onSaved }: { source: DatasourceSumm
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ids = { name: useId(), url: useId(), user: useId(), password: useId(), database: useId(), allowlist: useId(), rows: useId(), timeout: useId() };
-  useHistoryDialogGuard(true, onCancel, { blocked: busy });
+  useHistoryDialogGuard(true, onCancel, { blocked: busy, layerKey: `${DATASOURCE_LAYER}:${source?.id ?? "new"}` });
 
   // The live match count: once saved, the patterns are counted against ClickHouse's table list (cached a minute).
   useEffect(() => {

@@ -21,7 +21,7 @@ import { queryResults, reportRun, startRefresh } from "./refresh";
 import { saveSchedule } from "./scheduler";
 import { listReportsPage, parseSpec as parseStoredSpec, setFavorite } from "./service";
 import { createFolder, listFolders, moveReportToFolder, updateFolder } from "./folders";
-import { addOwner, listOwners, removeOwner } from "./owners";
+import { addOwner, listOwners } from "./owners";
 import { REPORT_FOLDER_NAME_MAX, REPORT_FOLDERS_PER_WORKSPACE, REPORT_PAGE_SIZE, REPORT_STATUSES } from "../../shared/reports";
 import { knownSpec } from "./specCheck";
 import type { ReportSpec } from "../../shared/reports";
@@ -45,9 +45,9 @@ const parseSpec = (json: string): ReportSpec => knownSpec(parseStoredSpec(json))
  *   with per-caller counts), `create_report_folder` (reports:write: any member), `update_report_folder`
  *   (reports:write: rename, move, reorder; admins only), and `move_report_to_folder` (reports:write: a
  *   report's owners). Never deletes: a folder is deleted only in the app, by an admin, to the Bin.
- * - Phase 2 (D482): `list_report_owners` (reports:read: an owner or an admin), and `add_report_owner` /
- *   `remove_report_owner` (reports:write: an owner or an admin; audited; the last owner is never
- *   removed). Never offered to chat agents.
+ * - Phase 2 (D482): `list_report_owners` (reports:read: an owner or an admin) and `add_report_owner`
+ *   (reports:write: an owner or an admin; audited). Owner removal is app-only (D180). Never offered to
+ *   chat agents.
  * - Report organization phase 1: list_reports filters (owner, statuses, data source, scheduled,
  *   favorites, shared, folder) and pages by cursor; `star_report` and `unstar_report` (reports:write:
  *   the key owner's own Favorites, audited; a star needs a report they can open).
@@ -527,17 +527,6 @@ export const reportTools: McpToolSpec[] = [
     buckets: ["report_write"],
     inputSchema: z.object({ reportId, userId: z.string().uuid().describe("The person to make an owner") }),
     handler: (args, key) => asOwner(key, (role) => addOwner({ id: key.userId, role }, args.reportId.toLowerCase(), args.userId.toLowerCase(), { keyId: key.keyId }))
-  }),
-  defineTool({
-    name: "remove_report_owner",
-    title: "Remove a report owner",
-    description: "Removes a person from a report's owners (they keep only what the report's sharing gives them). A report always keeps at least one owner: removing the last one is refused (LAST_OWNER). Only an owner of the report or an admin may do this. Audited.",
-    scopes: ["reports:write"],
-    access: { mode: "items", items: reportItem, related: ["userId"] },
-    write: true,
-    buckets: ["report_write"],
-    inputSchema: z.object({ reportId, userId: z.string().uuid().describe("The owner to remove (from list_report_owners)") }),
-    handler: (args, key) => asOwner(key, (role) => removeOwner({ id: key.userId, role }, args.reportId.toLowerCase(), args.userId.toLowerCase(), { keyId: key.keyId }))
   }),
   // Report organization phase 1 (D486): the key owner's own star; never a grant (lists read it through access, T393).
   defineTool({

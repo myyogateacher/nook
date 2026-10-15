@@ -16,11 +16,8 @@ test("no write tool's name offers a forbidden verb", () => {
   const writes = mcpToolSpecs.filter((spec) => spec.write);
   expect(writes.length).toBeGreaterThan(30);
   for (const spec of writes) expect({ name: spec.name, forbidden: FORBIDDEN_WRITE_NAME.test(spec.name) }).toEqual({ name: spec.name, forbidden: false });
-  // Nor does any tool delete (the Bin is the only removal, and it is always reversible). The one
-  // exception, by the operator's decision (report organization phase 2, D482): remove_report_owner
-  // removes an owner row (never the last owner, T390; audited), it deletes no content.
-  const REMOVES_NO_CONTENT = new Set(["remove_report_owner"]);
-  for (const spec of mcpToolSpecs.filter((item) => !REMOVES_NO_CONTENT.has(item.name))) expect(spec.name).not.toMatch(/(^|_)delete(_|$)|remove|base64/);
+  // Nor does any tool delete (the Bin is the only removal, and it is always reversible).
+  for (const spec of mcpToolSpecs) expect(spec.name).not.toMatch(/(^|_)delete(_|$)|remove|base64/);
 });
 
 test("the Wave 19 tools are exactly these, each with its scopes, all-of scopes, and buckets", () => {

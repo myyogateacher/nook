@@ -92,7 +92,7 @@ Next free ids at planning time: migration **061** (060 is the Files `document_ft
 
 **MCP**
 - `list_report_owners`.
-- Owners can call `add_report_owner` and `remove_report_owner` under `reports:write`. Audited, never the last owner.
+- Owners and admins can call `add_report_owner` under `reports:write` (audited). Owner removal is app-only (D180): no `remove_report_owner` tool.
 
 **Threats**
 | Id | Threat | Mitigation |

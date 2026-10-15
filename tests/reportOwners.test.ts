@@ -256,21 +256,21 @@ describe("MCP owner and folder tools", () => {
   const tool = (name: string) => reportTools.find((item) => item.name === name)!;
   const keyOf = (session: Session, scopes: Array<"reports:read" | "reports:write">) => ({ keyId: `k-owners-${session.userId.slice(0, 6)}`, userId: session.userId, name: "k", scopes });
 
-  test("list_report_owners under reports:read; add and remove under reports:write, audited; never the last owner; never offered to agents", async () => {
-    expect([tool("list_report_owners").scopes, tool("add_report_owner").scopes, tool("remove_report_owner").scopes, tool("update_report_folder").scopes]).toEqual([["reports:read"], ["reports:write"], ["reports:write"], ["reports:write"]]);
+  test("list_report_owners under reports:read; add under reports:write, audited; no removal over MCP (D180); never offered to agents", async () => {
+    expect([tool("list_report_owners").scopes, tool("add_report_owner").scopes, tool("update_report_folder").scopes]).toEqual([["reports:read"], ["reports:write"], ["reports:write"]]);
+    expect(reportTools.some((item) => item.name === "remove_report_owner")).toBe(false);
     const readOnly = visibleTools(keyOf(owner, ["reports:read"])).map((item) => item.name);
     expect(readOnly).toContain("list_report_owners");
     expect(readOnly).not.toContain("add_report_owner");
-    for (const name of ["list_report_owners", "add_report_owner", "remove_report_owner", "update_report_folder"]) expect([name, NOOK_NEVER_TOOLS.has(name)]).toEqual([name, true]);
+    for (const name of ["list_report_owners", "add_report_owner", "update_report_folder"]) expect([name, NOOK_NEVER_TOOLS.has(name)]).toEqual([name, true]);
 
     const report = await newReport(owner, "MCP owners");
     const key = keyOf(owner, ["reports:read", "reports:write"]);
     const added = await tool("add_report_owner").handler({ reportId: report.id, userId: coOwner.userId }, key) as Json;
     expect(added.owners.map((item: Json) => item.id)).toEqual([owner.userId, coOwner.userId]);
     expect(((await tool("list_report_owners").handler({ reportId: report.id }, key)) as Json).owners).toHaveLength(2);
-    await tool("remove_report_owner").handler({ reportId: report.id, userId: coOwner.userId }, key);
-    await expect(Promise.resolve().then(() => tool("remove_report_owner").handler({ reportId: report.id, userId: owner.userId }, key))).rejects.toThrow(/at least one owner/);
-    const events = audits("reports.owner.add", report.id).concat(audits("reports.owner.remove", report.id)).map((row) => JSON.parse(row.metadata_json) as Json);
+    const events = audits("reports.owner.add", report.id).map((row) => JSON.parse(row.metadata_json) as Json);
+    expect(events).toHaveLength(1);
     expect(events.every((meta) => meta.via === "mcp" && meta.keyId === key.keyId)).toBe(true);
     // A commenter's key cannot list or change the owners.
     await share(owner, report.id, [{ kind: "user", id: commenter.userId, level: "comment" }]);

@@ -10,8 +10,10 @@ const { reportFoldersMigration } = await import("../server/migrations/059_report
 
 /**
  * Report folders (Lane I, migration 059): folder CRUD, nesting up to three levels, reorder, a folder
- * deleted to the Bin moves its reports to Unfiled (and a restore puts them back), owner-only access,
- * filing a report (PATCH and POST /reports with folderId), and the MCP folder tools by scope.
+ * deleted to the Bin moves its reports to Unfiled (and a restore puts them back), filing a report
+ * (PATCH and POST /reports with folderId), and the MCP folder tools by scope. Phase 2 (062, D483): the
+ * tree is the workspace's; members create, only admins rename, move, reorder, and delete
+ * (tests/reportOwners.test.ts has the full matrix).
  */
 
 const fake = startFakeClickhouse(0);
@@ -63,7 +65,8 @@ describe("migration 059 report_folders", () => {
     }
     memory.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role) VALUES ('u1', 'a@example.test', 'A', 'x', ?, 'member')").run(at);
     memory.query("INSERT INTO reports (id, owner_id, title, created_at, updated_at) VALUES ('r1', 'u1', 'Weekly revenue', ?, ?)").run(at, at);
-    runMigrations(memory);
+    // 059's own shape (062 rebuilds the table as the shared tree; tests/reportOwners.test.ts covers that).
+    reportFoldersMigration.up(memory);
     expect(memory.query("SELECT folder_id FROM reports WHERE id = 'r1'").get()).toEqual({ folder_id: null });
     memory.query("INSERT INTO report_folders (id, owner_id, name, created_at, updated_at) VALUES ('f1', 'u1', 'Finance', ?, ?)").run(at, at);
     expect(() => memory.query("INSERT INTO report_folders (id, owner_id, name, created_at, updated_at) VALUES ('f2', 'u1', '', ?, ?)").run(at, at)).toThrow();
@@ -74,6 +77,7 @@ describe("migration 059 report_folders", () => {
     memory.query("DELETE FROM report_folders WHERE id = 'f1'").run();
     expect(memory.query("SELECT folder_id FROM reports WHERE id = 'r1'").get()).toEqual({ folder_id: null });
     reportFoldersMigration.up(memory);
+    runMigrations(memory);
     expect((memory.query("SELECT id FROM schema_migrations WHERE id >= 57 ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id)).toContain(59);
   });
 });
@@ -87,21 +91,25 @@ describe("folders over HTTP", () => {
     expect(weekly.parentId).toBe(q1.id);
     // A fourth level is refused, and so is a move that would make one.
     expect((await send(owner, "POST", "/reports/folders", { name: "Too deep", parentId: weekly.id })).body.code).toBe("TOO_DEEP");
-    expect((await send(owner, "PATCH", `/reports/folders/${finance.id}`, { parentId: growth.id })).body.code).toBe("TOO_DEEP");
+    expect((await send(admin, "PATCH", `/reports/folders/${finance.id}`, { parentId: growth.id })).body.code).toBe("TOO_DEEP");
     // Not into itself.
-    expect((await send(owner, "PATCH", `/reports/folders/${finance.id}`, { parentId: weekly.id })).status).toBe(400);
+    expect((await send(admin, "PATCH", `/reports/folders/${finance.id}`, { parentId: weekly.id })).status).toBe(400);
+    // Only admins rename, move, or reorder (D483).
+    expect((await send(owner, "PATCH", `/reports/folders/${growth.id}`, { name: "Mine now" })).body.code).toBe("ADMIN_ONLY");
     expect((await send(owner, "POST", "/reports/folders", { name: "  " })).status).toBe(400);
     expect((await send(owner, "POST", "/reports/folders", { name: "Two\nlines" })).status).toBe(400);
 
-    const renamed = await send(owner, "PATCH", `/reports/folders/${growth.id}`, { name: "Growth team" });
+    const renamed = await send(admin, "PATCH", `/reports/folders/${growth.id}`, { name: "Growth team" });
     expect(renamed.body.folder.name).toBe("Growth team");
     // Reorder: Growth first among the top-level folders.
-    await send(owner, "PATCH", `/reports/folders/${growth.id}`, { position: 0 });
+    await send(admin, "PATCH", `/reports/folders/${growth.id}`, { position: 0 });
     let listed = await tree(owner);
-    const top = listed.folders.filter((folder) => folder.parentId === null).sort((a, b) => a.position - b.position).map((folder) => folder.name);
-    expect(top.slice(0, 2)).toEqual(["Growth team", "Finance"]);
+    // The tree is shared (D483): other files' top-level folders sit beside these two.
+    const top = listed.folders.filter((folder) => folder.parentId === null && [growth.id, finance.id].includes(folder.id)).sort((a, b) => a.position - b.position).map((folder) => folder.name);
+    expect(listed.folders.find((folder) => folder.id === growth.id)!.position).toBe(0);
+    expect(top).toEqual(["Growth team", "Finance"]);
     // Move Weekly to the top level.
-    const moved = await send(owner, "PATCH", `/reports/folders/${weekly.id}`, { parentId: null });
+    const moved = await send(admin, "PATCH", `/reports/folders/${weekly.id}`, { parentId: null });
     expect(moved.body.folder.parentId).toBeNull();
 
     await newReport(owner, "Revenue", finance.id);
@@ -113,7 +121,7 @@ describe("folders over HTTP", () => {
     const list = (await send(owner, "GET", "/reports")).body.reports as Json[];
     expect(list.find((report) => report.title === "Revenue")!.folderId).toBe(finance.id);
     expect(list.find((report) => report.title === "Loose")!.folderId).toBeNull();
-    const audits = db.query("SELECT event_type FROM audit_log WHERE actor_id = ? AND event_type LIKE 'reports.folder.%'").all(owner.userId) as Array<{ event_type: string }>;
+    const audits = db.query("SELECT event_type FROM audit_log WHERE actor_id IN (?, ?) AND event_type LIKE 'reports.folder.%'").all(owner.userId, admin.userId) as Array<{ event_type: string }>;
     expect(new Set(audits.map((row) => row.event_type))).toEqual(new Set(["reports.folder.create", "reports.folder.update"]));
   });
 
@@ -129,21 +137,26 @@ describe("folders over HTTP", () => {
     expect((await send(owner, "PATCH", `/reports/${report.id}/folder`, {})).status).toBe(400);
   });
 
-  test("owner only: another person's folder or report is a 404; a reader sees the report unfiled, under Shared; viewers and guests cannot write", async () => {
-    const folder = await newFolder(owner, "Private");
+  test("one shared tree: everyone sees the folder, its count is per reader; only the report's owners file it; viewers and guests cannot write", async () => {
+    const folder = await newFolder(owner, "Team folder");
     const report = await newReport(owner, "Shared revenue", folder.id);
     const othersOwn = await newReport(other, "Other's report");
-    expect((await send(other, "PATCH", `/reports/folders/${folder.id}`, { name: "Mine" })).status).toBe(404);
-    expect((await send(other, "DELETE", `/reports/folders/${folder.id}`)).status).toBe(404);
-    expect((await send(other, "POST", "/reports/folders", { name: "Sub", parentId: folder.id })).status).toBe(404);
-    expect((await send(other, "POST", "/reports", { title: "In yours", datasourceId: datasource.id, folderId: folder.id })).status).toBe(404);
+    expect((await send(other, "PATCH", `/reports/folders/${folder.id}`, { name: "Mine" })).status).toBe(403);
+    expect((await send(other, "DELETE", `/reports/folders/${folder.id}`)).status).toBe(403);
+    // Any member creates, also inside someone else's folder, and files their own report there.
+    expect((await send(other, "POST", "/reports/folders", { name: "Sub", parentId: folder.id })).status).toBe(201);
+    expect((await send(other, "POST", "/reports", { title: "In the team folder", datasourceId: datasource.id, folderId: folder.id })).status).toBe(201);
+    // Filing is the report's owners' (D482): not another person's report.
     expect((await send(owner, "PATCH", `/reports/${othersOwn.id}/folder`, { folderId: folder.id })).status).toBe(404);
-    expect((await tree(other)).folders.some((item) => item.id === folder.id)).toBe(false);
+    // The folder is seen by everyone, but counts only what each can read (T391).
+    expect((await tree(other)).folders.find((item) => item.id === folder.id)!.count).toBe(1);
+    expect((await tree(owner)).folders.find((item) => item.id === folder.id)!.count).toBe(1);
 
-    // Shared with everyone: the reader lists it with no folder, and counts it under Shared with me.
+    // Shared with everyone: the reader sees it in the folder too, and counts it under Shared with me.
     db.query("UPDATE reports SET visibility = 'all_users' WHERE id = ?").run(report.id);
     const seen = ((await send(other, "GET", "/reports")).body.reports as Json[]).find((item) => item.id === report.id)!;
-    expect(seen).toMatchObject({ isOwner: false, folderId: null });
+    expect(seen).toMatchObject({ isOwner: false, folderId: folder.id, level: "view" });
+    expect((await tree(other)).folders.find((item) => item.id === folder.id)!.count).toBe(2);
     expect((await tree(other)).counts.shared).toBeGreaterThanOrEqual(1);
     expect((await send(other, "PATCH", `/reports/${report.id}/folder`, { folderId: null })).status).toBe(404);
     db.query("UPDATE reports SET visibility = 'private' WHERE id = ?").run(report.id);
@@ -157,22 +170,24 @@ describe("folders over HTTP", () => {
     const child = await newFolder(owner, "Campaigns", parent.id);
     const inParent = await newReport(owner, "Signups", parent.id);
     const inChild = await newReport(owner, "CTR", child.id);
-    const removed = await send(owner, "DELETE", `/reports/folders/${parent.id}`);
+    expect((await send(owner, "DELETE", `/reports/folders/${parent.id}`)).status).toBe(403);
+    const removed = await send(admin, "DELETE", `/reports/folders/${parent.id}`);
     expect(removed.body).toMatchObject({ ok: true, unfiled: 2, subfolders: 1 });
     // Never deleted: both reports are live and unfiled.
     const list = (await send(owner, "GET", "/reports")).body.reports as Json[];
     expect(list.filter((report) => [inParent.id, inChild.id].includes(report.id)).map((report) => report.folderId)).toEqual([null, null]);
     expect((await tree(owner)).folders.some((folder) => [parent.id, child.id].includes(folder.id))).toBe(false);
-    // The Bin lists the folder deleted, not its subfolder.
-    const bin = (await send(owner, "GET", "/bin")).body.items as Json[];
+    // An admin's Bin lists the folder deleted, not its subfolder; a member's Bin holds no folders.
+    const bin = (await send(admin, "GET", "/bin")).body.items as Json[];
     expect(bin.filter((item) => item.type === "report_folder").map((item) => item.id)).toContain(parent.id);
     expect(bin.some((item) => item.id === child.id)).toBe(false);
-    expect((await send(other, "POST", `/bin/report_folder/${parent.id}/restore`)).status).toBe(404);
+    expect(((await send(owner, "GET", "/bin")).body.items as Json[]).some((item) => item.type === "report_folder")).toBe(false);
+    expect((await send(owner, "POST", `/bin/report_folder/${parent.id}/restore`)).status).toBe(404);
 
     // One report is filed elsewhere meanwhile: it stays there after the restore.
     const elsewhere = await newFolder(owner, "Elsewhere");
     await send(owner, "PATCH", `/reports/${inChild.id}/folder`, { folderId: elsewhere.id });
-    const restored = await send(owner, "POST", `/bin/report_folder/${parent.id}/restore`);
+    const restored = await send(admin, "POST", `/bin/report_folder/${parent.id}/restore`);
     expect(restored.status).toBe(200);
     const after = (await send(owner, "GET", "/reports")).body.reports as Json[];
     expect(after.find((report) => report.id === inParent.id)!.folderId).toBe(parent.id);
@@ -180,8 +195,9 @@ describe("folders over HTTP", () => {
     expect((await tree(owner)).folders.find((folder) => folder.id === child.id)!.parentId).toBe(parent.id);
 
     // Purged: the folders go, the reports stay.
-    await send(owner, "DELETE", `/reports/folders/${parent.id}`);
-    expect((await send(owner, "DELETE", `/bin/report_folder/${parent.id}`)).status).toBe(200);
+    await send(admin, "DELETE", `/reports/folders/${parent.id}`);
+    expect((await send(owner, "DELETE", `/bin/report_folder/${parent.id}`)).status).toBe(404);
+    expect((await send(admin, "DELETE", `/bin/report_folder/${parent.id}`)).status).toBe(200);
     expect(db.query("SELECT COUNT(*) AS count FROM report_folders WHERE id IN (?, ?)").get(parent.id, child.id)).toEqual({ count: 0 });
     expect(db.query("SELECT folder_id, deleted_at FROM reports WHERE id = ?").get(inParent.id)).toEqual({ folder_id: null, deleted_at: null });
   });

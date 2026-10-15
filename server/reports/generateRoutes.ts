@@ -6,7 +6,7 @@ import { REPORT_LIMITS } from "../../shared/reports";
 import type { GenerationRun } from "../../shared/reportsGenerate";
 import { TOOL_NAME } from "../agents/toolServers";
 import { db } from "../db";
-import { readableReport } from "./access";
+import { isReportOwner, readableReport } from "./access";
 import { checkDoc, docServerChoices, docState, setBrowseTools } from "./docSource";
 import { DOC_BROWSE_LIMITS } from "../../shared/reportsGenerate";
 import { cancelGenerate, refreshPageMetrics, regenerate, startGenerate } from "./generate";
@@ -64,7 +64,7 @@ export function registerGenerateRoutes(app: Hono<AppEnv>) {
   app.get("/api/reports/:reportId/generation", handle((c) => {
     const reportId = id(c, "reportId");
     const report = readableReport(reportId, c.get("user").id);
-    const owner = report.owner_id === c.get("user").id;
+    const owner = isReportOwner(report.id, c.get("user").id);
     const row = db.query("SELECT id, agent_run_id, status, error, doc_snapshot_id, started_at, finished_at, plan_json FROM report_runs WHERE report_id = ? AND kind = 'generate' ORDER BY started_at DESC, rowid DESC LIMIT 1").get(reportId) as RunRow | null;
     // Review L2: a reader of a shared report sees the status, never the agent run or the doc snapshot;
     // review L6: nor the error's text (it can quote the doc, the SQL, or the provider), only that it failed.

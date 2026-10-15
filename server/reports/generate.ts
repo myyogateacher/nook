@@ -11,7 +11,7 @@ import { readAgentSettings, roleMayChat } from "../agents/settings";
 import { AgentError, requireAgentsEnabled } from "../agents/status";
 import { openChannel, type RunChannel } from "../agents/stream";
 import { ownedReport } from "./access";
-import { ownedFolder } from "./folderAccess";
+import { liveFolder } from "./folderAccess";
 import { allowlistOf, usableDatasource, type DatasourceRow } from "./datasources";
 import { cutBytes, docServerFor, docToolOf, fetchDoc, fetchNookFetched, recordSnapshot, snapshotOf } from "./docSource";
 import { NOOK_SOURCE_ID, nookBrowseSource, nookCatalog, nookOrigins, nookSourceName } from "./nookSource";
@@ -430,7 +430,7 @@ async function startReserved(actor: Actor, input: GenerateInput, reportId: strin
   if (existing && db.query("SELECT 1 FROM report_runs WHERE report_id = ? AND status = 'running'").get(existing.id)) throw runInProgress();
   const datasource = usableDatasource(input.datasourceId ?? existing?.datasource_id ?? null);
   // K1: the folder is checked before the doc is read, and the report is created in it (one insert).
-  const folderId = !existing && input.folderId ? ownedFolder(input.folderId.toLowerCase(), actor.userId).id : null;
+  const folderId = !existing && input.folderId ? liveFolder(input.folderId.toLowerCase()).id : null;
   // B4: the doc is in Nook itself (read as the owner) or behind an admin's tool server.
   const nook = input.serverId === NOOK_SOURCE_ID;
   const server: ToolServerRow | null = nook ? null : docServerFor(input.serverId, actor.role);

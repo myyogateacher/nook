@@ -22,10 +22,11 @@ const FINANCE = "0b8f7c2e-0000-4000-8000-00000000000f";
 const GROWTH = "0b8f7c2e-0000-4000-8000-00000000000a";
 const QUARTER = "0b8f7c2e-0000-4000-8000-00000000000b";
 const DEEP = "0b8f7c2e-0000-4000-8000-00000000000c";
-const folder = (id: string, name: string, parentId: string | null, position: number): ReportFolder => ({ id, parentId, name, position, count: 0, createdAt: at, updatedAt: at });
+const folder = (id: string, name: string, parentId: string | null, position: number): ReportFolder => ({ id, parentId, name, position, count: 0, createdAt: at, updatedAt: at, createdBy: null });
 // Finance (3 levels: Finance / Quarterly / Deep), then Growth.
 const FOLDERS = [folder(FINANCE, "Finance", null, 0), folder(GROWTH, "Growth", null, 1), folder(QUARTER, "Quarterly", FINANCE, 0), folder(DEEP, "Deep", QUARTER, 0)];
-const folderTree = (): ReportFolderTree => ({ folders: FOLDERS, counts: { all: 0, unfiled: 0, shared: 0, favorites: 0 }, owners: [] });
+// Phase 2 (D483): reordering and nesting folders is an admin's; the server says so in the tree.
+const folderTree = (): ReportFolderTree => ({ folders: FOLDERS, counts: { all: 0, unfiled: 0, shared: 0, favorites: 0 }, owners: [], canCreateFolders: true, canManageFolders: true });
 
 const routes = (extra: Record<string, (call: ApiCall) => unknown> = {}) => mockApi({
   "GET /reports": () => ({ reports: [], nextCursor: null }),

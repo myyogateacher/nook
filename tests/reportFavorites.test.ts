@@ -159,10 +159,11 @@ describe("the paged, filtered list", () => {
     expect(titles((await list(lister, "shared=1")).body)).not.toContain("Gamma unfiled");
     expect(titles((await list(lister, `folder=${parent.id}`)).body)).toEqual(["Alpha in parent"]);
     expect(sorted((await list(lister, `folder=${parent.id}&subtree=1`)).body)).toEqual(["Alpha in parent", "Beta in child"]);
-    expect(sorted((await list(lister, "folder=unfiled")).body)).toEqual(["Delta on the lake", "Gamma unfiled"]);
+    // Phase 2 (D483): Unfiled is every readable report in no folder, a shared one too.
+    expect(sorted((await list(lister, "folder=unfiled")).body)).toEqual(["Delta on the lake", "Epsilon shared", "Gamma unfiled"]);
     expect(sorted((await list(lister, "q=GAMMA")).body)).toEqual(["Gamma unfiled"]);
     expect(titles((await list(lister, `q=a&status=ready&owner=me&folder=${parent.id}`)).body)).toEqual(["Alpha in parent"]);
-    // Someone else's folder lists nothing (folders are the owner's), never their reports.
+    // The tree is shared (D483), but a folder lists only what the person can read (T391).
     expect(titles((await list(sharer, `folder=${parent.id}&subtree=1`)).body)).toEqual([]);
     // Malformed filters are a 400.
     expect((await list(lister, "status=gone")).status).toBe(400);
@@ -175,8 +176,9 @@ describe("the paged, filtered list", () => {
     await send(lister, "PUT", `/reports/${inChild.id}/favorite`);
     const nav = (await send(lister, "GET", "/reports/folders")).body;
     const everyone = (db.query("SELECT COUNT(*) AS count FROM reports WHERE visibility = 'all_users' AND deleted_at IS NULL AND owner_id NOT IN (?, ?)").get(lister.userId, sharer.userId) as { count: number }).count;
-    expect(nav.counts).toEqual({ all: 5 + everyone, unfiled: 2, shared: 1 + everyone, favorites: 2 });
-    expect(nav.folders.map((folder: Json) => [folder.name, folder.count]).sort()).toEqual([["Child", 1], ["Parent", 1]]);
+    const everyoneUnfiled = (db.query("SELECT COUNT(*) AS count FROM reports WHERE visibility = 'all_users' AND deleted_at IS NULL AND folder_id IS NULL AND owner_id NOT IN (?, ?)").get(lister.userId, sharer.userId) as { count: number }).count;
+    expect(nav.counts).toEqual({ all: 5 + everyone, unfiled: 3 + everyoneUnfiled, shared: 1 + everyone, favorites: 2 });
+    expect(nav.folders.filter((folder: Json) => [parent.id, child.id].includes(folder.id)).map((folder: Json) => [folder.name, folder.count]).sort()).toEqual([["Child", 1], ["Parent", 1]]);
     expect(nav.owners[0]).toMatchObject({ id: lister.userId, count: 4, isMe: true });
     expect(nav.owners.find((item: Json) => item.id === sharer.userId)).toMatchObject({ count: 1, isMe: false });
     const row = (await list(lister, "favorites=1")).body.reports.find((report: Json) => report.id === theirs.id);
@@ -266,7 +268,7 @@ describe("the list at scale", () => {
       }
       for (let index = 0; index < 300; index += 1) {
         const ownerId = users[index % users.length]!;
-        memory.query("INSERT INTO report_folders (id, owner_id, parent_id, name, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        memory.query("INSERT INTO report_folders (id, created_by, parent_id, name, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
           .run(`folder-${index}`, ownerId, index >= 60 && index < 180 ? `folder-${index - 60}` : null, `Folder ${index}`, index, iso(0), iso(0));
       }
       const statuses = ["draft", "ready", "stale", "error"];
@@ -290,9 +292,10 @@ describe("the list at scale", () => {
     const cases: Array<{ name: string; options: Parameters<typeof reportListSql>[0]; index: RegExp }> = [
       { name: "all", options: {}, index: /reports_live_recent/ },
       { name: "status", options: { statuses: ["ready", "stale"] }, index: /reports_status|reports_live_recent/ },
-      { name: "owner", options: { ownerId: userId }, index: /reports_owner/ },
+      { name: "owner", options: { ownerId: userId }, index: /report_owners|reports_live_recent/ },
       { name: "favorites", options: { favorites: true }, index: /report_favorites|reports_live_recent/ },
-      { name: "folder subtree", options: { folderId: "folder-1", subtree: true }, index: /reports_folder|reports_owner/ },
+      // Phase 2 (D483): the shared tree; the planner may walk the recent-first index and filter by the subtree list.
+      { name: "folder subtree", options: { folderId: "folder-1", subtree: true }, index: /reports_folder|reports_live_recent/ },
       { name: "title and schedule", options: { q: "revenue", scheduled: true }, index: /reports_live_recent/ }
     ];
     const timings: Record<string, number> = {};

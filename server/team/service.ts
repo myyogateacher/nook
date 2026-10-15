@@ -21,6 +21,7 @@ import { AVATAR_REMOVED, avatarSourceOf, avatarUrlFor, removeAvatarFile } from "
 import { notifyAccess } from "../access/notices";
 import { rotateOnLostReach, snapshotVaultReach } from "../vault/members";
 import { userUnblockedHook } from "../knowledge/hooks";
+import { handOverReportsOf } from "../reports/owners";
 
 export type TeamVia = "web" | "cli" | "mcp";
 /** Who is acting: a signed-in admin (web or MCP), or the host CLI (no actor). */
@@ -274,6 +275,8 @@ export function setRole(actor: TeamActor, targetId: string, input: { role: Role;
     recordEvent(target.id, actor, options.via, "role_change", { fromRole: target.role, toRole: input.role });
     // Agent inbox D152: a read-only role cannot use routines, so they pause (resume after a promotion).
     if (input.role === "viewer" || input.role === "guest") pauseRoutinesOf(target.id);
+    // Report organization phase 2 (D482): a guest has no Reports, so reports nobody else can own go to an admin.
+    if (input.role === "guest") handOverReportsOf(target.id, actor?.id ?? null);
     audit(actor?.id ?? null, null, "team.role_changed", auditMeta(options.via, { targetId: target.id, fromRole: target.role, toRole: input.role }));
     // Security mail (outbound email #2), coalesced 10 min; a toggle back sends nothing.
     mailRoleChanged(target.id, target.role, actor?.id ?? null);
@@ -302,6 +305,8 @@ export function blockUser(actor: TeamActor, targetId: string, reason: string | n
       .run(timestamp, actor?.id ?? null, cleanReason, target.id, target.role);
     if (result.changes !== 1) throw new TeamError(409, "ROLE_CHANGED", "This account changed while you were blocking it. Review it and try again.", { currentRole: userRole(target.id) });
     rotateOnLostReach(actor?.id ?? null, reach);
+    // Report organization phase 2 (D482): reports nobody else can own go to an admin.
+    handOverReportsOf(target.id, actor?.id ?? null);
     const sessions = db.query("DELETE FROM sessions WHERE user_id = ?").run(target.id).changes;
     // Recognised devices start over (migration 044): after an unblock, every sign-in is new again.
     clearDevices(target.id);

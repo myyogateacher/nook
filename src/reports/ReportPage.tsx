@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { CalendarClock, ChevronLeft, CircleStop, Cpu, Database, FileSearch, FileTerminal, FileText, GitCommitVertical, History, Link2, LoaderCircle, MessageSquarePlus, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert, Settings2, Ruler } from "lucide-react";
+import { CalendarClock, ChevronLeft, Crown, CircleStop, Cpu, Database, FileSearch, FileTerminal, FileText, GitCommitVertical, History, Link2, LoaderCircle, MessageSquarePlus, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert, Settings2, Ruler } from "lucide-react";
 import { AccountActions } from "../AppShell";
 import { appName } from "../appName";
 import { notifyBinned } from "../bin/binUndo";
@@ -250,7 +250,8 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
           <button type="button" className="secondary-button report-wide-only" onClick={() => setVersionsOpen(true)}><GitCommitVertical aria-hidden="true" />Versions</button>
           {ownerWrite && <button type="button" className="secondary-button report-wide-only" onClick={share}><Share2 aria-hidden="true" />Share</button>}
           {commands.schedule && <button type="button" className="secondary-button report-wide-only" onClick={commands.schedule.open}><CalendarClock aria-hidden="true" />Schedule</button>}
-          <ReportOverflowMenu label="More report actions" items={overflowItems({ ownerWrite, owner: report.isOwner, commands, runs: () => openRuns(null), versions: () => setVersionsOpen(true), console: consoleInPanel(report) ? () => openConsole() : undefined, copyLink, share, rename: () => setRenaming(true), model: () => setModelOpen(true), metrics: report.isOwner ? () => setMetricsOpen(true) : undefined, remove: () => { void remove(); } })} />
+          <ReportOverflowMenu label="More report actions" items={overflowItems({ ownerWrite, owner: report.isOwner, commands, runs: () => openRuns(null), versions: () => setVersionsOpen(true), console: consoleInPanel(report) ? () => openConsole() : undefined, copyLink, share, rename: () => setRenaming(true), model: () => setModelOpen(true), metrics: report.isOwner ? () => setMetricsOpen(true) : undefined, remove: () => { void remove(); },
+            owners: !ownerWrite && canWrite && report.canManageOwners ? () => setSharing({ copyFailed: false }) : undefined })} />
         </div>
       </div>
 
@@ -285,7 +286,8 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     </ReportRunsContext.Provider>
     {metricsOpen && report && <MetricsSheet reportId={report.id} title={report.title} canEdit={ownerWrite} onClose={() => setMetricsOpen(false)} reopen={() => setMetricsOpen(true)} />}
     {runsAt && report && <RunsSheet key={runsAt.runId ?? ""} reportId={report.id} title={report.title} focusRunId={runsAt.runId} onClose={() => setRunsAt(null)} reopen={() => setRunsAt(lastRuns.current)} />}
-    {sharing && report && <ShareSheet reportId={report.id} title={report.title} onClose={() => setSharing(null)} reopen={() => setSharing({ copyFailed: false })} link={reportLink(report.id)} copyFailed={sharing.copyFailed} flash={flash} />}
+    {sharing && report && <ShareSheet reportId={report.id} title={report.title} onClose={() => setSharing(null)} reopen={() => setSharing({ copyFailed: false })} link={reportLink(report.id)} copyFailed={sharing.copyFailed} flash={flash}
+      canShare={ownerWrite} canManageOwners={canWrite && report.canManageOwners} onOwnersChanged={reloadReport} onLeft={reloadReport} />}
     {linkSheet && report && <LinkSheet url={reportLink(report.id)} title={report.title} onClose={() => setLinkSheet(false)} flash={flash} />}
     {consoleOpen && report && <ConsoleSheet title={report.title} onClose={() => setConsoleOpen(false)} reopen={() => setConsoleOpen(true)} blocked={running}>{consoleBody(true)}</ConsoleSheet>}
     {generating && report && <NewReportSheet sources={generating} reportId={report.id} initialSource={report.datasourceId} onCancel={() => setGenerating(null)} onCreated={() => { setGenerating(null); void load(); }} />}
@@ -302,8 +304,10 @@ export const consoleInPanel = (report: Pick<ReportDetail, "isOwner" | "spec">) =
  * The overflow menu's items: on a phone Runs, Versions, Share, and Schedule first (the header hides them there), then
  * Rename, Model, Check doc, Regenerate, and Move to Bin last (dangerous). Readers see Schedule only.
  */
-export function overflowItems({ ownerWrite, owner = false, commands, runs, versions, console: openConsole, copyLink, share, rename, model, metrics, remove }: { ownerWrite: boolean; owner?: boolean; commands: ReportCommands; runs?: () => void; versions?: () => void; console?: () => void; copyLink?: () => void; share: () => void; rename: () => void; model: () => void; /** E4: the Metrics view (the owner's). */ metrics?: () => void; remove: () => void }): MenuItem[] {
+export function overflowItems({ ownerWrite, owner = false, commands, runs, versions, console: openConsole, copyLink, share, rename, model, metrics, remove, owners }: { ownerWrite: boolean; owner?: boolean; commands: ReportCommands; runs?: () => void; versions?: () => void; console?: () => void; copyLink?: () => void; share: () => void; rename: () => void; model: () => void; /** E4: the Metrics view (the owner's). */ metrics?: () => void; remove: () => void;
+  /** Phase 2 (D482): an admin who is not an owner manages the owners (the Share sheet's Owners section alone). */ owners?: () => void }): MenuItem[] {
   const items: MenuItem[] = [];
+  if (owners) items.push({ id: "owners", label: "Owners", icon: <Crown aria-hidden="true" />, onSelect: owners });
   // Readers (viewers and commenters) have no Share: they copy the link from here.
   if (!owner && copyLink) items.push({ id: "copy-link", label: "Copy link", icon: <Link2 aria-hidden="true" />, onSelect: copyLink });
   if (owner && runs) items.push({ id: "runs", label: "Runs", icon: <History aria-hidden="true" />, onSelect: runs, narrowOnly: true });

@@ -4,7 +4,7 @@ import { INSTRUCTION_LIMITS, type VersionSource } from "../../shared/reportsEdit
 import { diffSpecVersions, parseRenameNote, type VersionDiff, type VersionHistoryItem, type VersionSnapshot } from "../../shared/reportVersions";
 import type { QueryResultView } from "../../shared/reportsView";
 import { logger, shortId } from "../log";
-import { ownedReport, readableReport } from "./access";
+import { isReportOwner, ownedReport, readableReport } from "./access";
 import { ReportError } from "./errors";
 import { capRows, resultView, runningRun, runResults, startPreview, startRefresh, abandonExpiredReportRuns } from "./refresh";
 import { parseSpec } from "./service";
@@ -164,7 +164,7 @@ const isRegenerated = (source: VersionSource, version: number, earlierWithBlocks
 /** The report's versions, newest first (anyone who can read the report; redacted for all but the owner). */
 export function listVersions(reportId: string, userId: string): VersionHistoryItem[] {
   const report = readableReport(reportId, userId);
-  const owner = report.owner_id === userId;
+  const owner = isReportOwner(report.id, userId);
   const rows = db.query(`${VERSION_SELECT} WHERE v.report_id = ? ORDER BY v.version ASC`).all(reportId) as HistoryRow[];
   const latest = rows.at(-1)?.version ?? 0;
   let previous: { version: number; spec: ReportSpec } | null = null;

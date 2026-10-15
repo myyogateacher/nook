@@ -7,7 +7,7 @@ import { CADENCES } from "../../shared/routineSchedule";
 import { BLOCK_ID, QUERY_KEY, REPORT_LIMITS, type ReportBlock } from "../../shared/reports";
 import { INSTRUCTION_LIMITS } from "../../shared/reportsEdit";
 import { versionSourceLabel, versionWhoLabel } from "../../shared/reportVersions";
-import { ownedReport, readableReport, reportLevel } from "./access";
+import { isReportOwner, ownedReport, readableReport, reportLevel } from "./access";
 import { listVersions, previousVersion, versionDiff } from "./versions";
 import { datasourceChoices } from "./datasources";
 import { ReportError } from "./errors";
@@ -20,8 +20,9 @@ import { METRIC_ID, METRIC_LIMITS, type CatalogMetricInput } from "../../shared/
 import { queryResults, reportRun, startRefresh } from "./refresh";
 import { saveSchedule } from "./scheduler";
 import { listReportsPage, parseSpec as parseStoredSpec, setFavorite } from "./service";
-import { createFolder, listFolders, moveReportToFolder } from "./folders";
-import { REPORT_FOLDER_NAME_MAX, REPORT_PAGE_SIZE, REPORT_STATUSES } from "../../shared/reports";
+import { createFolder, listFolders, moveReportToFolder, updateFolder } from "./folders";
+import { addOwner, listOwners, removeOwner } from "./owners";
+import { REPORT_FOLDER_NAME_MAX, REPORT_FOLDERS_PER_WORKSPACE, REPORT_PAGE_SIZE, REPORT_STATUSES } from "../../shared/reports";
 import { knownSpec } from "./specCheck";
 import type { ReportSpec } from "../../shared/reports";
 
@@ -40,9 +41,13 @@ const parseSpec = (json: string): ReportSpec => knownSpec(parseStoredSpec(json))
  *   set_report_schedule, add_report_instruction (queues it for the edit agent; a proposal unless the
  *   owner turned on auto-apply), apply_report_proposal and reject_report_proposal, update_report_query
  *   (a saved query's SQL, through the guard and a full re-validation; a new version).
- * - Lane I, folders: `list_report_folders` (reports:read: the owner's folder tree with counts), and
- *   `create_report_folder` and `move_report_to_folder` (reports:write: the owner's organisation; never
- *   deletes, a folder is deleted only through the Bin in the app).
+ * - Lane I, folders; phase 2 (D483): `list_report_folders` (reports:read: the workspace's shared tree
+ *   with per-caller counts), `create_report_folder` (reports:write: any member), `update_report_folder`
+ *   (reports:write: rename, move, reorder; admins only), and `move_report_to_folder` (reports:write: a
+ *   report's owners). Never deletes: a folder is deleted only in the app, by an admin, to the Bin.
+ * - Phase 2 (D482): `list_report_owners` (reports:read: an owner or an admin), and `add_report_owner` /
+ *   `remove_report_owner` (reports:write: an owner or an admin; audited; the last owner is never
+ *   removed). Never offered to chat agents.
  * - Report organization phase 1: list_reports filters (owner, statuses, data source, scheduled,
  *   favorites, shared, folder) and pages by cursor; `star_report` and `unstar_report` (reports:write:
  *   the key owner's own Favorites, audited; a star needs a report they can open).
@@ -143,19 +148,20 @@ export const reportTools: McpToolSpec[] = [
   defineTool({
     name: "list_report_folders",
     title: "List report folders",
-    description: `The key owner's report folders (their private organisation of the Reports home): id, name, parentId (null at the top; up to 3 levels), position among its siblings, and how many of their reports are directly in it; plus the counts of all reports they can open, Unfiled (their reports in no folder), Shared with me, and Favorites (starred), and the owners of the reports they can open (id, name, count; for list_reports' ownerId). list_reports gives each report's folderId. ${UNTRUSTED}`,
+    description: `The team's report folders: one shared tree that only groups reports and never grants access. Each folder: id, name, parentId (null at the top; up to 3 levels), position among its siblings, and how many reports the key owner can open are directly in it; plus the counts of all reports they can open, Unfiled (in no folder), Shared with me (not theirs), and Favorites (starred), the owners of the reports they can open (id, name, count; for list_reports' ownerId), and whether they may create folders (members) or rename and move them (admins). list_reports gives each report's folderId. ${UNTRUSTED}`,
     scopes: ["reports:read"],
     access: { mode: "list", lists: ["report"] },
     write: false,
     inputSchema: z.object({}),
     handler: (_args, key) => {
-      if (!ownerHasReports(key.userId)) return { folders: [], counts: { all: 0, unfiled: 0, shared: 0, favorites: 0 }, owners: [] };
+      if (!ownerHasReports(key.userId)) return { folders: [], counts: { all: 0, unfiled: 0, shared: 0, favorites: 0 }, owners: [], canCreateFolders: false, canManageFolders: false };
       const ids = keyContainerIds(key, "reports:read", "report");
       const tree = listFolders(key.userId, { ids });
       // A key over chosen reports sees only the folders that hold one of them.
       return {
         folders: tree.folders.filter((folder) => !ids || folder.count > 0).map((folder) => ({ id: folder.id, name: folder.name, parentId: folder.parentId, position: folder.position, reports: folder.count })),
-        counts: tree.counts, owners: tree.owners.map((owner) => ({ id: owner.id, name: owner.id === key.userId ? "me" : owner.name, reports: owner.count }))
+        counts: tree.counts, owners: tree.owners.map((owner) => ({ id: owner.id, name: owner.id === key.userId ? "me" : owner.name, reports: owner.count })),
+        canCreateFolders: tree.canCreateFolders, canManageFolders: tree.canManageFolders
       };
     }
   }),
@@ -231,7 +237,7 @@ export const reportTools: McpToolSpec[] = [
     inputSchema: z.object({ reportId, runId: z.string().uuid().describe("The run id (from refresh_report or create_report)") }),
     handler: ({ reportId: id, runId }, key) => asOwner(key, () => {
       const run = reportRun(id, runId, key.userId);
-      return { run: readableReport(id, key.userId).owner_id === key.userId ? run : { ...run, docSnapshotId: null, agentRunId: null } };
+      return { run: isReportOwner(readableReport(id, key.userId).id, key.userId) ? run : { ...run, docSnapshotId: null, agentRunId: null } };
     })
   }),
   defineTool({
@@ -246,7 +252,7 @@ export const reportTools: McpToolSpec[] = [
       const instruction = getInstruction(id, instructionId, key.userId);
       if (instruction.status !== "proposed") return { instruction };
       // Review M1: a pending proposal is the owner's and its author's only.
-      if (!instruction.isMine && readableReport(id, key.userId).owner_id !== key.userId) return { instruction };
+      if (!instruction.isMine && !isReportOwner(readableReport(id, key.userId).id, key.userId)) return { instruction };
       const proposal = proposalView(id, instructionId, key.userId);
       return {
         instruction,
@@ -447,7 +453,7 @@ export const reportTools: McpToolSpec[] = [
   defineTool({
     name: "create_report_folder",
     title: "Create a report folder",
-    description: "Creates a folder for the key owner's reports on the Reports home, at the top or inside one of their folders (parentId from list_report_folders; folders nest up to 3 levels). Folders are the owner's private organisation: nobody else sees them.",
+    description: "Creates a folder in the team's shared report folder tree, at the top or inside a folder (parentId from list_report_folders; folders nest up to 3 levels). Any member may create one; everyone on the team sees it, and it gives no access to any report. Only admins rename, move, or delete folders.",
     scopes: ["reports:write"],
     access: { mode: "global", related: ["parentId"] },
     write: true,
@@ -464,7 +470,7 @@ export const reportTools: McpToolSpec[] = [
   defineTool({
     name: "move_report_to_folder",
     title: "File a report in a folder",
-    description: "Files one of the key owner's reports in one of their folders (from list_report_folders), or in Unfiled with folderId null. Only the report's place on the Reports home changes: not its content, version, or sharing.",
+    description: "Files a report the key owner owns (any of its owners) in a folder of the shared tree (from list_report_folders), or in Unfiled with folderId null. Only the report's place on the Reports home changes: not its content, version, sharing, or who can open it.",
     scopes: ["reports:write"],
     access: { mode: "items", items: reportItem, related: ["folderId"] },
     write: true,
@@ -477,6 +483,61 @@ export const reportTools: McpToolSpec[] = [
       const moved = moveReportToFolder(key.userId, args.reportId, args.folderId?.toLowerCase() ?? null, { keyId: key.keyId });
       return { report: { id: moved.report.id, title: moved.report.title, folderId: moved.report.folderId, url: reportUrl(moved.report.id) }, previousFolderId: moved.previousFolderId };
     })
+  }),
+  defineTool({
+    name: "update_report_folder",
+    title: "Rename or move a report folder",
+    description: "Renames a folder of the team's shared report tree, moves it under another folder (parentId; null for the top level; up to 3 levels), and/or places it at a position among its siblings. Admins only: anyone else gets ADMIN_ONLY. Reports in it stay where they are.",
+    scopes: ["reports:write"],
+    access: { mode: "global", related: ["folderId", "parentId"] },
+    write: true,
+    buckets: ["report_write"],
+    inputSchema: z.object({
+      folderId: z.string().uuid().describe("The folder (from list_report_folders)"),
+      name: z.string().trim().min(1).max(REPORT_FOLDER_NAME_MAX).optional().describe("A new name"),
+      parentId: z.string().uuid().nullable().optional().describe("A new parent folder, or null for the top level"),
+      position: z.number().int().min(0).max(REPORT_FOLDERS_PER_WORKSPACE).optional().describe("Its place among its siblings, from 0")
+    }),
+    handler: (args, key) => asOwner(key, () => {
+      if (args.name === undefined && args.parentId === undefined && args.position === undefined) throw new ReportError(400, "INVALID", "Change the name, the parent, or the position");
+      const folder = updateFolder(key.userId, args.folderId.toLowerCase(), {
+        ...(args.name !== undefined ? { name: args.name } : {}), ...(args.parentId !== undefined ? { parentId: args.parentId?.toLowerCase() ?? null } : {}), ...(args.position !== undefined ? { position: args.position } : {})
+      }, { keyId: key.keyId });
+      return { folder: { id: folder.id, name: folder.name, parentId: folder.parentId, position: folder.position } };
+    })
+  }),
+  // Phase 2 (D482): a report's owners. Owners and admins manage them; the last owner is never removed (T390).
+  defineTool({
+    name: "list_report_owners",
+    title: "List a report's owners",
+    description: `A report's owners: id, name, whether they are the primary owner (scheduled refreshes run as them), whether they can act (not blocked), who added them, and when. Every owner has every owner right. Only an owner of the report or an admin may list them. ${UNTRUSTED}`,
+    scopes: ["reports:read"],
+    access: { mode: "items", items: reportItem },
+    write: false,
+    inputSchema: z.object({ reportId }),
+    handler: (args, key) => asOwner(key, (role) => listOwners(args.reportId.toLowerCase(), { id: key.userId, role }))
+  }),
+  defineTool({
+    name: "add_report_owner",
+    title: "Add a report owner",
+    description: "Makes a person an owner of a report: they get every owner right (change it, share it, file it, see the doc it came from, move it to the Bin). The person must be a member or an admin on the team. Only an owner of the report or an admin may do this. Audited.",
+    scopes: ["reports:write"],
+    access: { mode: "items", items: reportItem, related: ["userId"] },
+    write: true,
+    buckets: ["report_write"],
+    inputSchema: z.object({ reportId, userId: z.string().uuid().describe("The person to make an owner") }),
+    handler: (args, key) => asOwner(key, (role) => addOwner({ id: key.userId, role }, args.reportId.toLowerCase(), args.userId.toLowerCase(), { keyId: key.keyId }))
+  }),
+  defineTool({
+    name: "remove_report_owner",
+    title: "Remove a report owner",
+    description: "Removes a person from a report's owners (they keep only what the report's sharing gives them). A report always keeps at least one owner: removing the last one is refused (LAST_OWNER). Only an owner of the report or an admin may do this. Audited.",
+    scopes: ["reports:write"],
+    access: { mode: "items", items: reportItem, related: ["userId"] },
+    write: true,
+    buckets: ["report_write"],
+    inputSchema: z.object({ reportId, userId: z.string().uuid().describe("The owner to remove (from list_report_owners)") }),
+    handler: (args, key) => asOwner(key, (role) => removeOwner({ id: key.userId, role }, args.reportId.toLowerCase(), args.userId.toLowerCase(), { keyId: key.keyId }))
   }),
   // Report organization phase 1 (D486): the key owner's own star; never a grant (lists read it through access, T393).
   defineTool({

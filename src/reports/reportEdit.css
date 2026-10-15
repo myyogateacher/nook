@@ -129,3 +129,12 @@
 .report-link-field { display: flex; gap: 8px; min-width: 0; }
 .report-link-field input { flex: 1 1 auto; min-width: 0; min-height: 40px; border: 1px solid var(--report-border); border-radius: 10px; padding: 0 12px; background: var(--report-code-bg); color: var(--report-text); font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-overflow: ellipsis; }
 @media (max-width: 760px), (pointer: coarse) { .report-link-field input { min-height: 44px; } }
+
+/* Phase 2 (D482): the Share sheet's Owners section. */
+.report-owners { display: grid; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--report-border); }
+.report-owners h3 { margin: 0; font-size: 1rem; }
+.report-owners .file-dialog-hint { margin: 0; }
+.report-owner-list .report-share-name { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.report-owner-list .report-share-name > svg { width: 16px; height: 16px; flex: none; color: var(--report-accent); }
+.report-owner-tag { border-radius: 6px; padding: 0 6px; background: var(--report-accent-bg); color: var(--report-accent); font-size: .72rem; font-weight: 650; }
+.report-owner-tag-off { background: var(--report-bad-bg); color: var(--report-bad); }

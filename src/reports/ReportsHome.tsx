@@ -26,6 +26,8 @@ import { copyReportLink, LinkSheet, reportLink } from "./reportLink";
 import { createFolder, datasourceChoices, deleteFolder, deleteReport, fileReport, listFolders, listReports, messageOf, updateFolder, type ReportListQuery } from "./reportsApi";
 
 export const STATUS_LABELS: Record<ReportStatus, string> = { draft: "Draft", ready: "Ready", stale: "Stale", error: "Error" };
+const LEVEL_LABELS: Record<ReportSummary["level"], string> = { owner: "Owner", comment: "Can comment", view: "Can view" };
+const LEVEL_HINTS: Record<ReportSummary["level"], string> = { owner: "You own this report", comment: "Shared with you: you can view it and ask for changes", view: "Shared with you to view" };
 
 type HomeProps = {
   displayName: string;
@@ -321,6 +323,7 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
   ];
 
   const nav = (inDrawer: boolean) => <ReportFolderNav tree={tree} view={view} onSelect={inDrawer ? chooseInDrawer : select} canWrite={canWrite} dragging={dragging} onDropReport={dropReport}
+    canCreate={canWrite && (tree?.canCreateFolders ?? false)} canManage={canWrite && (tree?.canManageFolders ?? false)}
     onNewFolder={() => { if (inDrawer) setDrawer(false); setNaming({ kind: "new", parent: null }); }}
     actions={inDrawer ? { ...actions, newReportIn: (folder) => { setDrawer(false); actions.newReportIn(folder); }, moveTo: (folder) => { setDrawer(false); whenHistorySettled(() => setMovingFolder(folder)); } } : actions} />;
 
@@ -389,8 +392,12 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
                 <span className="reports-row-icon" aria-hidden="true"><ChartColumn /></span>
                 <span className="reports-row-title">
                   <span>{report.title}</span>
-                  {!report.isOwner && <small>by {report.ownerName}</small>}
-                  {report.isOwner && !view && report.folderId && <small className="reports-row-folder">{folderPath(folders, report.folderId)}</small>}
+                  {/* Phase 2 (D482): the person's own level on this report, then whose it is and where it is filed. */}
+                  <em className="reports-row-sub">
+                    {report.level && <i className={`reports-level reports-level-${report.level}`} title={LEVEL_HINTS[report.level]}>{LEVEL_LABELS[report.level]}</i>}
+                    {!report.isOwner && <small>by {report.ownerName}{report.ownerCount > 1 ? ` and ${report.ownerCount - 1} more` : ""}</small>}
+                    {!view && report.folderId && <small className="reports-row-folder">{folderPath(folders, report.folderId)}</small>}
+                  </em>
                 </span>
                 <span className="reports-row-meta">
                   <span className={`reports-status reports-status-${report.status}`}>{STATUS_LABELS[report.status]}</span>

@@ -91,6 +91,14 @@
 .reports-row-title { min-width: 0; display: grid; gap: 2px; }
 .reports-row-title > span { min-width: 0; overflow: hidden; color: #ededee; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .reports-row-title small { min-width: 0; overflow: hidden; color: #85858c; font-size: .76rem; text-overflow: ellipsis; white-space: nowrap; }
+/* Phase 2 (D482): the person's level on the row, then the owner and the folder, on one line under the title. */
+.reports-row-sub { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; overflow: hidden; font-style: normal; }
+.reports-row-sub:empty { display: none; }
+.reports-row-sub small { flex: 0 1 auto; max-width: 100%; }
+.reports-level { flex: none; display: inline-flex; align-items: center; border-radius: 6px; padding: 0 6px; background: #1c1c20; color: #9a9aa1; font-size: .7rem; font-style: normal; font-weight: 650; line-height: 1.5; white-space: nowrap; }
+.reports-level-owner { background: #2b261b; color: #e7c05f; }
+.reports-level-comment { background: #17242a; color: #8cc4d8; }
+.reports-nav-creator { color: #85858c; font-size: .76rem; font-weight: 500; }
 .reports-row-meta { display: contents; color: #9a9aa1; font-size: .8rem; }
 .reports-row-meta > .reports-status { justify-self: start; }
 .reports-row-source, .reports-row-schedule > span { min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; color: #9a9aa1; font-size: .8rem; white-space: nowrap; }

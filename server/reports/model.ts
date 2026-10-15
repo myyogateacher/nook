@@ -4,7 +4,7 @@ import type { ReportModelChoice, ReportModelView } from "../../shared/reportsMod
 import type { ProviderConnection } from "../agents/loop";
 import { connectionFor, defaultProvider, providerChoices } from "../agents/providers";
 import { readAgentSettings, roleMayChat, roleMayCreate } from "../agents/settings";
-import { ownedReport, readableReport } from "./access";
+import { isReportOwner, ownedReport, readableReport } from "./access";
 import { ReportError } from "./errors";
 
 /**
@@ -105,7 +105,7 @@ export function allowedReportModels(providerId: string): string[] {
 export function reportModelView(reportId: string, actor: Actor): ReportModelView {
   const row = readableReport(reportId, actor.id);
   const own = db.query("SELECT model_provider_id, model FROM reports WHERE id = ?").get(reportId) as { model_provider_id: string | null; model: string | null };
-  const canEdit = row.owner_id === actor.id && mayChoose(actor.role);
+  const canEdit = isReportOwner(row.id, actor.id) && mayChoose(actor.role);
   return {
     override: own.model_provider_id || own.model ? { providerId: own.model_provider_id, model: own.model } : null,
     effective: resolveReportModel(reportId),

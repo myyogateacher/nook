@@ -93,8 +93,9 @@ test("the reports tools split by scope: reads under reports:read, every write un
   // The registry first: importing the reports tools on their own closes an import cycle through it.
   await import("../server/mcpTools");
   const { reportTools } = await import("../server/reports/mcpTools");
-  const read = ["list_reports", "list_report_datasources", "list_report_folders", "get_report", "get_report_block", "get_report_run", "get_report_instruction", "list_report_versions", "get_report_version_diff", "get_report_metrics"];
-  const write = ["create_report", "refresh_report", "set_report_schedule", "add_report_instruction", "apply_report_proposal", "reject_report_proposal", "update_report_query", "create_report_folder", "move_report_to_folder", "update_report_metric", "star_report", "unstar_report"];
+  const read = ["list_reports", "list_report_datasources", "list_report_folders", "get_report", "get_report_block", "get_report_run", "get_report_instruction", "list_report_versions", "get_report_version_diff", "get_report_metrics", "list_report_owners"];
+  const write = ["create_report", "refresh_report", "set_report_schedule", "add_report_instruction", "apply_report_proposal", "reject_report_proposal", "update_report_query", "create_report_folder", "move_report_to_folder", "update_report_metric", "star_report", "unstar_report",
+    "update_report_folder", "add_report_owner", "remove_report_owner"];
   expect(reportTools.map((tool) => tool.name).sort()).toEqual([...read, ...write].sort());
   for (const tool of reportTools) {
     const isWrite = write.includes(tool.name);
@@ -102,7 +103,8 @@ test("the reports tools split by scope: reads under reports:read, every write un
     if (isWrite) expect([tool.name, tool.buckets]).toEqual([tool.name, ["report_write"]]);
   }
   // No tool runs SQL it was handed: no run_sql, no console, nothing that deletes (the Bin's tools do).
-  expect(reportTools.some((tool) => /run_sql|console|sql|delete|remove|purge/i.test(tool.name))).toBe(false);
+  // Phase 2: remove_report_owner deletes nothing but an owner row, and never the last owner (T390).
+  expect(reportTools.filter((tool) => /run_sql|console|sql|delete|remove|purge/i.test(tool.name)).map((tool) => tool.name)).toEqual(["remove_report_owner"]);
   // Review L4: the one tool that takes SQL is update_report_query, and the docs say so (no "no ad-hoc SQL" claim).
   const takesSql = reportTools.filter((tool) => "sql" in ((tool.inputSchema as unknown as { shape?: Record<string, unknown> }).shape ?? {})).map((tool) => tool.name);
   expect(takesSql).toEqual(["update_report_query"]);

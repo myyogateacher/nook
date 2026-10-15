@@ -19,7 +19,11 @@ type NavProps = {
   tree: ReportFolderTree | null;
   view: ReportsFolderView | null;
   onSelect: (view: ReportsFolderView | null) => void;
+  /** Files reports (drop targets for an owner's report rows). */
   canWrite: boolean;
+  /** Phase 2 (D483): any member creates folders; only admins rename, move, reorder, or delete them. */
+  canCreate?: boolean;
+  canManage?: boolean;
   /** A report row is being dragged (its id); folders and Unfiled are drop targets meanwhile. */
   dragging: string | null;
   onDropReport: (reportId: string, folderId: string | null) => void;
@@ -27,9 +31,20 @@ type NavProps = {
   actions: FolderActions;
 };
 
+/** Phase 2: two sibling folders with the same name (two people's, from before the shared tree) show who made each. */
+function sameNameSiblings(folders: readonly ReportFolder[]): Set<string> {
+  const seen = new Map<string, string[]>();
+  for (const folder of folders) {
+    const key = `${folder.parentId ?? ""}\u0000${folder.name.toLocaleLowerCase()}`;
+    seen.set(key, [...seen.get(key) ?? [], folder.id]);
+  }
+  return new Set([...seen.values()].filter((ids) => ids.length > 1).flat());
+}
+
 /**
  * The Reports home's left nav (Lane I), in the Notes folder sidebar's look: All reports, Favorites (phase 1), Unfiled, the
- * owner's folder tree with counts (up to three levels), Shared with me, and New folder. Each folder has a
+ * workspace's shared folder tree (phase 2, D483) with per-reader counts (up to three levels), Shared with me, and New folder.
+ * Members get New folder and New subfolder; only admins get Rename, Move, Move up/down, Delete, and folder drags. Each folder has a
  * ⋯ menu (rename, new subfolder, new report here, delete). While a report row is dragged, Unfiled and
  * every folder are drop targets, highlighted under the pointer. On a phone the same list sits in a sheet.
  * K2: a folder drags too: onto the middle of another folder to nest it there, or onto its top or bottom
@@ -49,7 +64,7 @@ function mergeHandlers(first: Handlers, second: Handlers): Handlers {
   return out;
 }
 
-export function ReportFolderNav({ tree, view, onSelect, canWrite, dragging, onDropReport, onNewFolder, actions }: NavProps) {
+export function ReportFolderNav({ tree, view, onSelect, canWrite, canCreate = canWrite, canManage = canWrite, dragging, onDropReport, onNewFolder, actions }: NavProps) {
   const [over, setOver] = useState<string | null>(null);
   const [draggingFolder, setDraggingFolder] = useState<string | null>(null);
   const [folderOver, setFolderOver] = useState<{ id: string; zone: FolderDropZone; plan: FolderDropPlan } | null>(null);
@@ -107,6 +122,7 @@ export function ReportFolderNav({ tree, view, onSelect, canWrite, dragging, onDr
     </button>;
 
   const nodes = tree ? orderedFolders(tree.folders) : [];
+  const twins = sameNameSiblings(folders);
   const dropClass = (id: string) => {
     if (!draggingFolder) return "";
     if (id === draggingFolder) return " folder-dragging";
@@ -121,25 +137,28 @@ export function ReportFolderNav({ tree, view, onSelect, canWrite, dragging, onDr
     <div className="reports-nav-label">Folders</div>
     <ul className="reports-nav-tree" role="list">
       {nodes.map(({ folder, depth }) => {
-        const menu: MenuItem[] = canWrite ? [
-          { id: "rename", label: "Rename", icon: <Pencil aria-hidden="true" />, onSelect: () => actions.rename(folder) },
-          ...(canNest(depth) ? [{ id: "sub", label: "New subfolder", icon: <FolderPlus aria-hidden="true" />, onSelect: () => actions.newSubfolder(folder) }] : []),
-          { id: "report", label: "New report here", icon: <FilePlus2 aria-hidden="true" />, onSelect: () => actions.newReportIn(folder) },
-          { id: "move", label: "Move folder to…", icon: <FolderInput aria-hidden="true" />, onSelect: () => actions.moveTo(folder) },
-          { id: "up", label: "Move up", icon: <ArrowUp aria-hidden="true" />, disabled: !planStep(folders, folder.id, -1), onSelect: () => { const place = planStep(folders, folder.id, -1); if (place) actions.place(folder, place); } },
-          { id: "down", label: "Move down", icon: <ArrowDown aria-hidden="true" />, disabled: !planStep(folders, folder.id, 1), onSelect: () => { const place = planStep(folders, folder.id, 1); if (place) actions.place(folder, place); } },
-          { id: "delete", label: "Delete folder", icon: <Trash2 aria-hidden="true" />, danger: true, onSelect: () => actions.remove(folder) }
-        ] : [];
-        const folderDrag = canWrite ? { draggable: true, onDragStart: (event: DragEvent<HTMLElement>) => startFolderDrag(event, folder), onDragEnd: endFolderDrag, ...folderDropProps(folder) } : {};
+        const menu: MenuItem[] = [
+          ...(canManage ? [{ id: "rename", label: "Rename", icon: <Pencil aria-hidden="true" />, onSelect: () => actions.rename(folder) }] : []),
+          ...(canCreate && canNest(depth) ? [{ id: "sub", label: "New subfolder", icon: <FolderPlus aria-hidden="true" />, onSelect: () => actions.newSubfolder(folder) }] : []),
+          ...(canWrite ? [{ id: "report", label: "New report here", icon: <FilePlus2 aria-hidden="true" />, onSelect: () => actions.newReportIn(folder) }] : []),
+          ...(canManage ? [
+            { id: "move", label: "Move folder to…", icon: <FolderInput aria-hidden="true" />, onSelect: () => actions.moveTo(folder) },
+            { id: "up", label: "Move up", icon: <ArrowUp aria-hidden="true" />, disabled: !planStep(folders, folder.id, -1), onSelect: () => { const place = planStep(folders, folder.id, -1); if (place) actions.place(folder, place); } },
+            { id: "down", label: "Move down", icon: <ArrowDown aria-hidden="true" />, disabled: !planStep(folders, folder.id, 1), onSelect: () => { const place = planStep(folders, folder.id, 1); if (place) actions.place(folder, place); } },
+            { id: "delete", label: "Delete folder", icon: <Trash2 aria-hidden="true" />, danger: true, onSelect: () => actions.remove(folder) }
+          ] : [])
+        ];
+        const label = twins.has(folder.id) && folder.createdBy ? <>{folder.name}<small className="reports-nav-creator"> · {folder.createdBy.name}</small></> : folder.name;
+        const folderDrag = canManage ? { draggable: true, onDragStart: (event: DragEvent<HTMLElement>) => startFolderDrag(event, folder), onDragEnd: endFolderDrag, ...folderDropProps(folder) } : {};
         return <li key={folder.id} className="reports-nav-entry" style={{ paddingLeft: `${(depth - 1) * 16}px` }}>
-          {item(folder.id, folder.name, <FolderIcon aria-hidden="true" />, folder.count, view === folder.id, () => onSelect(folder.id), mergeHandlers(dropProps(folder.id, folder.id), folderDrag), dropClass(folder.id))}
+          {item(folder.id, label, <FolderIcon aria-hidden="true" />, folder.count, view === folder.id, () => onSelect(folder.id), mergeHandlers(dropProps(folder.id, folder.id), folderDrag), dropClass(folder.id))}
           {menu.length > 0 && <ReportOverflowMenu compact className="reports-nav-menu" label={`${folder.name} folder actions`} items={menu} />}
         </li>;
       })}
     </ul>
     {draggingFolder && <p className={`reports-nav-drop-note${refused ? " refused" : ""}`} role="status">{refused ?? "Drop on a folder to nest it, or on its top or bottom edge to reorder."}</p>}
-    {tree && !nodes.length && <p className="reports-nav-empty">{canWrite ? "No folders yet. Create one to group your reports." : "No folders yet."}</p>}
-    {canWrite && <button type="button" className="reports-nav-new" onClick={onNewFolder}><FolderPlus aria-hidden="true" /><span>New folder</span></button>}
+    {tree && !nodes.length && <p className="reports-nav-empty">{canCreate ? "No folders yet. Create one to group the team's reports." : "No folders yet."}</p>}
+    {canCreate && <button type="button" className="reports-nav-new" onClick={onNewFolder}><FolderPlus aria-hidden="true" /><span>New folder</span></button>}
     <div className="reports-nav-sep" />
     {item("shared", "Shared with me", <Users aria-hidden="true" />, tree?.counts.shared, view === "shared", () => onSelect("shared"))}
   </nav>;

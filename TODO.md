@@ -13,11 +13,12 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 
 ## In flight
 
-- [ ] Report organization at scale ([plan](docs/plan/REPORTS_ORG.md), Tableau-style; replaces "readers' own placement"; the D460 `group_grants` fold becomes optional cleanup). Phase 2 follows the operator's simple model; all its questions are settled.
-  - [ ] (Lane P2) Phase 2 (062): simple permissions (operator decision, 2026-10-15). Folders are only for grouping and never grant access. A report can have several owners, and an owner or an admin can make others owners. An owner can change the report's folder, its sharing and its other permissions. A report always keeps at least one owner. Folders are one workspace-wide tree. Any member can create a folder; only admins can rename, move, reorder or delete one.
+- [ ] Report organization at scale ([plan](docs/plan/REPORTS_ORG.md), Tableau-style; replaces "readers' own placement"; the D460 `group_grants` fold becomes optional cleanup). Phases 1 and 2 shipped.
   - [ ] Phase 3 (064, optional): report Lists. A report can sit in many lists, and a list never grants access.
 
 ## Known LOW leftovers
+
+- [ ] Report organization phase 2 leftovers (062 shipped): an admin can manage the owners of a report they cannot read only over REST/MCP (`/api/reports/:id/owners`, `add_report_owner`); a Settings view listing reports whose owners are all blocked or guests would let them find one in the UI (a block hands such reports to an admin today, so it only matters for data from before 062 or a guest demotion with no admin left). The folder-subtree list may walk `reports_live_recent` instead of `reports_folder` now that folders are shared; fine at 2,000 reports, worth a check past ~50,000. Deleting a report folder stays app-only (no MCP tool), as before. `tests/mcpRules.test.ts` now exempts `remove_report_owner` from the "no remove/delete tool names" rule (operator decision D482); confirm that D180's "no sharing changes over MCP" is meant to yield for owners too.
 
 - [ ] Files full-text index leftovers (lane FTS, 060 shipped): an MCP/REST `search_documents` tool on the index (files:read, ranked, snippets) so agents and keys get Files content search; a Back/Forward check at 390 px for a file opened from the notes search Files facet and from "In file text"; PDF text is not indexed because `read_document_text` reads text files only.
 - [ ] `tests/restV1.test.ts` parity: not reproduced in two full runs (lane FTS). The only cross-module read tool for its key is `get_today`, which lists other people's items shared with everyone that earlier files' background work can change between the MCP and REST calls; the check now brackets the REST call with two MCP reads. If it recurs, the failing tool name pins the shared state.

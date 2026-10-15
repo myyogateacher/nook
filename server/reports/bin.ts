@@ -2,6 +2,7 @@ import { registerBinProvider, SWEEP_BATCH_SIZE, SWEEP_RESUME_BATCH_SIZE, type Bi
 import { audit, db, now } from "../db";
 import { withResourceLock } from "../storage";
 import { REPORTS_PER_USER } from "./service";
+import { isReportOwner } from "./access";
 import { logger } from "../log";
 
 const slog = logger("reports");
@@ -50,7 +51,8 @@ export async function sweepReports(cutoff: string): Promise<BinSweepCounts> {
 
 registerBinProvider("report", {
   list(userId) {
-    const rows = db.query(`${select} WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id LIMIT 500`).all(userId) as Binned[];
+    // Phase 2 (D482): a binned report is in the Bin of each of its owners.
+    const rows = db.query(`${select} WHERE id IN (SELECT report_id FROM report_owners WHERE user_id = ?) AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id LIMIT 500`).all(userId) as Binned[];
     return rows.map((row): BinItem => ({
       type: "report", id: row.id, title: row.title, folder_id: null, folder_name: FOLDER, deleted_at: row.deleted_at!, purge_after: row.purge_after!,
       purging: row.purge_started_at !== null, ...providedDefaults, can_purge: true
@@ -59,7 +61,7 @@ registerBinProvider("report", {
   restore(id, userId) {
     return withResourceLock(`reports:${id}`, async (): Promise<RestoreOutcome> => {
       const row = db.query(`${select} WHERE id = ?`).get(id) as Binned | null;
-      if (!row || row.owner_id !== userId) return { status: "not_found" };
+      if (!row || !isReportOwner(id, userId)) return { status: "not_found" };
       if (row.purge_started_at !== null) return { status: "purging" };
       if (row.deleted_at === null) return { status: "already_restored", folderId: id, folderName: FOLDER };
       const live = (db.query("SELECT COUNT(*) AS count FROM reports WHERE owner_id = ? AND deleted_at IS NULL").get(userId) as { count: number }).count;
@@ -73,7 +75,7 @@ registerBinProvider("report", {
   purge(id, userId) {
     return withResourceLock(`reports:${id}`, async () => {
       const row = db.query(`${select} WHERE id = ?`).get(id) as Binned | null;
-      if (!row || row.owner_id !== userId) return "not_found";
+      if (!row || !isReportOwner(id, userId)) return "not_found";
       if (row.deleted_at === null) return "live";
       return purgeNow(id, { reason: "user", actorId: userId });
     });
@@ -81,7 +83,8 @@ registerBinProvider("report", {
   sweep: (cutoff) => sweepReports(cutoff),
   async empty(userId) {
     const counts: BinSweepCounts = { purged: 0, pending: 0 };
-    const ids = db.query("SELECT id FROM reports WHERE owner_id = ? AND deleted_at IS NOT NULL").all(userId) as Array<{ id: string }>;
+    // Emptying purges the owner's binned reports that they binned themselves: a co-owner's delete stays restorable for 30 days.
+    const ids = db.query("SELECT id FROM reports WHERE id IN (SELECT report_id FROM report_owners WHERE user_id = ?) AND deleted_by = ? AND deleted_at IS NOT NULL").all(userId, userId) as Array<{ id: string }>;
     for (const { id } of ids) {
       const outcome = await withResourceLock(`reports:${id}`, async () => purgeNow(id, { reason: "user", actorId: userId }));
       if (outcome === "purged") counts.purged += 1;

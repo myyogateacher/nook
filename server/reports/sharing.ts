@@ -1,10 +1,10 @@
 import { audit, db, now } from "../db";
 import type { ReportShare, ReportSharing, SharingInput } from "../../shared/reportsEdit";
-import { ownedReport } from "./access";
+import { isReportOwner, ownedReport } from "./access";
 import { ReportError } from "./errors";
 
 /**
- * View-only sharing of a report (plan wave 48, D455), the collections pattern: the owner picks an
+ * View-only sharing of a report (plan wave 48, D455; phase 2: any of its owners, D482), the collections pattern: the owner picks an
  * audience (`private`, `selected` people and groups, or `all_users`) and, for `selected`, a level per
  * person or group: `view` (the report and its results, the inspect sheet) or `comment` (also
  * instructions to the edit agent, which only the owner may apply). Guests and integrations are never
@@ -33,6 +33,7 @@ export function setSharing(userId: string, reportId: string, input: SharingInput
     seen.add(key);
     if (share.kind === "user") {
       if (share.id === userId) throw new ReportError(400, "INVALID", "You own this report");
+      if (isReportOwner(reportId, share.id)) throw new ReportError(400, "INVALID", "That person already owns this report");
       const person = db.query("SELECT role, kind FROM users WHERE id = ? AND disabled_at IS NULL").get(share.id) as { role: string; kind: string } | null;
       if (!person || person.role === "guest" || person.kind !== "person") throw new ReportError(400, "INVALID", "Reports can be shared only with people on the team (not guests or integrations)");
     } else if (!db.query("SELECT 1 FROM user_groups WHERE id = ?").get(share.id)) throw new ReportError(400, "INVALID", "That group no longer exists");

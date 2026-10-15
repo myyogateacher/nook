@@ -354,13 +354,16 @@ export type ReportSummary = {
   createdAt: string;
   updatedAt: string;
   revision: number;
-  /** Lane I: the owner's folder (null is Unfiled); always null for a report shared with the caller. */
+  /** The folder it is filed in (null is Unfiled). Phase 2 (D483): folders are the workspace's, so readers see it too. */
   folderId: string | null;
   /** Lane I: the cadence of an enabled schedule, for the list's badge; null when it runs only on demand. */
   scheduleCadence: string | null;
   /** Report organization phase 1 (061): the owner's id (the Owner filter), and whether the caller starred it. */
   ownerId: string;
   favorite: boolean;
+  /** Phase 2 (D482): the caller's level on the report (the row badge), and how many owners it has. */
+  level: "owner" | "comment" | "view";
+  ownerCount: number;
 };
 
 /** Report organization phase 1: the Reports list is paged by keyset, newest change first, this many a page. */
@@ -386,13 +389,25 @@ export type ReportListPage = { reports: ReportSummary[]; nextCursor: string | nu
 /** The people whose reports the caller can open (the Owner filter's choices), with how many each. */
 export type ReportOwnerFacet = { id: string; name: string; count: number; isMe: boolean };
 
-/** Lane I: one of the owner's report folders, with the count of their live reports directly in it. */
-export type ReportFolder = { id: string; parentId: string | null; name: string; position: number; count: number; createdAt: string; updatedAt: string };
-/** Lane I: the Reports home's left nav: the owner's folder tree (flat, by parent and position) and the counts of its fixed sections. */
-export type ReportFolderTree = { folders: ReportFolder[]; counts: { all: number; unfiled: number; shared: number; favorites: number }; owners: ReportOwnerFacet[] };
+/**
+ * A folder of the workspace's shared tree (phase 2, D483), with the count of the reports directly in it
+ * that the caller can read (T391), and who created it (the nav names them when two siblings share a name).
+ */
+export type ReportFolder = { id: string; parentId: string | null; name: string; position: number; count: number; createdAt: string; updatedAt: string; createdBy: { id: string; name: string } | null };
+/**
+ * The Reports home's left nav: the shared folder tree (flat, by parent and position), the counts of its
+ * fixed sections, the Owner filter's choices, and what the caller may do with folders (any member
+ * creates; only admins rename, move, reorder, or delete, D483).
+ */
+export type ReportFolderTree = {
+  folders: ReportFolder[]; counts: { all: number; unfiled: number; shared: number; favorites: number }; owners: ReportOwnerFacet[];
+  canCreateFolders: boolean; canManageFolders: boolean;
+};
 /** Folders nest up to three levels deep (a folder, a subfolder, and one below that). */
 export const REPORT_FOLDER_DEPTH = 3;
 export const REPORT_FOLDERS_PER_USER = 200;
+/** Phase 2: the shared tree holds at most this many live folders. */
+export const REPORT_FOLDERS_PER_WORKSPACE = 2000;
 export const REPORT_FOLDER_NAME_MAX = 120;
 
 export type ReportDetail = ReportSummary & {
@@ -400,6 +415,8 @@ export type ReportDetail = ReportSummary & {
   /** Wave 46: the doc the report was generated from (tool server, tool, reference). */
   doc: { serverId: string | null; tool: string | null; ref: string | null; hash: string | null } | null;
   lastError: string | null;
+  /** Phase 2 (D482): the caller may add and remove owners (an owner, or an admin). */
+  canManageOwners: boolean;
 };
 
 export type ReportRun = {

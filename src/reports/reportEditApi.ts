@@ -1,5 +1,5 @@
 import { api } from "../api";
-import type { InstructionsView, PatchOp, ProposalView, ReportInstruction, ReportSharing, SharingInput } from "../../shared/reportsEdit";
+import type { InstructionsView, PatchOp, ProposalView, ReportInstruction, ReportOwners, ReportSharing, SharingInput } from "../../shared/reportsEdit";
 import type { VersionDiff, VersionHistoryItem, VersionSnapshot } from "../../shared/reportVersions";
 
 /** The Wave 48 report routes (server/reports/editRoutes.ts): instructions, proposals, versions, manual edits, sharing. */
@@ -31,3 +31,8 @@ export const saveSharing = (id: string, input: SharingInput) => api<{ sharing: R
 
 /** Whether any instruction is still moving (queued or running): the panel polls while it is. */
 export const threadMoving = (instructions: readonly Pick<ReportInstruction, "status">[]) => instructions.some((item) => item.status === "queued" || item.status === "running");
+
+/** Phase 2 (D482): a report's owners; owners and admins add and remove them (never the last one). */
+export const getOwners = (id: string) => api<ReportOwners>(`/reports/${id}/owners`);
+export const addOwner = (id: string, userId: string) => api<ReportOwners>(`/reports/${id}/owners`, json("POST", { userId }));
+export const removeOwner = (id: string, userId: string) => api<ReportOwners>(`/reports/${id}/owners/${userId}`, { method: "DELETE", body: "{}" });

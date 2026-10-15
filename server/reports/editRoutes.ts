@@ -10,6 +10,7 @@ import { manualEdit } from "./manualEdit";
 import { patchSchema } from "./patch";
 import { handle, id } from "./routes";
 import { getSharing, setSharing } from "./sharing";
+import { addOwner, listOwners, removeOwner } from "./owners";
 import { getVersion, listVersions, previewVersion, previousVersion, restoreVersion, versionDiff } from "./versions";
 import { ownedReport } from "./access";
 
@@ -25,6 +26,7 @@ const reorderSchema = z.object({ ids: z.array(uuid).max(INSTRUCTION_LIMITS.queue
 const autoApplySchema = z.object({ autoApply: z.boolean() }).strict();
 const emptySchema = z.object({}).strict();
 const editSchema = patchSchema.extend({ expectedRevision: z.number().int().min(1) }).strict();
+const ownerSchema = z.object({ userId: uuid }).strict();
 const sharingSchema = z.object({
   visibility: z.enum(["private", "selected", "all_users"]),
   shares: z.array(z.object({ kind: z.enum(["user", "group"]), id: uuid, level: z.enum(SHARE_LEVELS) }).strict()).max(100)
@@ -113,4 +115,12 @@ export function registerReportEditRoutes(app: Hono<AppEnv>) {
     const reportId = id(c, "reportId");
     return { sharing: setSharing(c.get("user").id, reportId, await parseJson(c.req.raw, sharingSchema)) };
   }));
+  // Phase 2 (D482): the report's owners; any owner or any admin manages them, never removing the last.
+  app.get("/api/reports/:reportId/owners", handle((c) => listOwners(id(c, "reportId"), c.get("user"))));
+  app.post("/api/reports/:reportId/owners", handle(async (c) => {
+    const reportId = id(c, "reportId");
+    const { userId } = await parseJson(c.req.raw, ownerSchema);
+    return addOwner(c.get("user"), reportId, userId.toLowerCase());
+  }));
+  app.delete("/api/reports/:reportId/owners/:userId", handle((c) => removeOwner(c.get("user"), id(c, "reportId"), id(c, "userId"))));
 }

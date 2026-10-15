@@ -38,7 +38,8 @@ const tree = (): ReportFolderTree => ({
     { id: GROWTH, parentId: null, name: "Growth", position: 1, count: 0, createdAt: at, updatedAt: at }
   ],
   counts: { all: 3, unfiled: 1, shared: 1, favorites: 0 },
-  owners: [{ id: ME, name: "Me", count: 2, isMe: true }, { id: BEN, name: "Ben Ortiz", count: 1, isMe: false }]
+  owners: [{ id: ME, name: "Me", count: 2, isMe: true }, { id: BEN, name: "Ben Ortiz", count: 1, isMe: false }],
+  canCreateFolders: true, canManageFolders: true
 });
 /** The server's view filtering (phase 1 pages and filters on the server). */
 const page = (list: ReportSummary[]) => () => ({ reports: list, nextCursor: null });

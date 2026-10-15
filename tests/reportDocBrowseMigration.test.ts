@@ -46,6 +46,6 @@ describe("migration 056 report_doc_browse", () => {
 
     reportDocBrowseMigration.up(db);
     expect(db.query("SELECT doc_browse_tools, doc_source FROM reports WHERE id = 'r1'").get()).toEqual({ doc_browse_tools: "[\"fetch\"]", doc_source: "nook" });
-    expect((db.query("SELECT id FROM schema_migrations WHERE id >= 55 ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id)).toEqual([55, 56, 57, 58, 59, 60, 61]);
+    expect((db.query("SELECT id FROM schema_migrations WHERE id >= 55 ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id)).toEqual([55, 56, 57, 58, 59, 60, 61, 62]);
   });
 });

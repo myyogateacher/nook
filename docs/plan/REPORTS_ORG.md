@@ -1,6 +1,6 @@
 # Report organization at scale: favorites, shared folders, lists
 
-Status: **phase 1 shipped (2026-10-15)**, phases 2 and 3 planned. Phase 1 follows Tableau's favorites. **Phase 2 was simplified by the operator**: folders only group, permissions sit on each report, and reports can have several owners.
+Status: **phases 1 and 2 shipped (2026-10-15)**, phase 3 planned. Phase 1 follows Tableau's favorites. **Phase 2 was simplified by the operator**: folders only group, permissions sit on each report, and reports can have several owners.
 - Content lives in shared folders whose access passes down to everything inside.
 - People keep personal shortcuts as favorites.
 - Optional lists group reports without moving them.
@@ -49,6 +49,14 @@ Next free ids at planning time: migration **061** (060 is the Files `document_ft
 **Test:** 2,000 reports, 300 folders and 50 groups. The list must return in under 50 ms, and the query plans must use the indexes.
 
 ## Phase 2: simple permissions; folders only group (migration 062)
+
+**Shipped (2026-10-15), migration 062.** As built:
+- `reports.owner_id` is kept as the **primary owner** (the creator until they leave the owners, always one of them via triggers, the person scheduled refreshes and the edit agent run as). Dropping it would have rippled through the scheduler, the edit agent, versions, and quotas; owner checks all read `report_owners`.
+- `report_folders` is rebuilt without `owner_id` (`created_by`, SET NULL), keeping every report's `folder_id`. Two people's same-named folders are both kept; the nav names the creator beside such siblings (never a merge, which would move reports their owners filed).
+- Last owner: removing them is refused (`LAST_OWNER`). Blocking an owner or making them a guest hands reports with no other active owner to an admin (the one acting, else the oldest active admin), audited `reports.owner.handover`; Nook had no ownership-transfer pattern to reuse.
+- Admins manage owners of any report but are not owners by role (unchanged: they never were).
+- Only admins see, restore, or purge binned folders. Nothing deletes a folder over MCP; `update_report_folder` renames and moves (admins).
+- The folder-subtree list may walk `reports_live_recent` rather than `reports_folder` now that folders are shared (still no full scan, well under the 50 ms line at 2,000 reports).
 
 **Operator decision (2026-10-15).** Keep permissions simple:
 - Permissions live on the **report**.

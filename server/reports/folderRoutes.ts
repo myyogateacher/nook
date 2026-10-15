@@ -2,17 +2,18 @@ import type { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
-import { REPORT_FOLDER_NAME_MAX, REPORT_FOLDERS_PER_USER } from "../../shared/reports";
+import { REPORT_FOLDER_NAME_MAX, REPORT_FOLDERS_PER_WORKSPACE } from "../../shared/reports";
 import { binFolder, createFolder, listFolders, moveReportToFolder, updateFolder } from "./folders";
 import { handle, id } from "./routes";
 import "./folderBin";
 
 /**
- * docs/plan/API_CONTRACTS.md § Analytics reports, report folders (Lane I). The caller's own folders
- * only: anyone else's folder is the same 404 as a missing one. Same rules as routes.ts: a session, CSRF
+ * docs/plan/API_CONTRACTS.md § Analytics reports, report folders (Lane I; phase 2, D483): one shared
+ * tree. Any member creates a folder; rename, move, reorder, and delete are admins' (403 ADMIN_ONLY for
+ * anyone else); filing a report is its owners'. Same rules as routes.ts: a session, CSRF
  * and a writing role for mutations, 404 for guests. Registered before `/api/reports/:reportId`.
  *
- * - GET    /api/reports/folders                 the tree and the counts of All, Unfiled, and Shared
+ * - GET    /api/reports/folders                 the tree, the counts of All, Unfiled, Shared, Favorites, and the caller's folder rights
  * - POST   /api/reports/folders                 { name, parentId? }
  * - PATCH  /api/reports/folders/:folderId       { name?, parentId?, position? }: rename, move, reorder
  * - DELETE /api/reports/folders/:folderId       to the Bin; its reports move to Unfiled
@@ -21,7 +22,7 @@ import "./folderBin";
 
 const folderName = z.string().trim().min(1).max(REPORT_FOLDER_NAME_MAX).refine((value) => !/[\u0000-\u001f\u007f]/.test(value), "must be one line of text");
 const folderCreate = z.object({ name: folderName, parentId: uuid.nullish() }).strict();
-const folderPatch = z.object({ name: folderName.optional(), parentId: uuid.nullable().optional(), position: z.number().int().min(0).max(REPORT_FOLDERS_PER_USER).optional() }).strict()
+const folderPatch = z.object({ name: folderName.optional(), parentId: uuid.nullable().optional(), position: z.number().int().min(0).max(REPORT_FOLDERS_PER_WORKSPACE).optional() }).strict()
   .refine((patch) => patch.name !== undefined || patch.parentId !== undefined || patch.position !== undefined, "change something");
 const reportFolder = z.object({ folderId: uuid.nullable() }).strict();
 

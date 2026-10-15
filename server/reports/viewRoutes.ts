@@ -10,7 +10,7 @@ import { db } from "../db";
 import { parseJson, uuid } from "../validation";
 import { QUERY_KEY, type ReportRun } from "../../shared/reports";
 import type { DocSnapshotInfo, ProvenanceView } from "../../shared/reportsView";
-import { readableReport } from "./access";
+import { isReportOwner, readableReport } from "./access";
 import { listRuns, reportResults, reportRun, runRow, runView, startRefresh } from "./refresh";
 import { handle, id } from "./routes";
 import { getSchedule, saveSchedule } from "./scheduler";
@@ -47,7 +47,7 @@ export function provenance(reportId: string, userId: string, input: { runId?: st
   const run = input.runId ? runRow(input.runId) : null;
   const ownRun = run && run.report_id === reportId ? run : null;
   // Review L2: the doc (its snapshots' titles and hashes) and the agent run are the owner's.
-  if (report.owner_id !== userId) return { run: ownRun ? forReader(runView(ownRun)) : null, snapshot: null };
+  if (!isReportOwner(report.id, userId)) return { run: ownRun ? forReader(runView(ownRun)) : null, snapshot: null };
   // 2c: the plan todo that produced the block (by its block id, else its query key).
   const plan = ownRun ? storedPlan((db.query("SELECT plan_json FROM report_runs WHERE id = ?").get(ownRun.id) as { plan_json: string | null } | null)?.plan_json) : null;
   const todo = plan?.todos.find((item) => input.blockId && item.blockId === input.blockId) ?? plan?.todos.find((item) => input.queryKey && item.queryKey === input.queryKey) ?? null;
@@ -57,7 +57,7 @@ export function provenance(reportId: string, userId: string, input: { runId?: st
 
 /** A run as a reader of a shared report sees it: no doc snapshot, no agent run (wave 48 review L2). */
 export const forReader = (run: ReportRun): ReportRun => ({ ...run, docSnapshotId: null, agentRunId: null });
-const isOwner = (reportId: string, userId: string) => readableReport(reportId, userId).owner_id === userId;
+const isOwner = (reportId: string, userId: string) => isReportOwner(readableReport(reportId, userId).id, userId);
 
 const optionalUuid = (value: string | undefined) => {
   const parsed = uuid.safeParse(value?.toLowerCase());

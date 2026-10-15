@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
 import { EMPTY_SPEC, REPORT_LIMITS, REPORT_PAGE_SIZE, upgradeSpec, type QueryOutcome, type ReportDetail, type ReportListFilter, type ReportListPage, type ReportSpec, type ReportSummary } from "../../shared/reports";
-import { ownedReport, readableReport, readableReportSql, type ReportRow } from "./access";
+import { ownedReport, ownsReportSql, readableReport, readableReportSql, reportLevelSql, type ReportRow } from "./access";
 import { usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
-import { ownedFolder } from "./folderAccess";
+import { liveFolder } from "./folderAccess";
 import { adHocQueryId, killQuery, runGuarded } from "./runner";
 import { logger } from "../log";
 import { INSTRUCTION_LIMITS } from "../../shared/reportsEdit";
@@ -23,7 +23,7 @@ const slog = logger("reports");
 
 export const REPORTS_PER_USER = 500;
 
-type SummaryRow = ReportRow & { owner_name: string; datasource_name: string | null; folder_id: string | null; schedule_cadence: string | null; favorite: number };
+type SummaryRow = ReportRow & { owner_name: string; datasource_name: string | null; folder_id: string | null; schedule_cadence: string | null; favorite: number; is_owner: number; level: "owner" | "comment" | "view"; owner_count: number };
 
 /** A stored spec, upgraded to v2 on read (wave 48b, `upgradeSpec`); anything unreadable is the empty spec. */
 export function parseSpec(json: string): ReportSpec {
@@ -36,11 +36,11 @@ export function parseSpec(json: string): ReportSpec {
 
 function summaryOf(row: SummaryRow, userId: string): ReportSummary {
   return {
-    id: row.id, title: row.title, datasourceId: row.datasource_id, datasourceName: row.datasource_name, status: row.status, isOwner: row.owner_id === userId,
+    id: row.id, title: row.title, datasourceId: row.datasource_id, datasourceName: row.datasource_name, status: row.status, isOwner: row.is_owner === 1,
     ownerName: row.owner_name, blockCount: parseSpec(row.spec_json).blocks.length, lastRunAt: row.last_run_at, createdAt: row.created_at, updatedAt: row.updated_at, revision: row.revision,
-    // Lane I: the folder is the owner's organisation; a reader sees the report under "Shared with me".
-    folderId: row.owner_id === userId ? row.folder_id ?? null : null, scheduleCadence: row.schedule_cadence ?? null,
-    ownerId: row.owner_id, favorite: row.favorite === 1
+    // Phase 2 (D483): folders are the workspace's, so every reader sees where a report is filed.
+    folderId: row.folder_id ?? null, scheduleCadence: row.schedule_cadence ?? null,
+    ownerId: row.owner_id, favorite: row.favorite === 1, level: row.level, ownerCount: row.owner_count
   };
 }
 
@@ -49,7 +49,8 @@ const SCHEDULED_SQL = "(SELECT s.cadence FROM report_schedules s WHERE s.report_
 /** The caller ($userId) starred the report `r` (061). */
 export const FAVORITE_SQL = "EXISTS (SELECT 1 FROM report_favorites f WHERE f.user_id = $userId AND f.report_id = r.id)";
 
-const SUMMARY_SELECT = `SELECT r.*, u.display_name AS owner_name, d.name AS datasource_name, ${SCHEDULED_SQL} AS schedule_cadence, ${FAVORITE_SQL} AS favorite
+const SUMMARY_SELECT = `SELECT r.*, u.display_name AS owner_name, d.name AS datasource_name, ${SCHEDULED_SQL} AS schedule_cadence, ${FAVORITE_SQL} AS favorite,
+    ${ownsReportSql("r")} AS is_owner, ${reportLevelSql("r")} AS level, (SELECT COUNT(*) FROM report_owners oc WHERE oc.report_id = r.id) AS owner_count
   FROM reports r JOIN users u ON u.id = r.owner_id LEFT JOIN report_datasources d ON d.id = r.datasource_id`;
 
 export type ReportListOptions = ReportListFilter & { ids?: readonly string[] | null; limit?: number; cursor?: string | null };
@@ -79,19 +80,21 @@ export function reportListSql(options: ReportListOptions) {
   const q = options.q?.trim().toLowerCase().slice(0, 200) ?? "";
   if (q) { where.push("instr(lower(r.title), $q) > 0"); params.q = q; }
   if (options.ids) { where.push("r.id IN (SELECT value FROM json_each($ids))"); params.ids = JSON.stringify(options.ids); }
-  if (options.ownerId) { where.push("r.owner_id = $ownerId"); params.ownerId = options.ownerId; }
+  // Phase 2 (D482): a person's reports are every report they are one of the owners of.
+  if (options.ownerId) { where.push(ownsReportSql("r", "$ownerId")); params.ownerId = options.ownerId; }
   if (options.statuses?.length) { where.push("r.status IN (SELECT value FROM json_each($statuses))"); params.statuses = JSON.stringify(options.statuses); }
   if (options.datasourceId) { where.push("r.datasource_id = $datasourceId"); params.datasourceId = options.datasourceId; }
   if (options.scheduled !== undefined) where.push(`${SCHEDULED_SQL} IS ${options.scheduled ? "NOT NULL" : "NULL"}`);
   if (options.favorites) where.push(FAVORITE_SQL);
-  if (options.shared) where.push("r.owner_id <> $userId");
-  if (options.folderId === "unfiled") where.push("r.owner_id = $userId AND r.folder_id IS NULL");
+  if (options.shared) where.push(`NOT ${ownsReportSql("r")}`);
+  // Phase 2 (D483): the shared tree; a folder lists the readable reports filed in it (T391).
+  if (options.folderId === "unfiled") where.push("r.folder_id IS NULL");
   else if (options.folderId && options.subtree) {
-    where.push(`r.owner_id = $userId AND r.folder_id IN (WITH RECURSIVE sub(id, depth) AS (
-      SELECT f.id, 1 FROM report_folders f WHERE f.id = $folderId AND f.owner_id = $userId AND f.deleted_at IS NULL
+    where.push(`r.folder_id IN (WITH RECURSIVE sub(id, depth) AS (
+      SELECT f.id, 1 FROM report_folders f WHERE f.id = $folderId AND f.deleted_at IS NULL
       UNION SELECT f.id, sub.depth + 1 FROM report_folders f JOIN sub ON f.parent_id = sub.id WHERE f.deleted_at IS NULL AND sub.depth < 8) SELECT id FROM sub)`);
     params.folderId = options.folderId;
-  } else if (options.folderId) { where.push("r.owner_id = $userId AND r.folder_id = $folderId"); params.folderId = options.folderId; }
+  } else if (options.folderId) { where.push("r.folder_id = $folderId"); params.folderId = options.folderId; }
   if (options.cursor) {
     const { at, id } = decodeCursor(options.cursor);
     where.push("(r.updated_at < $cursorAt OR (r.updated_at = $cursorAt AND r.id > $cursorId))");
@@ -141,16 +144,17 @@ export function reportDetail(id: string, userId: string): ReportDetail {
     ...summaryOf(row, userId),
     spec: parseSpec(row.spec_json),
     // Wave 48 (D456): the doc a report came from is the owner's; readers of a shared report never see its link.
-    doc: row.owner_id === userId && (row.doc_ref || row.doc_server_id) ? { serverId: row.doc_source === "nook" ? "nook" : row.doc_server_id, tool: row.doc_tool, ref: row.doc_ref, hash: row.doc_hash } : null,
-    lastError: row.last_error
+    doc: row.is_owner === 1 && (row.doc_ref || row.doc_server_id) ? { serverId: row.doc_source === "nook" ? "nook" : row.doc_server_id, tool: row.doc_tool, ref: row.doc_ref, hash: row.doc_hash } : null,
+    lastError: row.last_error,
+    canManageOwners: row.is_owner === 1 || (db.query("SELECT role FROM users WHERE id = ?").get(userId) as { role: string } | null)?.role === "admin"
   };
 }
 
 /** A new draft; `titleSource` says where the title came from (typed by default; generation passes doc or default). */
 export function createReport(userId: string, input: { title: string; datasourceId: string; titleSource?: "default" | "doc" | "ai" | "user"; folderId?: string | null }, via: { keyId?: string } = {}): ReportDetail {
   usableDatasource(input.datasourceId);
-  // Lane I: "New report" in a folder files it there (the caller's own live folder, else 404).
-  if (input.folderId) ownedFolder(input.folderId, userId);
+  // Lane I: "New report" in a folder files it there (phase 2: any live folder of the shared tree, else 404).
+  if (input.folderId) liveFolder(input.folderId);
   const live = (db.query("SELECT COUNT(*) AS count FROM reports WHERE owner_id = ? AND deleted_at IS NULL").get(userId) as { count: number }).count;
   if (live >= REPORTS_PER_USER) throw new ReportError(409, "LIMIT_REACHED", `You can have up to ${REPORTS_PER_USER} reports`);
   const id = crypto.randomUUID();

@@ -220,11 +220,11 @@ describe("K1: generate straight into a folder", () => {
 
     const count = () => (db.query("SELECT COUNT(*) AS count FROM reports WHERE owner_id = ?").get(owner.userId) as { count: number }).count;
     const before = count();
-    const theirs = (await send(other, "POST", "/reports/folders", { name: "Theirs" })).body.folder.id as string;
-    const refused = await generate(owner, published, { folderId: theirs });
+    // Phase 2 (D483): another member's folder is in the shared tree, so only a missing one is refused.
+    const refused = await generate(owner, published, { folderId: crypto.randomUUID() });
     expect([refused.status, refused.body.code]).toEqual([404, "NOT_FOUND"]);
     const binned = (await send(owner, "POST", "/reports/folders", { name: "Binned" })).body.folder.id as string;
-    expect((await send(owner, "DELETE", `/reports/folders/${binned}`)).status).toBe(200);
+    expect((await send(admin, "DELETE", `/reports/folders/${binned}`)).status).toBe(200);
     expect((await generate(owner, published, { folderId: binned })).status).toBe(404);
     expect((await generate(owner, published, { folderId: "not-a-uuid" })).status).toBe(400);
     expect(count()).toBe(before);

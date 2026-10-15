@@ -146,6 +146,10 @@ export type ReportVersion = {
 
 export type ReportShare = { kind: "user" | "group"; id: string; name: string; level: ShareLevel };
 export type ReportSharing = { visibility: ReportVisibility; shares: ReportShare[] };
+/** Phase 2 (D482): one owner of a report; `primary` is the one scheduled refreshes run as. */
+export type ReportOwner = { id: string; name: string; primary: boolean; active: boolean; addedBy: string | null; addedAt: string };
+/** The owners and what the caller may do with them (owners and admins manage; never the last owner). */
+export type ReportOwners = { owners: ReportOwner[]; canManage: boolean };
 export type SharingInput = { visibility: ReportVisibility; shares: Array<{ kind: "user" | "group"; id: string; level: ShareLevel }> };
 
 export const INSTRUCTION_STATUS_TEXT: Record<InstructionStatus, string> = {

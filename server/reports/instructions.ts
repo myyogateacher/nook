@@ -2,7 +2,7 @@ import { audit, db, now } from "../db";
 import { upgradeSpec } from "../../shared/reports";
 import { INSTRUCTION_LIMITS, type InstructionsView, type ProposalView, type ReportInstruction } from "../../shared/reportsEdit";
 import type { QueryResultView } from "../../shared/reportsView";
-import { commentableReport, ownedReport, readableReport, reportLevel } from "./access";
+import { commentableReport, isReportOwner, ownedReport, readableReport, reportLevel } from "./access";
 import { cancelLiveEdit, instructionRow, liveEdits, startEdit, type InstructionRow, type StoredProposal } from "./edit";
 import { ReportError } from "./errors";
 import { changedQueryKeys, diffSpecs } from "./patch";
@@ -32,10 +32,7 @@ type Row = InstructionRow & { author_name: string | null };
 
 const SELECT = "SELECT i.*, u.display_name AS author_name FROM report_instructions i LEFT JOIN users u ON u.id = i.author_id";
 
-const ownerOf = (reportId: string) => (db.query("SELECT owner_id FROM reports WHERE id = ?").get(reportId) as { owner_id: string } | null)?.owner_id ?? null;
-
-function view(row: Row, userId: string, ownerId: string | null): ReportInstruction {
-  const owner = ownerId === userId;
+function view(row: Row, userId: string, owner: boolean): ReportInstruction {
   return {
     id: row.id, reportId: row.report_id, blockId: row.block_id, text: row.text, status: row.status as ReportInstruction["status"], position: row.position,
     authorName: row.author_name, isMine: row.author_id === userId, via: row.via, runId: row.run_id,
@@ -55,7 +52,7 @@ export function listInstructions(reportId: string, userId: string, role: string)
   const level = reportLevel(report, userId);
   const rows = db.query(`${SELECT} WHERE i.report_id = ? ${ORDER} LIMIT 200`).all(reportId) as Row[];
   return {
-    instructions: rows.map((row) => view(row, userId, report.owner_id)),
+    instructions: rows.map((row) => view(row, userId, level === "owner")),
     level,
     canComment: (level === "owner" || level === "comment") && role !== "viewer" && role !== "guest",
     canApply: level === "owner",
@@ -67,7 +64,7 @@ export function getInstruction(reportId: string, instructionId: string, userId: 
   const report = readableReport(reportId, userId);
   const row = db.query(`${SELECT} WHERE i.id = ? AND i.report_id = ?`).get(instructionId, reportId) as Row | null;
   if (!row) throw new ReportError(404, "NOT_FOUND", "Instruction not found");
-  return view(row, userId, report.owner_id);
+  return view(row, userId, isReportOwner(report.id, userId));
 }
 
 /** Adds an instruction at the end of the queue and kicks the queue. */
@@ -111,7 +108,7 @@ export function cancelInstruction(userId: string, reportId: string, instructionI
   const report = readableReport(reportId, userId);
   const row = instructionRow(instructionId);
   if (!row || row.report_id !== reportId) throw new ReportError(404, "NOT_FOUND", "Instruction not found");
-  if (row.author_id !== userId && report.owner_id !== userId) throw new ReportError(404, "NOT_FOUND", "Instruction not found");
+  if (row.author_id !== userId && !isReportOwner(report.id, userId)) throw new ReportError(404, "NOT_FOUND", "Instruction not found");
   if (row.status === "queued") {
     const at = now();
     db.query("UPDATE report_instructions SET status = 'cancelled', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'queued'").run(at, at, instructionId);
@@ -189,7 +186,7 @@ const redactedMarkdown = (block: ReportBlock | null): ReportBlock | null => bloc
  */
 export function proposalView(reportId: string, instructionId: string, userId: string): ProposalView {
   const report = readableReport(reportId, userId);
-  const owner = report.owner_id === userId;
+  const owner = isReportOwner(report.id, userId);
   const row = proposedRow(reportId, instructionId);
   if (!owner && row.author_id !== userId) throw new ReportError(404, "NOT_FOUND", "Instruction not found");
   const proposal = storedProposal(row);
@@ -287,7 +284,7 @@ export function applyProposal(userId: string, reportId: string, instructionId: s
 export function rejectProposal(userId: string, reportId: string, instructionId: string, via: { keyId?: string } = {}): ReportInstruction {
   const report = readableReport(reportId, userId);
   const row = proposedRow(reportId, instructionId);
-  if (report.owner_id !== userId && row.author_id !== userId) throw new ReportError(404, "NOT_FOUND", "Instruction not found");
+  if (!isReportOwner(report.id, userId) && row.author_id !== userId) throw new ReportError(404, "NOT_FOUND", "Instruction not found");
   storedProposal(row);
   const at = now();
   const marked = db.query("UPDATE report_instructions SET status = 'rejected', decided_by = ?, decided_at = ?, updated_at = ? WHERE id = ? AND status = 'proposed'").run(userId, at, at, instructionId);
@@ -312,15 +309,15 @@ const kicking = new Set<string>();
 /** After an instruction settles: auto-apply a proposal when the owner asked for it, then move the queue. */
 function settled(row: InstructionRow) {
   if (row.status === "proposed") {
-    const report = db.query("SELECT owner_id, auto_apply FROM reports WHERE id = ? AND deleted_at IS NULL").get(row.report_id) as { owner_id: string; auto_apply: number } | null;
-    // Only the owner's own instructions apply themselves (D453): a commenter's always waits for review.
-    if (report?.auto_apply === 1 && row.author_id === report.owner_id) {
+    const report = db.query("SELECT auto_apply FROM reports WHERE id = ? AND deleted_at IS NULL").get(row.report_id) as { auto_apply: number } | null;
+    // Only an owner's own instructions apply themselves (D453; phase 2: any owner, applied as them): a commenter's always waits for review.
+    if (report?.auto_apply === 1 && row.author_id && isReportOwner(row.report_id, row.author_id)) {
       try {
-        applyProposal(report.owner_id, row.report_id, row.id, { auto: true, keyId: row.key_id ?? undefined });
+        applyProposal(row.author_id, row.report_id, row.id, { auto: true, keyId: row.key_id ?? undefined });
         return;
       } catch (error) {
         // Left proposed for the owner to look at (a refresh started meanwhile, or the report changed).
-        audit(report.owner_id, null, "reports.instruction.auto_apply_failed", { reportId: row.report_id, instructionId: row.id, code: error instanceof ReportError ? error.code : "INTERNAL" });
+        audit(row.author_id, null, "reports.instruction.auto_apply_failed", { reportId: row.report_id, instructionId: row.id, code: error instanceof ReportError ? error.code : "INTERNAL" });
       }
     }
     return;

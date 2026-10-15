@@ -156,7 +156,16 @@ export type ReportSharing = { visibility: ReportVisibility; shares: ReportShare[
 export type ReportOwner = { id: string; name: string; primary: boolean; active: boolean; addedBy: string | null; addedAt: string };
 /** The owners and what the caller may do with them (owners and admins manage; never the last owner). */
 export type ReportOwners = { owners: ReportOwner[]; canManage: boolean };
-export type SharingInput = { visibility: ReportVisibility; shares: Array<{ kind: "user" | "group"; id: string; level: ShareLevel }> };
+/**
+ * D500: Settings → Report owners (admins). `unmanaged`: live reports with no owner who can act (every owner
+ * blocked, a guest or a viewer now, or gone); `unopenable`: live reports the admin cannot open. Title and
+ * place only, never content. `state` is an owner's: `active` (a member or an admin), `blocked`, `guest`, `viewer`.
+ */
+export type OwnerReviewScope = "unmanaged" | "unopenable";
+export type OwnerReviewOwner = { id: string; name: string; state: "active" | "blocked" | "guest" | "viewer" };
+export type OwnerReviewReport = { id: string; title: string; folder: { id: string; name: string } | null; owners: OwnerReviewOwner[]; updatedAt: string; canOpen: boolean; managed: boolean };
+export type OwnerReview = { scope: OwnerReviewScope; reports: OwnerReviewReport[]; total: number; limit: number };
+export type SharingInput ={ visibility: ReportVisibility; shares: Array<{ kind: "user" | "group"; id: string; level: ShareLevel }> };
 
 export const INSTRUCTION_STATUS_TEXT: Record<InstructionStatus, string> = {
   queued: "Queued", running: "Working", proposed: "Ready to review", applied: "Applied", rejected: "Rejected", failed: "Failed", cancelled: "Cancelled"

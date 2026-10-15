@@ -51,9 +51,10 @@ const SCHEDULED_SQL = "(SELECT s.cadence FROM report_schedules s WHERE s.report_
 /** The caller ($userId) starred the report `r` (061). */
 export const FAVORITE_SQL = "EXISTS (SELECT 1 FROM report_favorites f WHERE f.user_id = $userId AND f.report_id = r.id)";
 
+// CROSS JOIN keeps reports the outer loop (D501): SQLite otherwise may scan users and every report of each.
 const SUMMARY_SELECT = `SELECT r.*, u.display_name AS owner_name, d.name AS datasource_name, ${SCHEDULED_SQL} AS schedule_cadence, ${FAVORITE_SQL} AS favorite,
     ${ownsReportSql("r")} AS is_owner, ${reportLevelSql("r")} AS level, (SELECT COUNT(*) FROM report_owners oc WHERE oc.report_id = r.id) AS owner_count
-  FROM reports r JOIN users u ON u.id = r.owner_id LEFT JOIN report_datasources d ON d.id = r.datasource_id`;
+  FROM reports r CROSS JOIN users u ON u.id = r.owner_id LEFT JOIN report_datasources d ON d.id = r.datasource_id`;
 
 export type ReportListOptions = ReportListFilter & { ids?: readonly string[] | null; limit?: number; cursor?: string | null };
 
@@ -70,33 +71,70 @@ function decodeCursor(cursor: string): { at: string; id: string } {
   throw new ReportError(400, "INVALID", "That list position is not valid; load the list again");
 }
 
+/** The folder `$folderId` and its live subfolders (D483). */
+const SUBTREE_SQL = `WITH RECURSIVE sub(id, depth) AS (
+      SELECT f.id, 1 FROM report_folders f WHERE f.id = $folderId AND f.deleted_at IS NULL
+      UNION SELECT f.id, sub.depth + 1 FROM report_folders f JOIN sub ON f.parent_id = sub.id WHERE f.deleted_at IS NULL AND sub.depth < 8) SELECT id FROM sub`;
+
+/**
+ * How many reports the set-shaped filters in use hold (the owner's, the caller's favorites, the folder or
+ * subtree), each counted only up to the point where it becomes "large" (D501). Starting from a set and
+ * sorting it costs about its size; walking reports_live_recent and checking each row costs about
+ * page ÷ (size ÷ all reports). They cross near √(page × all reports): about 2,250 at 50,000 reports.
+ * SQLite's statistics hold only averages (one owner of a third of everything looks like any other
+ * owner), so the list asks instead. `MAX(rowid)` stands in for the number of reports (binned ones count
+ * too, which only makes a set look smaller). `handle` is for tests over their own database.
+ */
+export type ReportListSizes = { owned?: number; favorites?: number; folder?: number; largeAt?: number };
+const PAGE_ROWS = REPORT_PAGE_SIZE + 1;
+const large = (size: number | undefined, sizes?: ReportListSizes) => size !== undefined && size >= (sizes?.largeAt ?? Infinity);
+
+export function reportListSizes(options: ReportListOptions, userId: string, handle = db): ReportListSizes {
+  if (!options.ownerId && !options.favorites && (!options.folderId || options.folderId === "unfiled")) return {};
+  const rows = (handle.query("SELECT MAX(rowid) AS n FROM reports").get() as { n: number | null }).n ?? 0;
+  const largeAt = Math.max(PAGE_ROWS, Math.ceil(Math.sqrt(PAGE_ROWS * rows)));
+  const upTo = (sql: string, params: Record<string, string>) => (handle.query(`SELECT COUNT(*) AS n FROM (${sql} LIMIT ${largeAt})`).get(params) as { n: number }).n;
+  const sizes: ReportListSizes = { largeAt };
+  if (options.ownerId) sizes.owned = upTo("SELECT 1 FROM report_owners WHERE user_id = $ownerId", { ownerId: options.ownerId });
+  if (options.favorites) sizes.favorites = upTo("SELECT 1 FROM report_favorites WHERE user_id = $userId", { userId });
+  if (options.folderId && options.folderId !== "unfiled") {
+    sizes.folder = upTo(options.subtree ? `SELECT 1 FROM reports WHERE folder_id IN (${SUBTREE_SQL})` : "SELECT 1 FROM reports WHERE folder_id = $folderId", { folderId: options.folderId });
+  }
+  return sizes;
+}
+
 /**
  * The SQL of the Reports list (report organization phase 1): the readable set (`readableReportSql`,
  * so a favorite, a filter, or a cursor never reaches a report the caller cannot open, T393) narrowed by
  * each filter in use. Only the clauses in use are written, so SQLite picks the index that fits
  * (reports_owner, reports_status, reports_live_recent, the favorites' primary key).
  */
-export function reportListSql(options: ReportListOptions) {
+export function reportListSql(options: ReportListOptions, sizes: ReportListSizes = {}) {
   const where = [readableReportSql("r")];
   const params: Record<string, string | number | null> = {};
   const q = options.q?.trim().toLowerCase().slice(0, 200) ?? "";
   if (q) { where.push("instr(lower(r.title), $q) > 0"); params.q = q; }
   if (options.ids) { where.push("r.id IN (SELECT value FROM json_each($ids))"); params.ids = JSON.stringify(options.ids); }
-  // Phase 2 (D482): a person's reports are every report they are one of the owners of.
-  if (options.ownerId) { where.push(ownsReportSql("r", "$ownerId")); params.ownerId = options.ownerId; }
+  // Phase 2 (D482): a person's reports are every report they are one of the owners of. D501: a small set is
+  // written as `r.id IN (…)` so SQLite starts from it (report_owners_user, the favorites' key) and sorts it; a
+  // large one as a per-row check, so it walks reports_live_recent and stops at the page (see reportListSizes).
+  if (options.ownerId) {
+    where.push(large(sizes.owned, sizes) ? ownsReportSql("r", "$ownerId") : "r.id IN (SELECT o_f.report_id FROM report_owners o_f WHERE o_f.user_id = $ownerId)");
+    params.ownerId = options.ownerId;
+  }
   if (options.statuses?.length) { where.push("r.status IN (SELECT value FROM json_each($statuses))"); params.statuses = JSON.stringify(options.statuses); }
   if (options.datasourceId) { where.push("r.datasource_id = $datasourceId"); params.datasourceId = options.datasourceId; }
   if (options.scheduled !== undefined) where.push(`${SCHEDULED_SQL} IS ${options.scheduled ? "NOT NULL" : "NULL"}`);
-  if (options.favorites) where.push(FAVORITE_SQL);
+  if (options.favorites) where.push(large(sizes.favorites, sizes) ? FAVORITE_SQL : "r.id IN (SELECT f_f.report_id FROM report_favorites f_f WHERE f_f.user_id = $userId)");
   if (options.shared) where.push(`NOT ${ownsReportSql("r")}`);
-  // Phase 2 (D483): the shared tree; a folder lists the readable reports filed in it (T391).
+  // Phase 2 (D483): the shared tree; a folder lists the readable reports filed in it (T391). D501: a large
+  // folder's `+` keeps SQLite off reports_folder (sorting thousands of rows) and on reports_live_recent.
+  const folderColumn = large(sizes.folder, sizes) ? "+r.folder_id" : "r.folder_id";
   if (options.folderId === "unfiled") where.push("r.folder_id IS NULL");
   else if (options.folderId && options.subtree) {
-    where.push(`r.folder_id IN (WITH RECURSIVE sub(id, depth) AS (
-      SELECT f.id, 1 FROM report_folders f WHERE f.id = $folderId AND f.deleted_at IS NULL
-      UNION SELECT f.id, sub.depth + 1 FROM report_folders f JOIN sub ON f.parent_id = sub.id WHERE f.deleted_at IS NULL AND sub.depth < 8) SELECT id FROM sub)`);
+    where.push(`${folderColumn} IN (${SUBTREE_SQL})`);
     params.folderId = options.folderId;
-  } else if (options.folderId) { where.push("r.folder_id = $folderId"); params.folderId = options.folderId; }
+  } else if (options.folderId) { where.push(`${folderColumn} = $folderId`); params.folderId = options.folderId; }
   if (options.cursor) {
     const { at, id } = decodeCursor(options.cursor);
     where.push("(r.updated_at < $cursorAt OR (r.updated_at = $cursorAt AND r.id > $cursorId))");
@@ -109,7 +147,7 @@ export function reportListSql(options: ReportListOptions) {
 /** One page of the reports a person can open, newest change first, with the filters in use (keyset paged). */
 export function listReportsPage(userId: string, options: ReportListOptions = {}): ReportListPage {
   const limit = Math.min(Math.max(1, Math.floor(options.limit ?? REPORT_PAGE_SIZE)), REPORT_PAGE_SIZE);
-  const { sql, params } = reportListSql(options);
+  const { sql, params } = reportListSql(options, reportListSizes(options, userId));
   const rows = db.query(sql).all({ ...params, userId, limit: limit + 1 }) as SummaryRow[];
   const more = rows.length > limit;
   const reports = rows.slice(0, limit).map((row) => summaryOf(row, userId));

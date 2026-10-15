@@ -305,7 +305,7 @@ Wave 45 (plan of record `docs/plan/WAVES_45-48_REPORTS.md`), in `server/reports/
 - `schemaCatalog.ts`: the cached layout of allowlisted tables in `report_schema_tables` with the FTS5 `report_schema_fts`, synced in two bulk reads (or SHOW/DESCRIBE), on save, on Re-sync, daily from the sweeper, and per table on a lookup miss; `schemaTools.ts` holds the six schema tools as plain functions for wave 46's agent.
 - `service.ts`, `access.ts` (owner-only in wave 45), `bin.ts` (Bin provider `report`), `search.ts` (titles), `mcpTools.ts` (`list_reports`, `list_report_datasources`).
 
-Client: `src/reports/` (lazy chunk): `ReportsApp.tsx` routes between `ReportsHome.tsx` (`/reports`) and `ReportPage.tsx` (`/reports/:id`, the SQL console and the `SchemaBrowser.tsx` sheet); `src/reportsRoute.ts` has the Back rules; `src/settings/ReportDataSources.tsx` is Settings → Report data sources (admins, `/settings/datasources`). Sheets use `useHistoryDialogGuard`, so Back closes them first.
+Client: `src/reports/` (lazy chunk): `ReportsApp.tsx` routes between `ReportsHome.tsx` (`/reports`) and `ReportPage.tsx` (`/reports/:id`, the SQL console and the `SchemaBrowser.tsx` sheet); `src/reportsRoute.ts` has the Back rules; `src/settings/ReportDataSources.tsx` is Settings → Report data sources (admins, `/settings/datasources`); `src/settings/ReportOwnerReview.tsx` is Settings → Report owners (admins, `/settings/report-owners`, D500: reports nobody can manage, `server/reports/ownerReview.ts`). Sheets use `useHistoryDialogGuard`, so Back closes them first.
 
 ## UI
 

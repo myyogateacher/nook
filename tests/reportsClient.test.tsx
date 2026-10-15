@@ -39,6 +39,17 @@ describe("routes", () => {
     for (const role of ["member", "viewer", "guest"] as const) expect(hubEntries(role, { teamModuleEnabled: false }).map((entry) => entry.id)).not.toContain("datasources");
   });
 
+  test("Settings → Report owners (D500) is an admin section at /settings/report-owners, after Report data sources", () => {
+    expect(settingsPath("reportowners")).toBe("/settings/report-owners");
+    expect(parseSettingsPath("/settings/report-owners")).toBe("reportowners");
+    expect(parseSettingsPath("/settings/report-owners/")).toBe("reportowners");
+    expect(parseSettingsPath("/settings/reportowners")).toBeNull();
+    expect(parseSettingsPath("/settings/report--owners")).toBeNull();
+    const ids = hubEntries("admin", { teamModuleEnabled: false }).map((entry) => entry.id);
+    expect(ids.indexOf("reportowners")).toBe(ids.indexOf("datasources") + 1);
+    for (const role of ["member", "viewer", "guest"] as const) expect(hubEntries(role, { teamModuleEnabled: false }).map((entry) => entry.id)).not.toContain("reportowners");
+  });
+
   test("the module gate: off hides /reports; guests never have it", () => {
     expect(hiddenModuleForApp(["reports"], "reports")).toBe("reports");
     expect(hiddenModuleForApp([], "reports")).toBeNull();

@@ -23,6 +23,7 @@ import { saveSchedule } from "./scheduler";
 import { listReportsPage, parseSpec as parseStoredSpec, setFavorite } from "./service";
 import { createFolder, listFolders, moveReportToFolder, updateFolder } from "./folders";
 import { addOwner, listOwners } from "./owners";
+import { ownerReview } from "./ownerReview";
 import { REPORT_FOLDER_NAME_MAX, REPORT_FOLDERS_PER_WORKSPACE, REPORT_PAGE_SIZE, REPORT_STATUSES } from "../../shared/reports";
 import { knownSpec } from "./specCheck";
 import type { ReportSpec } from "../../shared/reports";
@@ -48,7 +49,7 @@ const parseSpec = (json: string): ReportSpec => knownSpec(parseStoredSpec(json))
  *   report's owners). Never deletes: a folder is deleted only in the app, by an admin, to the Bin.
  * - Phase 2 (D482): `list_report_owners` (reports:read: an owner or an admin) and `add_report_owner`
  *   (reports:write: an owner or an admin; audited). Owner removal is app-only (D180). Never offered to
- *   chat agents.
+ *   chat agents. D500: `list_unmanaged_reports` (reports:read: admins only), the reports nobody can manage.
  * - Report organization phase 1: list_reports filters (owner, statuses, data source, scheduled,
  *   favorites, shared, folder) and pages by cursor; `star_report` and `unstar_report` (reports:write:
  *   the key owner's own Favorites, audited; a star needs a report they can open).
@@ -543,6 +544,24 @@ export const reportTools: McpToolSpec[] = [
     buckets: ["report_write"],
     inputSchema: z.object({ reportId, userId: z.string().uuid().describe("The person to make an owner") }),
     handler: (args, key) => asOwner(key, (role) => addOwner({ id: key.userId, role }, args.reportId.toLowerCase(), args.userId.toLowerCase(), { keyId: key.keyId }))
+  }),
+  // D500: Settings → Report owners over MCP, admins only and the unmanaged list only (never "reports I cannot
+  // open"); recovering one is add_report_owner. A key over chosen reports sees only those (T203).
+  defineTool({
+    name: "list_unmanaged_reports",
+    title: "List reports nobody can manage",
+    description: `Admins only: live reports with no owner who can act (every owner blocked, now a guest or a viewer, or gone), newest change first, at most 200: id, title, folder, owners (id, name, state: active, blocked, guest, or viewer), last change, and whether the admin can open it. Titles and owners only, never content. Recover one with add_report_owner. ${UNTRUSTED}`,
+    scopes: ["reports:read"],
+    access: { mode: "list", lists: ["report"] },
+    write: false,
+    inputSchema: z.object({ query: z.string().min(1).max(200).optional().describe("Only reports whose title contains this") }),
+    handler: (args, key) => asOwner(key, (role) => {
+      const review = ownerReview({ id: key.userId, role }, { scope: "unmanaged", q: args.query, ids: keyContainerIds(key, "reports:read", "report"), via: { keyId: key.keyId } });
+      return {
+        reports: review.reports.map((report) => ({ id: report.id, title: report.title, folder: report.folder?.name ?? null, owners: report.owners, updatedAt: report.updatedAt, canOpen: report.canOpen })),
+        total: review.total
+      };
+    })
   }),
   // Report organization phase 1 (D486): the key owner's own star; never a grant (lists read it through access, T393).
   defineTool({

@@ -94,7 +94,7 @@ function OwnersSection({ reportId, people, onLeft, onChanged }: { reportId: stri
  * edit. Phase 2: the Owners section on top, for owners and admins; an admin who is not an owner gets
  * the Owners section alone (`canShare` false).
  */
-export function ShareSheet({ reportId, title, onClose, reopen, link, copyFailed = false, flash = () => undefined, canShare = true, canManageOwners = false, onOwnersChanged, onLeft }: {
+export function ShareSheet({ reportId, title, onClose, reopen, link, copyFailed = false, flash = () => undefined, canShare = true, canManageOwners = false, onOwnersChanged, onLeft, layerKey = "reports.share" }: {
   reportId: string; title: string; onClose: () => void; reopen?: () => void;
   /** The report's URL (the Copy link row); none in tests. */ link?: string;
   /** The clipboard refused the Share click's copy: the field starts selected. */ copyFailed?: boolean; flash?: (message: string) => void;
@@ -102,6 +102,7 @@ export function ShareSheet({ reportId, title, onClose, reopen, link, copyFailed 
   /** Phase 2: an owner or an admin sees the Owners section. */ canManageOwners?: boolean;
   onOwnersChanged?: () => void;
   /** The caller removed themselves as an owner: they may no longer read the report. */ onLeft?: () => void;
+  /** The history layer's key (D480): Settings → Report owners names the report, `settings.reportOwners:<id>`. */ layerKey?: string;
 }) {
   const [visibility, setVisibility] = useState<ReportVisibility>("private");
   const [shares, setShares] = useState<ReportShare[]>([]);
@@ -111,7 +112,7 @@ export function ShareSheet({ reportId, title, onClose, reopen, link, copyFailed 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const name = useId();
-  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey: "reports.share" });
+  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey });
 
   useEffect(() => {
     let alive = true;

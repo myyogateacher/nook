@@ -76,7 +76,7 @@ export const NOOK_NEVER_TOOLS: ReadonlySet<string> = new Set([
   // Lane I: a report's folder is its owner's organisation of the Reports home, not an agent's.
   "create_report_folder", "move_report_to_folder", "update_report_folder",
   // Phase 2 (D482): who owns a report is for people and admins to decide, never an agent.
-  "list_report_owners", "add_report_owner",
+  "list_report_owners", "add_report_owner", "list_unmanaged_reports",
   // Report organization phase 1: a star is the owner's own shortcut on their Reports home, not an agent's.
   "star_report", "unstar_report"
 ]);

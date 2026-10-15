@@ -1,5 +1,5 @@
 import { api } from "../api";
-import type { InstructionsView, PatchOp, ProposalView, ReportInstruction, ReportOwners, ReportSharing, SharingInput } from "../../shared/reportsEdit";
+import type { InstructionsView, PatchOp, ProposalView, ReportInstruction, OwnerReview, OwnerReviewScope, ReportOwners, ReportSharing, SharingInput } from "../../shared/reportsEdit";
 import type { VersionDiff, VersionHistoryItem, VersionSnapshot } from "../../shared/reportVersions";
 
 /** The Wave 48 report routes (server/reports/editRoutes.ts): instructions, proposals, versions, manual edits, sharing. */
@@ -36,3 +36,5 @@ export const threadMoving = (instructions: readonly Pick<ReportInstruction, "sta
 export const getOwners = (id: string) => api<ReportOwners>(`/reports/${id}/owners`);
 export const addOwner = (id: string, userId: string) => api<ReportOwners>(`/reports/${id}/owners`, json("POST", { userId }));
 export const removeOwner = (id: string, userId: string) => api<ReportOwners>(`/reports/${id}/owners/${userId}`, { method: "DELETE", body: "{}" });
+/** D500: Settings → Report owners (admins): reports nobody can manage, or the admin cannot open. */
+export const ownerReview = (scope: OwnerReviewScope, q: string) => api<OwnerReview>(`/reports/admin/owner-review?${new URLSearchParams({ scope, ...(q.trim() ? { q: q.trim() } : {}) })}`);

@@ -55,8 +55,9 @@ Next free ids at planning time: migration **061** (060 is the Files `document_ft
 - `report_folders` is rebuilt without `owner_id` (`created_by`, SET NULL), keeping every report's `folder_id`. Two people's same-named folders are both kept; the nav names the creator beside such siblings (never a merge, which would move reports their owners filed).
 - Last owner: removing them is refused (`LAST_OWNER`). Blocking an owner or making them a guest hands reports with no other active owner to an admin (the one acting, else the oldest active admin), audited `reports.owner.handover`; Nook had no ownership-transfer pattern to reuse.
 - Admins manage owners of any report but are not owners by role (unchanged: they never were).
-- Only admins see, restore, or purge binned folders. Nothing deletes a folder over MCP; `update_report_folder` renames and moves (admins).
-- The folder-subtree list may walk `reports_live_recent` rather than `reports_folder` now that folders are shared (still no full scan, well under the 50 ms line at 2,000 reports).
+- Only admins see, restore, or purge binned folders. **Policy (D502):** deleting a report folder stays in the app; no MCP tool deletes, bins, restores, or purges one (D180). `update_report_folder` renames and moves (admins).
+- **Settings → Report owners (D500, T399):** admins find reports nobody can manage (every owner blocked, now a guest or a viewer, or gone) and reports they cannot open, by title, folder, owners and last change, and add an owner from the report's Owners sheet (the same audited owners API). MCP: `list_unmanaged_reports` (admins).
+- **Scale (D501):** checked at 50,000 and 200,000 reports with 1,000 folders (`tests/reportListScale.test.ts`, opt-in with `NOOK_PERF=1`). The folder subtree stayed at 0.4–2 ms a page; the Owner filter and Favorites had degraded (98 and 62 ms at 50,000) and now pick, per request, between starting from the set and walking `reports_live_recent`, by the set's size. Every filter is 0.3–14 ms of CPU a page; no migration.
 
 **Operator decision (2026-10-15).** Keep permissions simple:
 - Permissions live on the **report**.
@@ -105,6 +106,7 @@ Next free ids at planning time: migration **061** (060 is the Files `document_ft
 - D481: Folders only group and never grant access.
 - D482: Reports have several owners, and admins manage owners.
 - D483: The workspace-wide folder tree.
+- Leftovers, 2026-10-15: D500 (Settings → Report owners), D501 (the list at 50,000 reports), D502 (folder deletion is app-only, by policy); T399.
 
 ## Phase 3: report lists (optional, migration 064)
 

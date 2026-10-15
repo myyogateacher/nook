@@ -53,6 +53,7 @@ const KnowledgeSettings = lazy(() => import("./chat/KnowledgeSettings").then((mo
 // Analytics reports (Wave 45): the app and Settings → Report data sources are their own chunks.
 const ReportsApp = lazy(() => import("./reports/ReportsApp").then((module) => ({ default: module.ReportsApp })));
 const ReportDataSources = lazy(() => import("./settings/ReportDataSources").then((module) => ({ default: module.ReportDataSources })));
+const ReportOwnerReview = lazy(() => import("./settings/ReportOwnerReview").then((module) => ({ default: module.ReportOwnerReview })));
 import { lineDiff } from "./diff/lineDiff";
 import { TeamSection } from "./team/TeamApp";
 import { useBlockedCount } from "./team/blockedCount";
@@ -737,6 +738,7 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
     : section === "knowledge" ? <Suspense fallback={<section className="settings-content" aria-busy="true"><p className="sr-only" role="status">Loading knowledge bases…</p></section>}><KnowledgeSettings kbId={route.app === "settings" ? route.kbId ?? null : null} navigate={go} flash={flash} /></Suspense>
     : section === "ai" ? (session.user.role === "admin" ? <Suspense fallback={<section className="settings-content" aria-busy="true"><p className="sr-only" role="status">Loading AI settings…</p></section>}><AiSettings flash={flash} tabs={aiTabs} tab={aiTab} onSelectTab={(tab) => go({ app: "settings", section: "ai", aiTab: tab })} /></Suspense> : <section className="settings-content"><p className="settings-warning">That section is for admins.</p></section>)
     : section === "datasources" ? (session.user.role === "admin" ? <Suspense fallback={<section className="settings-content" aria-busy="true"><p className="sr-only" role="status">Loading data sources…</p></section>}><ReportDataSources /></Suspense> : <section className="settings-content"><p className="settings-warning">That section is for admins.</p></section>)
+    : section === "reportowners" ? (session.user.role === "admin" ? <Suspense fallback={<section className="settings-content" aria-busy="true"><p className="sr-only" role="status">Loading reports…</p></section>}><ReportOwnerReview /></Suspense> : <section className="settings-content"><p className="settings-warning">That section is for admins.</p></section>)
     : section === "about" ? <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About {appName()}</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>{appName()}</h4><p>{appName() === "Nook" ? "Built by Pankaj" : "Built on Nook by Pankaj"}</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>
     : securitySection;
 

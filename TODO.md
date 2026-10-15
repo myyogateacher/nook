@@ -28,6 +28,8 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 
 - [ ] Files: when only file text matches, the header reads "0 of 4 files". Count the text hits, or say "No names match" (v0.39.0 QA).
 - [ ] Reports phone nav: the Favorites entry in the folder switcher shows an archive icon instead of a star (v0.39.0 QA).
+- [ ] Reports line charts at 390 px: the end-of-line label is clipped at the card edge ("198 reques"), and the maximum's label can drop out (v0.40.0 QA).
+- [ ] Report parameters: "Updated N min ago" keeps the default set's time after a new period or route runs; show the shown set's run time (v0.40.0 QA).
 
 - [ ] Report organization phase 2 leftovers (062 shipped): an admin can manage the owners of a report they cannot read only over REST/MCP (`/api/reports/:id/owners`, `add_report_owner`); a Settings view listing reports whose owners are all blocked or guests would let them find one in the UI (a block hands such reports to an admin today, so it only matters for data from before 062 or a guest demotion with no admin left). The folder-subtree list may walk `reports_live_recent` instead of `reports_folder` now that folders are shared; fine at 2,000 reports, worth a check past ~50,000. Deleting a report folder stays app-only (no MCP tool), as before.
 

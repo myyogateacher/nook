@@ -459,7 +459,8 @@ export function buildChartOption(block: ChartBlock, data: ChartData, theme: Char
       endLabel: { show: (emphasisSeries === null || item.name === emphasisSeries) && !(stacked && series.length > 1), ...labelStyle, distance: 6 },
       data: item.values.map((value, position) => {
         if (position === end) return { value, symbol: "circle", symbolSize: MARKS.line.dotRadius * 2, itemStyle: { color, borderColor: ink.surface, borderWidth: MARKS.line.dotRing } };
-        if (position === top && top !== end) return { value, symbol: "circle", symbolSize: 6, itemStyle: { color, borderColor: ink.surface, borderWidth: MARKS.line.dotRing }, label: { show: true, position: "top", ...labelStyle } };
+        // A maximum on the first point reads rightwards from its dot, clear of the y-axis labels.
+        if (position === top && top !== end) return { value, symbol: "circle", symbolSize: 6, itemStyle: { color, borderColor: ink.surface, borderWidth: MARKS.line.dotRing }, label: { show: true, position: "top", ...(position === 0 ? { align: "left" } : {}), ...labelStyle } };
         return value;
       })
     };

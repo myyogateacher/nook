@@ -318,4 +318,16 @@ describe("final review L3 and M3", () => {
     const { registeredMigrationIds } = await import("../server/migrations");
     expect(registeredMigrationIds.filter((id) => id >= 60)).toEqual([60, 61, 62, 63]);
   });
+
+  test("docs/OPERATIONS.md has the 0.40.0 upgrade section: 063, its tables, backup, REPORT_TIME_ZONE, and the failure path", async () => {
+    const text = await Bun.file(new URL("../docs/OPERATIONS.md", import.meta.url)).text();
+    const start = text.indexOf("### Upgrading to 0.40.0 (interactive reports, migration 063)");
+    expect(start).toBeGreaterThan(0);
+    const section = text.slice(start, text.indexOf("### Upgrading to 0.39.0", start));
+    for (const word of ["**063**", "report_parameters", "report_results.params_json", "report_param_sets", "report_param_results", "report_param_options", "REPORT_TIME_ZONE", "APP_VERSION=0.40.0", "Back up first", "./scripts/backup.sh --force", "Migration failed"]) expect(section).toContain(word);
+    expect(section).not.toMatch(/next release|unreleased/i);
+    expect(text).not.toContain("Upgrading past 0.39.0");
+    const { registeredMigrationIds } = await import("../server/migrations");
+    expect(registeredMigrationIds.filter((id) => id >= 63)).toEqual([63]);
+  });
 });

@@ -102,7 +102,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.39.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.40.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -114,11 +114,11 @@ Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations
 
 ## What's new
 
-Release notes for every version are in [CHANGELOG.md](CHANGELOG.md). Latest (v0.39.0):
+Release notes for every version are in [CHANGELOG.md](CHANGELOG.md). Latest (v0.40.0):
 
-- **Reports organized at scale**: favorites (★), filters kept in the URL, search and paging, several owners per report, and one shared folder tree for the workspace.
-- **Full-text search over Files contents**: "In file text" in Files, a Files facet in global search, and ranked "Pick from Nook" in reports. New accounts default to **member**.
-- Migrations 060–062 run on the first boot (the Files index builds in the background); back up first. Set `SIGNUP_ROLE=guest` to keep the old signup role.
+- **Interactive reports**: a date range (presets in the report's time zone), filters drawn from the data, and number and text inputs that re-run the report with typed ClickHouse parameters; values live in the URL, and any reader can use them.
+- **Smarter chart choice**: a data-shape advisor and a kind check suggest the chart kinds that fit each query (funnel, cohort heatmap, gauge, sankey, and more).
+- Migration 063 runs on the first boot (new tables, nothing rewritten); back up first. `REPORT_TIME_ZONE` is a new optional setting.
 
 ## Documentation
 

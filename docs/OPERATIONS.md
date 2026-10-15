@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.39.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.40.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -426,7 +426,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
 | `AGENT_IMAGE_PROXY_TEST_HOSTS` | empty | Tests and local QA only: hosts (names, addresses, or CIDR ranges) the chat image proxy may reach over http on any port, standing in for a public picture host. Refused at startup when `NODE_ENV=production`. The proxy never uses `AGENT_ALLOWED_PRIVATE_HOSTS`: in production it loads public https addresses on port 443 only. |
-| `APP_VERSION` | `0.39.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.40.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 | `LOG_LEVEL` | `info` | `error`, `warn`, `info`, or `debug` (see *Logs*). `debug` adds health checks, static files, single 401/404s, successful polls, and query SQL. Any other value means `info`. |
 | `LOG_FORMAT` | `pretty` | `pretty` (one readable line per event with `key=value` fields) or `json` (one JSON object per line, for a log shipper). |
@@ -611,9 +611,20 @@ curl http://localhost:2026/api/health
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
 
-### Upgrading past 0.39.0 (report parameters, migration 063)
+### Upgrading to 0.40.0 (interactive reports, migration 063)
 
-Migration **063** `report_parameters` adds the column `report_results.params_json` (the bound parameter values of a stored result) and three tables: `report_param_sets`, `report_param_results` (the cached results of the parameter sets readers asked for), and `report_param_options` (a select's choices). It copies nothing and rewrites no table, so it is quick at any size. Stored report specs read as spec v3 with no parameters; nothing about an existing report changes until it gains parameters. Back up first as always (`./scripts/backup.sh --force`). If the migration fails, the server logs `Migration failed` with id 63 and does not start; restore the backup or fix the cause and start again (it is transactional, so nothing is half applied).
+0.40.0 adds report parameters (a date range, filters drawn from the data, number and text inputs that re-run the report) and a data-shape advisor for chart kinds. Its one migration runs once on the first boot, before the HTTP server answers; it is recorded in `schema_migrations` and cannot be undone except by restoring a backup.
+
+| Migration | What it does | Cost |
+| --- | --- | --- |
+| **063** `report_parameters` | Adds the column `report_results.params_json` (the bound parameter values of a stored result) and three tables: `report_param_sets`, `report_param_results` (the cached results of the parameter sets readers asked for), and `report_param_options` (a select's choices). It copies nothing and rewrites no table. Stored report specs read as spec v3 with no parameters; nothing about an existing report changes until it gains parameters. | Quick at any size. |
+
+Steps:
+
+1. **Back up first:** `./scripts/backup.sh --force`. Restoring this backup is the only way back.
+2. **Optionally set `REPORT_TIME_ZONE`** (an IANA zone such as `Asia/Kolkata`). Date presets ("Today", "Last 30 days", month to date) resolve in a report's schedule zone, then this setting, then the server's zone; the picker names the zone it used.
+3. Pull, rebuild with `APP_VERSION=0.40.0`, and restart as above. `/api/health` answers once the migration is done.
+4. **If the migration fails**, the server logs `Migration failed` with id 63 and does not start. It is transactional, so nothing is half applied: restore the backup, or fix the cause and start again.
 
 ### Upgrading to 0.39.0 (report organization and Files search, migrations 060–062)
 

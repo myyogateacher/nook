@@ -2,6 +2,37 @@
 
 Release notes for Nook, newest first. Upgrade steps for each release are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
+## v0.40.0 — 2026-10-15
+
+**Interactive reports**
+
+- **Parameters on a report**: a date range (presets that resolve in the report's time zone and say so, e.g. "Last 30 days (IST)", plus a custom range), filters whose choices are drawn from the data (e.g. Route), and number and text inputs, in a control bar at the top of the report (a Filters sheet on phones).
+- **Changing a value re-runs the report**: values are bound safely as typed ClickHouse parameters (`{period_from:Date}`, `{routes:Array(String)}`), never pasted into SQL; undeclared or mistyped placeholders are refused.
+- **Values live in the URL**, so a link opens the same view and Back and Forward keep them. **Reset to defaults** returns to the report's own values.
+- **Anyone who can read the report can use them** (viewers too); results are cached per set of values, and Refresh all and schedules run the defaults.
+- **The AI adds parameters** from the doc when it generates a report, and **Changes** can add, update or remove them; Versions diff them.
+- **Inspect shows the bound values** of each block's query.
+- **MCP**: `get_report`, `get_report_block` and `refresh_report` accept parameter values.
+
+**Smarter chart choice**
+
+- **A data-shape advisor** suggests the chart kinds that fit each query's result (funnel, cohort heatmap, gauge or bullet, sankey, histogram or boxplot, waterfall, calendar, facet).
+- **A kind check** against each block's intent, plus a one-time hint when most charts are bar or line but the data fits a more specific kind.
+- **5 new eval cases**: funnel, cohort heatmap, quota gauge/bullet, latency spread, and plan flow sankey.
+
+**New setting**
+
+- **`REPORT_TIME_ZONE`**: the time zone report date presets resolve in when a report has no schedule.
+
+**Fixes**
+
+- On a line chart whose highest point is its first, the value label no longer covers the top y-axis label.
+
+**Upgrading**
+
+- Migration **063** (`report_parameters`) runs once on the first boot: new tables plus one column (`report_results.params_json`); nothing is copied or rewritten, so it is quick at any size. **Back up first** (`./scripts/backup.sh --force`).
+- **`REPORT_TIME_ZONE`** is optional: a report's dates use its schedule's zone, then this setting, then the server's zone. See [Upgrading to 0.40.0](docs/OPERATIONS.md#upgrades).
+
 ## v0.39.0 — 2026-10-15
 
 **Report organization**

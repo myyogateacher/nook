@@ -233,6 +233,17 @@ describe("chart options from the theme", () => {
     expect((area.option!.xAxis as { splitLine: { show: boolean } }).splitLine.show).toBe(false);
   });
 
+  test("a line's maximum on its first point labels rightwards, clear of the y-axis labels; elsewhere it stays centred", () => {
+    const rows = (values: number[]) => ({ columns: [{ name: "day", type: "Date" }, { name: "requests", type: "UInt64" }], rows: values.map((value, at) => [`2026-09-${String(at + 1).padStart(2, "0")}`, value]) });
+    const label = (values: number[], at: number) => {
+      const series = buildChartOption({ ...bar(), kind: "line", intent: "trend", x: "day", y: ["requests"] }, rows(values), dark).option!.series as Array<{ data: Array<{ label?: { align?: string; position?: string } }> }>;
+      return series[0]!.data[at]!.label;
+    };
+    expect(label([705, 700, 560, 564], 0)).toMatchObject({ show: true, position: "top", align: "left" });
+    expect(label([500, 705, 560, 564], 1)).toMatchObject({ show: true, position: "top" });
+    expect(label([500, 705, 560, 564], 1)!.align).toBeUndefined();
+  });
+
   test("emphasis: the named series (or one category) in slot 1, every other in the muted grey", () => {
     const two = { columns: [{ name: "day", type: "Date" }, { name: "web", type: "Float64" }, { name: "app", type: "Float64" }], rows: [["2026-10-01", 5, 6]] };
     const series = buildChartOption({ ...bar(), kind: "line", x: "day", y: ["web", "app"], emphasis: "app" }, two, light).option!;

@@ -2,6 +2,27 @@
 
 Release notes for Nook, newest first. Upgrade steps for each release are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
+## v0.42.0 — 2026-10-15
+
+**PDFs everywhere**
+
+- **A PDF in Files can be a report's doc**: "Pick from Nook" in New report offers PDFs (labelled "PDF"), and generation reads their text layer.
+- **`read_attachment_text`** (MCP) reads PDF attachments, returning `pdf: {pages, pagesRead, truncated}` like `read_document_text`.
+- **Scanned PDFs say so**: a PDF with no text layer returns "This PDF has no text layer (scanned?)" instead of empty text, and is left out of "Pick from Nook". OCR is not planned.
+
+**Reports**
+
+- **`search_report_options`** (MCP, `reports:read`): agents look up a filter's values past the first 200, with the same access check and rate limit as the app's search box.
+- **Settings → Report owners pages** with "Load more" (and `cursor` on the API and `list_unmanaged_reports`), and the "Nobody can manage" list is about 7× faster at 50,000 reports.
+
+**Changed behaviour**
+
+- `read_document_text` on a scanned PDF now returns an error (NOT_TEXT) where 0.41.0 returned empty text.
+
+**Upgrading**
+
+- No migration and no new settings. Back up first (`./scripts/backup.sh --force`), pull, rebuild with `APP_VERSION=0.42.0`, and restart.
+
 ## v0.41.0 — 2026-10-15
 
 **Reports**

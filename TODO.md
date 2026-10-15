@@ -7,9 +7,7 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 
 **Current state (2026-10-15).**
 - **v0.40.0** is released (tag and GitHub release, 2026-10-15): interactive report parameters (date range in the report's time zone, filters drawn from the data) and smarter chart choice. v0.39.0 brought report organization, Files full-text search and member as the default role.
-- Migrations:
-  - **063** (report parameters) is on `main`, unreleased.
-  - **001–063** are released and immutable (045 and 054 unused; 054 is reserved for Messages).
+- Migrations: **001–063** are released and immutable (045 and 054 unused; 054 is reserved for Messages). Next free: **064**.
 - Development happens directly on `main`, pushed as each change passes its gates.
 
 ## In flight

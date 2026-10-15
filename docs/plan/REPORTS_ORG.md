@@ -57,11 +57,15 @@ Next free ids at planning time: migration **061** (060 is the Files `document_ft
 **Data**
 - `report_owners(report_id, user_id, added_by, created_at)`.
 - Migrate every `reports.owner_id` into this table. Keep `owner_id` as the creator, or drop it if that is cleaner.
-- `report_folders` becomes a **workspace-wide grouping tree** (needs the operator's confirmation):
+- `report_folders` becomes a **workspace-wide grouping tree** (confirmed by the operator, 2026-10-15):
   - Every member sees the same folders.
   - A folder shows only the reports that person can read.
   - Empty folders are visible to members; guests see none.
-- Any member can create and rename folders. Only the folder's creator or an admin can delete an empty folder to the Bin.
+- **Folder rights** (operator decision, 2026-10-15):
+  - Any member (not a guest) can **create** a folder.
+  - Only **admins** can **rename, move, reorder or delete** folders, so nobody else can reorganize the shared tree.
+  - A deleted folder goes to the Bin. Its reports move to Unfiled and return when the folder is restored.
+  - Filing a report into a folder stays the report owner's right.
 - Folders have no sharing and no levels.
 
 **Access**
@@ -112,5 +116,4 @@ Phase 2's threats and decisions are listed in its section. Phase 1 adds D486 (Fa
 
 ## Open questions
 
-1. Are folders one shared tree for the whole workspace, so everyone sees the same folders but only the reports they can read? Or are they per person? [Recommended: one shared tree.]
-2. Who can create and rename folders? [Any member; deleting is limited to the folder's creator or an admin, and only when the folder is empty.]
+None. The operator settled them on 2026-10-15: one shared folder tree, and only admins can rename, move or delete folders.

@@ -16,12 +16,12 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 - [ ] Report organization at scale ([plan](docs/plan/REPORTS_ORG.md), Tableau-style; replaces "readers' own placement"; the D460 `group_grants` fold becomes optional cleanup). Phases 1 and 2 shipped.
   - [ ] Phase 3 (064, optional): report Lists. A report can sit in many lists, and a list never grants access.
 
-- [ ] Reports: wider choice of chart kinds (requested 2026-10-15; generated reports come out mostly bar and line). The prompt already teaches 17 kinds and a routing table, but the model defaults to bar and line. Fixes:
+- [ ] (Lane CK) Reports: wider choice of chart kinds (requested 2026-10-15; generated reports come out mostly bar and line). The prompt already teaches 17 kinds and a routing table, but the model defaults to bar and line. Fixes:
   - Every `run_sql` result carries a deterministic **data-shape advisor**: it reads column types, row counts, ordered/date dimensions, stage-like values, a target column, a 0–1 or percent range, and from/to pairs, then suggests the fitting kinds ("this looks like a funnel / cohort matrix / distribution").
   - The planner records each todo's intent, and the chosen kind must match it.
   - A soft design check, sent once: if most blocks are bar/line but the shapes fit other kinds, the AI is asked to reconsider.
   - Eval cases for kind selection (funnel, cohort heatmap, attainment, distribution, flow).
-- [ ] Reports: **interactive parameters** (requested 2026-10-15): a date range and filters on the report page that re-run the report.
+- [ ] (Lane PARAMS) Reports: **interactive parameters** (requested 2026-10-15): a date range and filters on the report page that re-run the report.
   - Spec v3 `parameters`: a date range (presets and custom; the default comes from the doc, e.g. last 30 days), single or multi-select dimension filters whose options come from a guarded query (e.g. distinct `route`), and number and text inputs.
   - Queries reference parameters through ClickHouse's typed query parameters `{name:Type}`, which are bound server-side and never string-pasted. The guard and the EXPLAIN check must accept them.
   - The control bar sits at the top of the report. Values live in the URL, so Back/Forward and shared links keep them. Results are cached per parameter set. The default set is what refresh and schedules use.

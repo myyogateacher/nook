@@ -3,6 +3,7 @@ import { logger } from "../log";
 import { BLOCK_INTENTS, type ReportSpec } from "../../shared/reports";
 import { PLAN_LIMITS, PLAN_TODO_KINDS, type PlanTodo, type PlanTodoKind, type RunPlan } from "../../shared/reportsGenerate";
 import { ReportError } from "./errors";
+import type { Shape } from "./shapeAdvisor";
 
 /**
  * The report agents' planner (generate.ts: plan_report; edit.ts: plan_change). The agent reads the
@@ -108,8 +109,11 @@ export class Planner {
     if (!title) errors.push(`${where} (${id}): title is required`);
     const kind = item.kind as PlanTodoKind;
     if (!PLAN_TODO_KINDS.includes(kind)) errors.push(`${where} (${id}): kind must be one of ${PLAN_TODO_KINDS.join(", ")}`);
-    const intent = item.intent === undefined || item.intent === null ? null : text(item.intent, 20);
+    // D488: every data todo carries its intent (a kpi is a headline and a table detail unless it says otherwise); the kind check holds the block to it.
+    const given = item.intent === undefined || item.intent === null ? null : text(item.intent, 20);
+    const intent = given ?? (kind === "kpi" ? "headline" : kind === "table" ? "detail" : null);
     if (intent !== null && !(BLOCK_INTENTS as readonly string[]).includes(intent)) errors.push(`${where} (${id}): intent must be one of ${BLOCK_INTENTS.join(", ")}`);
+    if (intent === null && kind === "chart") errors.push(`${where} (${id}): a chart todo needs an intent (${BLOCK_INTENTS.filter((name) => name !== "headline" && name !== "detail").join(", ")}); the chart kind follows from it`);
     const section = item.section === undefined || item.section === null ? null : text(item.section, 40);
     if (section !== null && !sectionIds.has(section)) errors.push(`${where} (${id}): section ${section} is not one of the plan's sections`);
     const metric = text(item.metric, 120) || null;
@@ -220,9 +224,14 @@ export class Planner {
     return "Plan revised.";
   }
 
-  /** run_sql with a key that worked. */
-  recordQuery(key: string, sql: string) {
-    if (QUERY_KEY.test(key)) this.ranKeys.set(key, sql);
+  /** D488: the data-shape advisor's reading of each key's last result (the kind check reads it). */
+  readonly shapes = new Map<string, Shape>();
+
+  /** run_sql with a key that worked (and, with a shape, what its data fits). */
+  recordQuery(key: string, sql: string, shape?: Shape) {
+    if (!QUERY_KEY.test(key)) return;
+    this.ranKeys.set(key, sql);
+    if (shape) this.shapes.set(key, shape);
   }
 
   /** The second submit with open todos (the first is refused): they are closed as skipped with this note. */

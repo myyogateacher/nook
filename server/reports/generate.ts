@@ -35,6 +35,7 @@ import { MAX_SCATTER_SERIES } from "../../shared/reportTheme";
 import { DESIGN_LIMITS, persistGenerated, PersistRefused, reportErrorOf, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
 import { currentLogContext, logger, shortId, withLogContext } from "../log";
 import { BEFORE_PLAN_TOOLS, Planner, plannerTools } from "./planner";
+import { adviseShape, kindHints } from "./shapeAdvisor";
 
 const slog = logger("reports");
 
@@ -297,6 +298,7 @@ export function systemPrompt(row: DatasourceRow, doc: { title: string | null; ma
     "## Tools",
     "search_schema, list_tables, and describe_tables read the cached catalog; sample_rows shows up to 5 rows; run_schema_query runs SHOW, DESCRIBE, EXISTS, EXPLAIN, or a read of system.tables/columns; estimate shows what a SELECT would read.",
     `run_sql runs a SELECT and shows its columns, up to ${GENERATE_LIMITS.sampleRows} rows, the row count, and the time; at most ${limits.queries} per run. Give each one a key (the query key the spec will use); update_todo done names it.`,
+    "Each run_sql result carries a shape line: the chart kinds its data fits, the most specific first (funnel, heatmap, gauge, bullet, sankey, histogram, boxplot, waterfall, calendar, facet). Prefer the kind it names over a plain bar or line when that kind answers the todo's intent; bar and line are the fallback, not the default.",
     "read_doc_section reads a part of the document by heading or byte offset (for a long document whose prompt shows only its outline and first part).",
     ...docToolsLines(docTools),
     "plan_report, update_todo, add_todo, and revise_plan are your plan (below).",
@@ -596,6 +598,7 @@ async function executeGeneration(run: Execution) {
   const makePlanner = () => new Planner({ mode: "report", datasourceId: datasource.id, runId, database: datasource.database, metrics });
   let planner = makePlanner();
   let coverageWarned = false;
+  let kindChecked = false;
   slog.info("Generation limits", { docBytes, sectioned: sectioned || undefined, steps: limits.steps, queries: limits.queries, toolCalls: limits.perRun, docMetrics: signals.metrics });
   let sqlRuns = 0;
   let submits = 0;
@@ -658,10 +661,12 @@ async function executeGeneration(run: Execution) {
         try {
           const outcome = await runGuarded(datasource, sql, { classes: ["select"], maxRows: Math.min(datasource.max_rows, REPORT_LIMITS.storedRows), queryId, userId, signal: controller.signal });
           audit(userId, null, "reports.generate.run_sql", { reportId, runId, agentRunId, queryId, sha256, purpose: purpose.slice(0, 120), ok: true, rows: outcome.rows.length, ms: outcome.ms });
-          if (key) planner.recordQuery(key, sql);
+          // D488: the data-shape advisor's line (the kinds this data fits) rides on every result.
+          const shape = adviseShape(outcome.columns, outcome.rows);
+          if (key) planner.recordQuery(key, sql, shape);
           // E3: a ReplacingMergeTree read without FINAL is pointed out even when the query worked.
           const note = finalNote(sql, datasource);
-          return { text: JSON.stringify({ columns: outcome.columns, rows: outcome.rows.slice(0, GENERATE_LIMITS.sampleRows), rowCount: outcome.rows.length, truncated: outcome.truncated, ms: outcome.ms, rowsRead: outcome.rowsRead, ...(note ? { note } : {}) }), ok: true };
+          return { text: JSON.stringify({ columns: outcome.columns, rows: outcome.rows.slice(0, GENERATE_LIMITS.sampleRows), rowCount: outcome.rows.length, truncated: outcome.truncated, ms: outcome.ms, rowsRead: outcome.rowsRead, shape: shape.line, ...(note ? { note } : {}) }), ok: true };
         } catch (error) {
           audit(userId, null, "reports.generate.run_sql", { reportId, runId, agentRunId, queryId, sha256, purpose: purpose.slice(0, 120), ok: false, code: reportErrorOf(error).code });
           throw error;
@@ -692,6 +697,15 @@ async function executeGeneration(run: Execution) {
           coverageWarned = true;
           slog.info("Coverage warning", { blocks: data.length, plannedData, docMetrics: signals.metrics, numberedSections: signals.numberedSections });
           return { text: `Coverage: the document defines about ${signals.metrics} metrics in ${signals.numberedSections} sections with numbers, but this report has ${data.length} data ${data.length === 1 ? "block" : "blocks"}${data.length && data.every((block) => block.type === "table") ? ", all tables" : ""} from ${plannedData} planned data todos. Add todos (add_todo) for the metrics it leaves out, run their queries, and add a block for each in the chart kind its intent routes to (a KPI strip for the headline numbers). Then submit again. This warning comes once and did not use a try.`, ok: false };
+        }
+        // D488: the kind check (a todo's intent its block does not serve; mostly bar and line where the data fits more) speaks once, not a try.
+        if (!kindChecked) {
+          kindChecked = true;
+          const hints = kindHints({ blocks: blocks as never, shapes: planner.shapes, todos: planner.plan?.todos ?? [] });
+          if (hints.length) {
+            insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook's kind check: ${hints.map((hint) => hint.slice(0, 200)).join(" | ")}]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+            return { text: `Before checking the spec, the chart kinds:\n- ${hints.join("\n- ")}\nChange what fits better (the run_sql shape lines say what each result fits) and call submit_report again; if the kinds are right, submit the same spec. This check comes once and did not use a try.`, ok: false };
+          }
         }
         submits += 1;
         const metricOf = (block: { id: string; queryKey?: string }) => planner.plan?.todos.find((todo) => todo.blockId === block.id)?.metric
@@ -860,6 +874,7 @@ async function executeGeneration(run: Execution) {
     // The fallback starts over: a new plan, its own tries, nudges, and sanity round.
     planner = makePlanner();
     coverageWarned = false;
+    kindChecked = false;
     sqlRuns = 0;
     submits = 0;
     sanityRounds = 0;

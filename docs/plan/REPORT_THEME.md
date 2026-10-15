@@ -196,6 +196,35 @@ Shape checks: each round-2 field only on its kinds; `series`, `compareTo`, `emph
 | Distribution | histogram (raw values) or boxplot (per category) |
 | Contribution to change | waterfall |
 | One trend split by many groups | line with `facet` |
+| Daily values over a long span | calendar |
+| A share of a whole | stacked_bar, bar or area with `stack: percent`, treemap, or a pie of at most 5 slices |
+| An ordered list | horizontal_bar |
+| Two measures per row | scatter |
+| Categories side by side | bar (the fallback, not the default) |
+
+### Picking the kind from the data (2026-10-15, D488)
+
+The routing table alone left reports mostly bar and line, so the agents also read what each result's data fits.
+
+- **Data-shape advisor** (`server/reports/shapeAdvisor.ts`, pure): every `run_sql` result in generation and edit carries a `shape` line of at most 300 characters, the most specific kind first, for example `shape: stages=5 decreasing → funnel fits; also bar`. The signals and what they suggest:
+
+| Signal in the result | Fits |
+|---|---|
+| Stage-like labels (a `stage`/`step`/`funnel`/`phase` column, or labels `1.`, `Step 2`) with 2–8 values that never rise | funnel |
+| One row of 3+ decreasing counts | funnel, after unpivoting to one row per stage |
+| One row with a value and a target/goal/quota/budget (or max/capacity) column | gauge; otherwise a KPI |
+| A category, an actual, and a target column, at most 15 rows | bullet |
+| Two text columns named from/to (source/target, prev/next) or sharing values, at most 30 nodes | sankey |
+| Two ordered dimensions (dates, periods, weekdays, period-offset integers such as `month_number`) and a value | heatmap (a cohort matrix when one is a cohort date and the other an offset) |
+| 20+ raw values of one measure | histogram (or boxplot) |
+| 20+ rows over at most 20 categories, 5+ per category, or min/q1/median/q3/max columns | boxplot |
+| Signed values per step with a change-like name (delta, change, net) or start/total rows | waterfall |
+| A date and more than 8 series | line with facet |
+| A Date with 60+ days and one measure | calendar (also line, area) |
+| Values in 0–1 (not all integers) | a note: format percent; 0–100 with a rate name: divide by 100 |
+
+- **Planner**: each chart todo names its intent (a kpi todo defaults to headline, a table to detail).
+- **Kind check** (once per run, never a try): a done todo whose block's kind does not serve its planned intent, and, when more than 70 % of the charts are bar or line, the bar and line blocks whose data the advisor saw fit a specific kind, by name (`f → funnel (5 stages, decreasing)`). Submitting the same spec again is accepted: the check only names kinds the data fits and never forces one.
 
 ### Tokens added
 `sequentialRamp(mode, n)` (low end toward the surface), `ordinalRamp(mode, n)` (≥ 2:1: from step 250 on light, to step 600 on dark), `divergingRamp(mode)`, `METER` (fill `#3987e5` / `#2a78d6`, track `#184f95` / `#cde2fb`), `BULLET_BANDS` (dark `#2f2f35 #25252a #1c1c20`, light `#d6d5cc #e4e3dc #efeee9`), `waterfallColors` (diverging poles, total = muted ink), `inkOn(fill)` (black or white), `MARKS.stackedAreaOpacity` 0.24, heights per kind. Texture fills under forced colours apply to every ECharts kind through the aria decal; the HTML meter hatches its fill.

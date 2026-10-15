@@ -128,7 +128,7 @@ describe("the planner (2c)", () => {
   test("an unknown table in the plan comes back with the closest names; done needs a query that worked; then the plan carries the run", async () => {
     const run = await generate("revenue-AbC123", sequence([
       call("plan_report", { goal: "Revenue", todos: [planTodo("total", { tables: ["analytics.order"] })] }),
-      call("plan_report", { goal: "Revenue", todos: [planTodo("total", { tables: ["analytics.orders"] }), planTodo("daily", { kind: "chart" }), planTodo("countries", { kind: "chart" })] }),
+      call("plan_report", { goal: "Revenue", todos: [planTodo("total", { tables: ["analytics.orders"] }), planTodo("daily", { kind: "chart", intent: "trend" }), planTodo("countries", { kind: "chart", intent: "compare" })] }),
       call("update_todo", { id: "total", status: "done", queryKey: "totals" }),
       call("run_sql", { sql: QA_QUERIES.totals, purpose: "Totals", key: "totals" }),
       call("run_sql", { sql: QA_QUERIES.revenue_daily, purpose: "Daily", key: "revenue_daily" }),
@@ -157,7 +157,7 @@ describe("the planner (2c)", () => {
 
   test("submit with an open todo is refused once (no try used), then accepted with it closed; skipped todos show as Not covered", async () => {
     const run = await generate("revenue-AbC123", sequence([
-      call("plan_report", { goal: "Revenue", todos: [planTodo("total"), planTodo("refunds", { kind: "chart", metric: "refunds by channel" }), planTodo("extra", { kind: "chart" })] }),
+      call("plan_report", { goal: "Revenue", todos: [planTodo("total"), planTodo("refunds", { kind: "chart", intent: "compare", metric: "refunds by channel" }), planTodo("extra", { kind: "chart", intent: "compare" })] }),
       call("run_sql", { sql: QA_QUERIES.totals, purpose: "Totals", key: "totals" }),
       call("update_todo", { id: "total", status: "done", queryKey: "totals" }),
       call("update_todo", { id: "refunds", status: "skipped" }),
@@ -349,7 +349,9 @@ describe("planner units", () => {
     const planner = new Planner({ mode: "change", datasourceId: null, runId });
     expect(() => planner.makePlan({ todos: [] })).toThrow(/1–24 todos/);
     expect(() => planner.makePlan({ todos: [planTodo("a"), planTodo("a")] })).toThrow(/used twice/);
-    planner.makePlan({ todos: [planTodo("a", { kind: "chart" })] });
+    expect(() => planner.makePlan({ todos: [planTodo("a", { kind: "chart" })] })).toThrow(/a chart todo needs an intent/);
+    planner.makePlan({ todos: [planTodo("a", { kind: "chart", intent: "compare" })] });
+    expect(planner.plan!.todos[0]!.intent).toBe("compare");
     expect(planner.submitErrors({ blocks: [], sections: [] })[0]).toContain("still open (a)");
     planner.recordQuery("by_country", "SELECT 1");
     planner.updateTodo({ id: "a", status: "done", queryKey: "by_country" });

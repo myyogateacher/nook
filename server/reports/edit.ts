@@ -18,6 +18,7 @@ import { DocBrowser, storedBrowseTools } from "./docBrowse";
 import { browseSourceOf } from "./docSource";
 import { DOC_BROWSE_LIMITS } from "../../shared/reportsGenerate";
 import { BEFORE_PLAN_TOOLS, Planner, plannerTools } from "./planner";
+import { adviseShape, kindHints } from "./shapeAdvisor";
 import { reportFallbackFor, reportModelFor } from "./model";
 import { applyPatch, changedBlockIds, changedQueryKeys, diffSpecs, opsSummary, parsePatch, PATCH_JSON_SCHEMA, sectionsChanged } from "./patch";
 import { HEARTBEAT_MS, LEASE_MS, onRunAbandoned, queryResults, takeRunLock } from "./refresh";
@@ -161,7 +162,7 @@ export function editPrompt(input: { datasource: DatasourceRow; report: ReportRow
     `The result must still be a valid report: at most ${REPORT_LIMITS.queries} queries and ${REPORT_LIMITS.blocks} blocks, every queryKey names a query, every query is used by a block (remove queries you stop using), every section a block names exists, and named columns exist in the query's result. Nook runs the changed report's queries before proposing it; if anything fails (SQL or a design rule) you get the errors and may submit again (two more tries).`,
     ...(input.docTools?.length ? ["## Doc tools", ...docToolsLines(input.docTools)] : []),
     "## How to work: a small plan first",
-    "Call plan_change once, first: one todo per block or query to add or change (kind kpi, chart, table, markdown, or explore). For each: run_sql with a key when it needs data, then update_todo {id, status: \"done\", queryKey}; skipped or blocked need a note. When every todo is closed, call submit_patch (each done todo's query used by a block).",
+    "Call plan_change once, first: one todo per block or query to add or change (kind kpi, chart, table, markdown, or explore). A chart todo names its intent. For each: run_sql with a key when it needs data (its shape line names the chart kinds the data fits; prefer a fitting specific kind over a plain bar or line), then update_todo {id, status: \"done\", queryKey}; skipped or blocked need a note. When every todo is closed, call submit_patch (each done todo's query used by a block).",
     `You have at most ${EDIT_LIMITS.steps} steps; the last ones must call submit_patch.`,
     "",
     "## The current report",
@@ -367,6 +368,7 @@ async function executeEdit(run: Execution) {
   markAuditStarted(agentRunId);
   let seq = 0;
   let sanityRounds = 0;
+  let kindChecked = false;
   let stepBase = 0;
   let sqlRuns = 0;
   let submits = 0;
@@ -401,6 +403,17 @@ async function executeEdit(run: Execution) {
     if (planErrors.length) { submits -= 1; return { text: `The patch was not accepted:\n- ${planErrors.join("\n- ")}\nFix these and call submit_patch again (this did not use a try).`, ok: false }; }
     const touched = diffSpecs(run.spec, applied.spec);
     if (!touched.blocks.length && !touched.queries.length && !sectionsChanged(run.spec, applied.spec)) return refuse(["The patch changes nothing"]);
+    // D488: the kind check on the blocks the patch adds or changes, once and not a try.
+    if (!kindChecked) {
+      kindChecked = true;
+      const changed = new Set(changedBlockIds(touched));
+      const hints = kindHints({ blocks: applied.spec.blocks.filter((block) => changed.has(block.id)) as never, shapes: planner.shapes, todos: planner.plan?.todos ?? [] });
+      if (hints.length) {
+        submits -= 1;
+        insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook's kind check: ${hints.map((hint) => hint.slice(0, 200)).join(" | ")}]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+        return { text: `The patch was not accepted yet, the chart kinds:\n- ${hints.join("\n- ")}\nChange what fits better (the run_sql shape lines say what each result fits) and call submit_patch again; if the kinds are right, submit the same patch. This check comes once and did not use a try.`, ok: false };
+      }
+    }
     // Review H1: the validator sees the spec without Nook's provenance and refuses unknown fields; what
     // is proposed (and later saved) is the validated spec, with provenance and authors put back. The
     // design rules apply to the blocks the patch adds or changes (wave 48b D437), so an old (v1) block
@@ -487,8 +500,10 @@ async function executeEdit(run: Execution) {
         try {
           const outcome = await runGuarded(datasource, sql, { classes: ["select"], maxRows: Math.min(datasource.max_rows, REPORT_LIMITS.storedRows), queryId, userId, signal: controller.signal });
           audit(userId, null, "reports.instruction.run_sql", { reportId, instructionId: instruction.id, runId, queryId, sha256, purpose: purpose.slice(0, 120), ok: true, rows: outcome.rows.length, ms: outcome.ms });
-          if (key) planner.recordQuery(key, sql);
-          return { text: JSON.stringify({ columns: outcome.columns, rows: outcome.rows.slice(0, EDIT_LIMITS.sampleRows), rowCount: outcome.rows.length, truncated: outcome.truncated, ms: outcome.ms }), ok: true };
+          // D488: the data-shape advisor's line rides on every result.
+          const shape = adviseShape(outcome.columns, outcome.rows);
+          if (key) planner.recordQuery(key, sql, shape);
+          return { text: JSON.stringify({ columns: outcome.columns, rows: outcome.rows.slice(0, EDIT_LIMITS.sampleRows), rowCount: outcome.rows.length, truncated: outcome.truncated, ms: outcome.ms, shape: shape.line }), ok: true };
         } catch (error) {
           audit(userId, null, "reports.instruction.run_sql", { reportId, instructionId: instruction.id, runId, queryId, sha256, purpose: purpose.slice(0, 120), ok: false, code: reportErrorOf(error).code });
           throw error;
@@ -602,6 +617,7 @@ async function executeEdit(run: Execution) {
     sqlRuns = 0;
     submits = 0;
     sanityRounds = 0;
+    kindChecked = false;
     lastErrors = [];
     stepBase = steps;
     status = "ok";

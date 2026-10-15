@@ -28,7 +28,10 @@ export type NumberFact = {
 /** A label that must top a ranked result: the row with the largest value of some numeric column. */
 export type TopFact = { id: string; label: string; kind: "top"; value: string };
 
-export type Fact = NumberFact | TopFact;
+/** D488: the report draws some chart in one of these kinds (a funnel, a cohort heatmap, a bullet …). */
+export type ChartFact = { id: string; label: string; kind: "chart"; value: string[] };
+
+export type Fact = NumberFact | TopFact | ChartFact;
 
 export type EvalQuery = { key: string; sql: string; purpose: string };
 /** A spec as the scripted provider submits it (submit_report's arguments, title included). */

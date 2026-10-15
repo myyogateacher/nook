@@ -122,7 +122,7 @@ describe("the catalog's pieces", () => {
   test("the planner links todos to catalog metrics by metricId or by name, and refuses an unknown id", () => {
     const planner = new Planner({ mode: "report", datasourceId: null, runId: crypto.randomUUID(), metrics: [{ id: "net_revenue", name: "Net revenue" }] });
     expect(() => planner.makePlan({ goal: "g", todos: [{ id: "a", title: "A", kind: "kpi", metricId: "nope" }] })).toThrow("metricId nope is not in the metric catalog (ids: net_revenue)");
-    planner.makePlan({ goal: "g", todos: [{ id: "a", title: "A", kind: "kpi", metric: "net revenue" }, { id: "b", title: "B", kind: "kpi", metricId: "net_revenue" }, { id: "c", title: "C", kind: "chart", metric: "Orders" }] });
+    planner.makePlan({ goal: "g", todos: [{ id: "a", title: "A", kind: "kpi", metric: "net revenue" }, { id: "b", title: "B", kind: "kpi", metricId: "net_revenue" }, { id: "c", title: "C", kind: "chart", intent: "trend", metric: "Orders" }] });
     expect(planner.plan!.todos.map((item) => item.metricId ?? null)).toEqual(["net_revenue", "net_revenue", null]);
   });
 

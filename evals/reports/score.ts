@@ -9,6 +9,7 @@ import type { CaseResult, EvalReport, Fact, FactResult } from "./types";
  * - A percent fact (a ratio) matches as the ratio when the block that shows the column formats it as
  *   `percent`, or as ×100 when it does not (unit %, number, or no block); a ratio shown with the wrong
  *   format fails, which is how "percent stored as 0–1" is scored.
+ * - A chart fact passes when some chart block is drawn in one of its kinds (D488).
  * - A top fact passes when, in some result a block draws, the row with the largest value of a
  *   measure the block shows (a unique maximum) holds the text.
  */
@@ -64,6 +65,11 @@ function measuresOf(blocks: readonly Block[], queryKey: string): Set<string> {
 const show = (value: number) => Number.isInteger(value) ? String(value) : String(Math.round(value * 10_000) / 10_000);
 
 function scoreOne(fact: Fact, blocks: readonly Block[], results: readonly ScoredResult[]): FactResult {
+  if (fact.kind === "chart") {
+    const charts = blocks.filter((block) => block.type === "chart");
+    const hit = charts.find((block) => fact.value.includes(String(block.kind)));
+    return { id: fact.id, label: fact.label, expected: `a ${fact.value.join(" or ")} chart`, pass: Boolean(hit), found: hit ? `${String(hit.id)}: ${String(hit.kind)}` : charts.length ? `charts: ${charts.map((block) => String(block.kind)).join(", ")}` : "no chart" };
+  }
   if (fact.kind === "top") {
     for (const result of results) {
       if (result.rows.length < 2) continue;

@@ -1,4 +1,5 @@
 import { unplanned, type Script, type ScriptContext } from "../../scripts/fakeReportProvider";
+import { defaultIntent, type ReportBlock } from "../../shared/reports";
 import type { EvalSpec } from "./types";
 
 /**
@@ -13,7 +14,7 @@ const calledTools = (context: ScriptContext) => (context.body.messages ?? []).fl
 export function todosOf(spec: EvalSpec) {
   return spec.blocks.filter((block) => block.type !== "markdown").map((block) => ({
     id: String(block.id), title: String(block.title ?? block.id), kind: String(block.type), metric: String(block.title ?? block.id),
-    ...(typeof block.intent === "string" ? { intent: block.intent } : {}), ...(typeof block.section === "string" ? { section: block.section } : {})
+    intent: typeof block.intent === "string" ? block.intent : defaultIntent(block as unknown as ReportBlock), ...(typeof block.section === "string" ? { section: block.section } : {})
   }));
 }
 

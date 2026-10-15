@@ -90,9 +90,20 @@ describe("report eval scoring", () => {
     expect(formatReport(a)).toContain("✗ Y: expected 2, found nothing close");
   });
 
-  test("every case has a doc, a seed for its own eval_<id> database, facts, and a golden spec; 8–12 cases", () => {
+  test("a chart fact passes when some chart is drawn in one of its kinds (D488)", () => {
+    const [hit, miss] = scoreFacts([
+      { id: "bar", label: "A bar", kind: "chart", value: ["bar", "funnel"] },
+      { id: "sankey", label: "A sankey", kind: "chart", value: ["sankey"] }
+    ], blocks, results);
+    expect(hit).toMatchObject({ pass: true, found: "c: bar" });
+    expect(miss).toMatchObject({ pass: false, found: "charts: bar" });
+  });
+
+  test("every case has a doc, a seed for its own eval_<id> database, facts, and a golden spec; 8–20 cases", () => {
     expect(cases.length).toBeGreaterThanOrEqual(8);
-    expect(cases.length).toBeLessThanOrEqual(12);
+    expect(cases.length).toBeLessThanOrEqual(20);
+    // D488: the chart-kind cases (funnel, cohort heatmap, bullet, distribution, sankey) each check the kind.
+    for (const id of ["onboarding_funnel", "cohort_retention", "quota_attainment", "latency_spread", "plan_flow"]) expect(cases.find((item) => item.id === id)?.facts.some((fact) => fact.kind === "chart")).toBe(true);
     for (const testCase of cases) {
       expect(testCase.seed).toContain(`DROP DATABASE IF EXISTS eval_${testCase.id};`);
       expect(seedStatements(testCase.seed).every((statement) => !/\b(?:DROP|CREATE)\s+DATABASE\b/i.test(statement) || statement.includes(`eval_${testCase.id}`))).toBe(true);

@@ -72,10 +72,14 @@ export async function copyCardLink(boardId: string, cardId: string, notify: Task
   else notify.warning(`Could not copy — here is the link: ${url}`, { selectable: true });
 }
 
-/** Copies the key itself ("MYT-12", D713), for pasting into a chat or a commit message. */
+/**
+ * The key chip's copy (D713): the card's short link (`https://…/tasks/MYT-12`), so a pasted key
+ * opens the card. Falls back to the bare key only when it is not well formed.
+ */
 export async function copyCardKey(key: string, notify: TaskNotify, copy: (text: string) => Promise<boolean> = copyText) {
-  if (await copy(key)) notify.success(`Copied ${key}`);
-  else notify.warning(`Could not copy — the key is ${key}`, { selectable: true });
+  const url = cardShortLink(key) ?? key;
+  if (await copy(url)) notify.success(`Copied link to ${key}`);
+  else notify.warning(`Could not copy — here is the link: ${url}`, { selectable: true });
 }
 
 /** The card header's "Copy link" (the dialog and the full-page card): the short link when `cardKey` is known. */
@@ -92,5 +96,5 @@ export function CardKeyButton({ cardKey, notify, className = "" }: { cardKey: st
   return <button type="button" className={`task-card-key${className ? ` ${className}` : ""}`}
     onClick={(event) => { event.stopPropagation(); event.preventDefault(); void copyCardKey(cardKey, notify); }}
     onPointerDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") event.stopPropagation(); }}
-    draggable={false} aria-label={`${cardKey}: copy the card's key`} title="Copy key">{cardKey}</button>;
+    draggable={false} aria-label={`${cardKey}: copy a link to this card`} title="Copy link to this card">{cardKey}</button>;
 }

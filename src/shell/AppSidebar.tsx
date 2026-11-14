@@ -26,6 +26,8 @@ export type AppSidebarProps = {
   onToggle: () => void;
   /** Closes the drawer (phones). */
   onClose?: () => void;
+  /** The rail is held by the page (a full-page task card): the toggle is unavailable and says why. */
+  railForced?: boolean;
 };
 
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
@@ -47,7 +49,7 @@ type Tip = { label: string; top: number; left: number };
  * `openApp`, so Notes' save-on-leave and the Settings hub's guard still run. In the rail (56 px) the
  * labels are visually hidden, still naming each link, and a tooltip shows on hover and on focus.
  */
-export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unreadCount, onNavigate, onSearch, onAccount, onSignOut, onToggle, onClose }: AppSidebarProps) {
+export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unreadCount, onNavigate, onSearch, onAccount, onSignOut, onToggle, onClose, railForced = false }: AppSidebarProps) {
   const rail = mode === "rail";
   const [tip, setTip] = useState<Tip | null>(null);
   useEffect(() => { if (!rail) setTip(null); }, [rail]);
@@ -78,6 +80,7 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
     </li>;
   };
   const expandLabel = mode === "expanded" ? "Collapse sidebar" : "Expand sidebar";
+  const toggleHint = railForced ? "The sidebar stays narrow while a card is open full-page" : `${expandLabel} (${toggleShortcutLabel()})`;
 
   return <nav className="app-sidebar" aria-label="Workspace" data-mode={mode} id={mode === "drawer" ? undefined : "app-sidebar"}>
     <div className="app-sidebar-head">
@@ -86,8 +89,9 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
       </a>
       {mode === "drawer"
         ? <button type="button" className="app-sidebar-toggle" onClick={onClose} aria-label="Close menu"><X aria-hidden="true" /></button>
-        : <button type="button" className="app-sidebar-toggle" onClick={() => { hideTip(); onToggle(); }} aria-expanded={mode === "expanded"} aria-controls="app-sidebar"
-          aria-label={expandLabel} aria-keyshortcuts={isMac() ? "Meta+\\" : "Control+\\"} title={`${expandLabel} (${toggleShortcutLabel()})`} {...tipHandlers(`${expandLabel} (${toggleShortcutLabel()})`)}>
+        : <button type="button" className="app-sidebar-toggle" onClick={() => { hideTip(); if (!railForced) onToggle(); }} aria-expanded={mode === "expanded"} aria-controls="app-sidebar"
+          aria-label={expandLabel} aria-disabled={railForced || undefined} aria-description={railForced ? toggleHint : undefined}
+          aria-keyshortcuts={railForced ? undefined : isMac() ? "Meta+\\" : "Control+\\"} title={toggleHint} {...tipHandlers(toggleHint)}>
           {mode === "expanded" ? <PanelLeftClose aria-hidden="true" /> : <PanelLeftOpen aria-hidden="true" />}
         </button>}
     </div>

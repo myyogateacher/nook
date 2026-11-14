@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useInboxCount } from "../AppShell";
 import { focusIntoDialog, trapTabKey } from "../files/Dialog";
 import { useReturnFocus } from "../calendar/hooks";
@@ -29,12 +29,21 @@ export type AppFrameProps = {
  * The signed-in app frame (docs/plan/LEFT_NAV.md §2.1, §3; D1270): a grid of the global sidebar and
  * the page. The page stays its own scroll container (scrollShells). On phones the sidebar is a modal
  * drawer (focus kept inside, Escape and the scrim close it, and it closes after any navigation) that
- * the page header's ☰ opens. Full-screen surfaces drop to the rail or hide it in CSS (sidebar.css):
- * a whiteboard canvas covers the frame; a full-page task card shows the rail.
+ * the page header's ☰ opens. A whiteboard canvas covers the frame (sidebar.css); a full-page task
+ * card holds the rail through `useShellRail` (D1279).
  */
 export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onSearch, onAccount, onSignOut, guard, children }: AppFrameProps) {
-  const sidebar = useSidebarState();
-  const { mode, drawerOpen, closeDrawer, openDrawer } = sidebar;
+  // A full-page task card holds the rail (D1279); phones keep the drawer.
+  const [railHolds, setRailHolds] = useState(0);
+  const sidebar = useSidebarState(railHolds > 0);
+  const { drawerOpen, closeDrawer, openDrawer } = sidebar;
+  const holdRail = useCallback(() => {
+    setRailHolds((count) => count + 1);
+    let released = false;
+    return () => { if (!released) { released = true; setRailHolds((count) => count - 1); } };
+  }, []);
+  const railForced = railHolds > 0 && sidebar.mode !== "drawer";
+  const mode = railForced ? "rail" : sidebar.mode;
   const leaveGuardRef = useRef<LeaveGuard | null>(null);
   const inboxShown = tree.primary.some((item) => item.kind === "inbox");
   const notificationsShown = tree.primary.some((item) => item.kind === "notifications");
@@ -52,7 +61,7 @@ export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onSearch, o
     if (app) app(page); else page();
   }, [closeDrawer]);
 
-  const shell = useMemo<ShellValue>(() => ({ mode, drawerOpen, openDrawer, attention, leaveGuardRef }), [mode, drawerOpen, openDrawer, attention]);
+  const shell = useMemo<ShellValue>(() => ({ mode, drawerOpen, openDrawer, attention, leaveGuardRef, holdRail }), [mode, drawerOpen, openDrawer, attention, holdRail]);
 
   const drawerRef = useRef<HTMLDivElement>(null);
   useReturnFocus(drawerOpen, ".shell-menu-button");
@@ -70,6 +79,7 @@ export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onSearch, o
     onAccount={() => guarded(onAccount)}
     onSignOut={() => guarded(onSignOut)}
     onToggle={sidebar.toggle}
+    railForced={railForced}
     onClose={drawer ? closeDrawer : undefined}
   />;
 

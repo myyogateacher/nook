@@ -32,5 +32,11 @@ describe("the Inbox row on Notes (L2)", () => {
     expect(pane).not.toContain("nav-home");
     expect(pane).not.toContain("SidebarInboxRow");
     expect(pane).toContain("<ShellMenuButton />");
+    // D1279: one collapse control, the global sidebar's; the pane has none (Files neither).
+    expect(app).not.toContain("Collapse folders sidebar");
+    expect(app).not.toContain("collapsed-sidebar-toggle");
+    const files = await Bun.file(new URL("../src/files/FilesApp.tsx", import.meta.url)).text();
+    expect(files).not.toContain("Collapse folders sidebar");
+    expect(files).not.toContain("setCollapsed");
   });
 });

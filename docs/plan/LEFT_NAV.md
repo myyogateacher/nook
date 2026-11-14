@@ -1,6 +1,6 @@
 # Collapsible left navigation: plan
 
-Status: phase 1 built (branch `feat/left-nav-phase1`, decisions D1270–D1278 in §7). Phases 2–4 are proposals.
+Status: phase 1 built (branch `feat/left-nav-phase1`, decisions D1270–D1279 in §7). Phases 2–4 are proposals.
 
 ## 1. Problem (measured at 1440×900 and 390×844, current build)
 
@@ -193,7 +193,7 @@ Each has a recommended default.
 
 ## 7. Decisions
 
-### Phase 1: frame and sidebar (branch `feat/left-nav-phase1`, decisions D1270–D1278)
+### Phase 1: frame and sidebar (branch `feat/left-nav-phase1`, decisions D1270–D1279)
 
 §6's recommended defaults were taken: expanded from 1280 px, the rail from 761 to 1279 px, the person's choice wins once set; Home's tiles stay on phones only; the app trees move into the sidebar in phase 3.
 
@@ -206,8 +206,9 @@ Each has a recommended default.
 | D1274 | **ModuleHome's title row is the page header**: the module's icon, its h1 (same id, still focusable), the primary action, and ⋯ sit in the one header row. The 44 px title row and its 22 px gap above the tabs are gone, so module content starts at 151 px instead of 243 px at 1440. |
 | D1275 | **Home's app tiles show on phones only** (CSS from 761 px): on a computer the sidebar is the launcher. Quick actions stay on both, and the greeting is a little smaller. |
 | D1276 | **Notes and Files keep their own panes in phase 1**, inside the frame: their brand Home button, Home row, and account footer are gone (the sidebar has them). The pane header is 52 px and holds the pane's name, ☰ on phones, and the pane's own collapse button. Files' header row has no Inbox button any more. Files registers its upload leave guard with the frame. |
-| D1277 | **Full-screen surfaces**: a whiteboard canvas still covers the window, and the sidebar under it is hidden from the frame. A task card opened full-page shows the sidebar as the rail (labels hidden, icons only) whatever the setting. |
+| D1277 | **Full-screen surfaces**: a whiteboard canvas still covers the window, and the sidebar under it is hidden from the frame. A task card opened full-page shows the sidebar as the rail whatever the setting (D1279). |
 | D1278 | **The sidebar's Search row opens Notes' search** (Notes, then focus in its search box; on phones the notes list first) until phase 4's ⌘K palette replaces it. |
+| D1279 | **Review fixes**: rows are 30 px (29 px in the rail, whose header is 44 px), so the 16 apps and the footer fit a 900 px window expanded and an 800 px window in the rail; shorter windows scroll the list. Notes and Files lose their own collapse button and `collapsed` state: the global sidebar's toggle is the only one, and on a computer the pane's name is a small section label, not a second brand. A full-page task card holds the rail through `useShellRail` (replacing the CSS `:has()` rule): the toggle then reads "Expand sidebar", is `aria-disabled`, says "The sidebar stays narrow while a card is open full-page", and neither it nor ⌘\\ changes the saved choice. |
 
 Measured with headless Chrome after phase 1, as "content starts at y" (the first content below the page's chrome; before → after):
 

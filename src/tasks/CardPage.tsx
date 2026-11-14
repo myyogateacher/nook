@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useShellRail } from "../shell/shellContext";
 import { ChevronLeft } from "lucide-react";
 
 type CardPageProps = {
@@ -19,6 +20,8 @@ type CardPageProps = {
  * with this Back to board control.
  */
 export function CardPage({ enabled, boardName, onBackToBoard, children }: CardPageProps) {
+  // D1279: the full-page card wants the width, so the global sidebar stays in the rail meanwhile.
+  useShellRail(enabled);
   // The same element tree in both layouts, so Expand and Collapse keep the card view mounted (an
   // unsaved description survives the switch); the dialog's host box has display: contents.
   return <div className={enabled ? "task-card-page-wrap" : "task-card-dialog-host"}>

@@ -10,9 +10,7 @@
 /* Pages sized to the window (100dvh) fill the column; nothing in the column scrolls but the page. */
 .app-frame-page > :is(.app-page, .app-home, .workspace) { height: 100dvh; }
 
-/* Full-screen surfaces (§2.1): a full-page task card shows the rail; a whiteboard canvas covers the frame. */
-.app-frame[data-sidebar="expanded"]:has(.task-card-page-wrap) { --sidebar-width: 56px; }
-.app-frame[data-sidebar="expanded"]:has(.task-card-page-wrap) > .app-sidebar .app-sidebar-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* A whiteboard canvas covers the frame (§2.1); a full-page task card holds the rail (useShellRail, D1279). */
 .app-frame:has(.whiteboard-canvas-page) > .app-sidebar { visibility: hidden; }
 .app-frame:has(.whiteboard-canvas-page) { grid-template-columns: 0 minmax(0, 1fr); }
 
@@ -24,11 +22,14 @@
 .app-sidebar-brand .brand-dot { flex: none; }
 .app-sidebar-toggle { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; padding: 0; background: transparent; color: #8f8f96; cursor: pointer; }
 .app-sidebar-toggle:hover { background: var(--panel-hover); color: #fff; }
+.app-sidebar-toggle[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.app-sidebar-toggle[aria-disabled="true"]:hover { background: transparent; color: #8f8f96; }
 .app-sidebar-toggle svg { width: 17px; height: 17px; }
 
-.app-sidebar-scroll { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 4px 8px 10px; scrollbar-width: thin; }
+.app-sidebar-scroll { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 2px 8px 6px; scrollbar-width: thin; }
 .app-sidebar-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
-.app-sidebar-link { position: relative; min-width: 0; height: 32px; display: flex; align-items: center; gap: 10px; border-radius: 8px; padding: 0 10px; color: #b4b4ba; font-size: .86rem; font-weight: 550; text-decoration: none; }
+/* D1279: 30 px rows, so 16 apps and the footer fit a 900 px window; the list still scrolls when shorter. */
+.app-sidebar-link { position: relative; min-width: 0; height: 30px; display: flex; align-items: center; gap: 10px; border-radius: 8px; padding: 0 10px; color: #b4b4ba; font-size: .86rem; font-weight: 550; text-decoration: none; }
 .app-sidebar-link:hover { background: var(--panel-hover); color: #fff; }
 .app-sidebar-link.active { background: #2b271d; color: var(--yellow-strong); }
 .app-sidebar-link.active svg { color: var(--yellow); }
@@ -36,15 +37,16 @@
 .app-sidebar-link:hover svg { color: inherit; }
 .app-sidebar-label { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-sidebar-badge { flex: none; min-width: 18px; height: 18px; display: inline-grid; place-items: center; border-radius: 9px; padding: 0 5px; background: var(--yellow); color: #281f0b; font-size: .68rem; font-weight: 800; line-height: 1; }
-.app-sidebar-heading { margin: 14px 10px 5px; color: #77777e; font-size: .68rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+.app-sidebar-heading { margin: 10px 10px 4px; color: #77777e; font-size: .68rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
 
-.app-sidebar-foot { position: relative; flex: none; display: grid; gap: 2px; border-top: 1px solid var(--border); padding: 8px; }
-.app-sidebar-timer { display: flex; min-width: 0; padding: 2px 2px 6px; }
+.app-sidebar-foot { position: relative; flex: none; display: grid; gap: 1px; border-top: 1px solid var(--border); padding: 6px 8px; }
+.app-sidebar-timer { display: flex; min-width: 0; padding: 0 2px 4px; }
+.app-sidebar-timer .ui-timer { min-height: 32px; }
 .app-sidebar-timer:empty { display: none; }
 .app-sidebar-timer .time-topbar { min-width: 0; max-width: 100%; }
 .app-sidebar-timer .ui-timer-label { max-width: 110px; }
 .app-sidebar-account { position: relative; }
-.app-sidebar-account-button { width: 100%; min-width: 0; height: 42px; display: flex; align-items: center; gap: 10px; border: 0; border-radius: 9px; padding: 0 8px; background: transparent; color: #d4d4d8; font: inherit; font-size: .85rem; text-align: left; cursor: pointer; }
+.app-sidebar-account-button { width: 100%; min-width: 0; height: 38px; display: flex; align-items: center; gap: 10px; border: 0; border-radius: 9px; padding: 0 8px; background: transparent; color: #d4d4d8; font: inherit; font-size: .85rem; text-align: left; cursor: pointer; }
 .app-sidebar-account-button:hover, .app-sidebar-account-button[aria-expanded="true"] { background: var(--panel-hover); color: #fff; }
 .app-sidebar-account-chevron { width: 15px; height: 15px; flex: none; color: #77777e; }
 .app-sidebar-account-menu { top: auto; right: auto; bottom: calc(100% + 6px); left: 0; min-width: 220px; }
@@ -54,25 +56,21 @@
 
 /* The rail (56 px): icons only; each label stays in the link for its accessible name. */
 .app-sidebar[data-mode="rail"] .app-sidebar-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.app-sidebar[data-mode="rail"] .app-sidebar-head { justify-content: center; padding: 0; }
+.app-sidebar[data-mode="rail"] .app-sidebar-head { height: 44px; justify-content: center; padding: 0; }
 .app-sidebar[data-mode="rail"] .app-sidebar-brand { display: none; }
-.app-sidebar[data-mode="rail"] .app-sidebar-scroll { padding: 4px 7px 10px; }
-.app-sidebar[data-mode="rail"] .app-sidebar-link { width: 40px; height: 36px; justify-content: center; margin: 0 auto; padding: 0; }
+.app-sidebar[data-mode="rail"] .app-sidebar-scroll { padding: 2px 7px 6px; }
+/* The rail: 29 px rows, so 16 apps and the footer fit an 800 px window. */
+.app-sidebar[data-mode="rail"] .app-sidebar-link { width: 40px; height: 29px; justify-content: center; margin: 0 auto; padding: 0; }
 .app-sidebar[data-mode="rail"] .app-sidebar-badge { position: absolute; top: 1px; right: -2px; min-width: 16px; height: 16px; padding: 0 4px; font-size: .6rem; }
-.app-sidebar[data-mode="rail"] .app-sidebar-heading { height: 1px; margin: 9px 6px; overflow: hidden; background: var(--border); color: transparent; font-size: 0; }
-.app-sidebar[data-mode="rail"] .app-sidebar-foot { padding: 8px 7px; justify-items: center; }
-.app-sidebar[data-mode="rail"] .app-sidebar-timer { justify-content: center; padding: 2px 0 6px; }
+.app-sidebar[data-mode="rail"] .app-sidebar-heading { height: 1px; margin: 6px 6px; overflow: hidden; background: var(--border); color: transparent; font-size: 0; }
+.app-sidebar[data-mode="rail"] .app-sidebar-foot { padding: 5px 7px; justify-items: center; }
+.app-sidebar[data-mode="rail"] .app-sidebar-timer { justify-content: center; padding: 0 0 3px; }
 /* The timer chip shrinks to its icon (idle) or its dot and Stop (running); the button keeps its label. */
 .app-sidebar[data-mode="rail"] .app-sidebar-timer :is(.ui-timer-label, .ui-timer-elapsed, .time-topbar-more) { display: none; }
 .app-sidebar[data-mode="rail"] .app-sidebar-timer button.ui-timer { width: 38px; justify-content: center; padding: 0; }
 .app-sidebar[data-mode="rail"] .app-sidebar-timer button.ui-timer > span { display: none; }
 .app-sidebar[data-mode="rail"] .app-sidebar-timer .ui-timer.running { gap: 3px; padding: 0 3px 0 8px; }
-.app-sidebar[data-mode="rail"] .app-sidebar-account-button { width: 40px; justify-content: center; padding: 0; }
-/* A full-page task card's rail (the frame is expanded, the card wants the width). */
-.app-frame:has(.task-card-page-wrap) > .app-sidebar[data-mode="expanded"] :is(.app-sidebar-brand, .app-sidebar-heading, .app-sidebar-account-chevron, .app-sidebar-timer) { display: none; }
-.app-frame:has(.task-card-page-wrap) > .app-sidebar[data-mode="expanded"] :is(.app-sidebar-link, .app-sidebar-account-button) { width: 40px; justify-content: center; margin: 0 auto; padding: 0; }
-.app-frame:has(.task-card-page-wrap) > .app-sidebar[data-mode="expanded"] .app-sidebar-head { justify-content: center; padding: 0; }
-.app-frame:has(.task-card-page-wrap) > .app-sidebar[data-mode="expanded"] .app-sidebar-badge { position: absolute; top: 1px; right: -2px; }
+.app-sidebar[data-mode="rail"] .app-sidebar-account-button { width: 40px; height: 34px; justify-content: center; padding: 0; }
 
 /* The phone drawer: a modal panel over the page. */
 .app-drawer-layer { position: fixed; inset: 0; z-index: 90; }
@@ -111,7 +109,9 @@
 }
 
 /* Notes' and Files' own folder panes inside the frame (D1276): their header is the page header's height
-   and holds the pane's name, the ☰ on phones, and the pane's collapse button. */
-.app-frame .folder-pane > .sidebar-header { height: 52px; gap: 6px; padding: 0 10px 0 18px; }
+   and holds the pane's name and the ☰ on phones (the global sidebar collapses; the pane has no toggle, D1279). */
+.app-frame .folder-pane > .sidebar-header { height: 52px; gap: 6px; padding: 0 10px 0 22px; }
 .app-frame .folder-pane > .sidebar-header .sidebar-brand { flex: 1 1 auto; }
+/* D1279: on a computer the pane's name reads as a section label beside the sidebar, not a second brand. */
+@media (min-width: 761px) { .app-frame .folder-pane > .sidebar-header .sidebar-brand strong { color: #85858c; font-size: .7rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; } }
 @media (max-width: 760px) { .app-frame .folder-pane > .sidebar-header { height: 56px; padding: 0 12px 0 6px; } }

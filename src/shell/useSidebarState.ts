@@ -56,7 +56,8 @@ export type SidebarState = {
   closeDrawer: () => void;
 };
 
-export function useSidebarState(): SidebarState {
+/** `locked`: the page holds the rail (D1279), so the computer toggle (button and ⌘\) does nothing. */
+export function useSidebarState(locked = false): SidebarState {
   const [preference, setPreference] = useState<SidebarPreference | null>(() => readSidebarPreference(localStore()));
   const [width, setWidth] = useState(windowWidth);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -86,11 +87,12 @@ export function useSidebarState(): SidebarState {
   const toggle = useCallback(() => {
     const current = sidebarMode(windowWidth(), readSidebarPreference(localStore()) ?? preference);
     if (current === "drawer") { setDrawerOpen((open) => !open); return; }
+    if (locked) return;
     const next: SidebarPreference = current === "expanded" ? "rail" : "expanded";
     writeSidebarPreference(localStore(), next);
     setPreference(next);
     setWidth(windowWidth());
-  }, [preference]);
+  }, [preference, locked]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

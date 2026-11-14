@@ -15,6 +15,8 @@ export type ShellValue = {
   attention: boolean;
   /** The page's own leave guard, consulted before the sidebar navigates or signs out. */
   leaveGuardRef: { current: LeaveGuard | null };
+  /** Holds the sidebar in the rail while a full-screen surface needs the width; returns the release. */
+  holdRail: () => () => void;
 };
 
 /** The app frame around the page (docs/plan/LEFT_NAV.md §3); null outside it (tests, public pages). */
@@ -36,6 +38,16 @@ export function useShellLeaveGuard(guard: LeaveGuard) {
     ref.current = registered;
     return () => { if (ref.current === registered) ref.current = null; };
   }, [shell]);
+}
+
+/**
+ * Keeps the sidebar in the rail while `active` (a task card opened full-page, D1279): the toggle is
+ * unavailable meanwhile and says why. Outside the frame it does nothing.
+ */
+export function useShellRail(active: boolean) {
+  const shell = useShell();
+  const holdRail = shell?.holdRail;
+  useEffect(() => (active && holdRail ? holdRail() : undefined), [active, holdRail]);
 }
 
 /**

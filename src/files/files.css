@@ -1,9 +1,7 @@
 /* Desktop: the list takes the full width until a file is selected; the preview then opens as a
    fixed-width pane on the right and the list narrows beside it (it stays usable). */
 .files-workspace { --file-rail-width: 230px; --file-preview-width: clamp(380px, 42vw, 640px); grid-template-columns: var(--file-rail-width) minmax(0, 1fr); }
-.files-workspace.nav-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
 .files-workspace.preview-open { grid-template-columns: var(--file-rail-width) minmax(0, 1fr) var(--file-preview-width); }
-.files-workspace.preview-open.nav-collapsed { grid-template-columns: 0 minmax(0, 1fr) var(--file-preview-width); }
 @media (min-width: 761px) {
   .files-workspace:not(.preview-open) .file-preview-pane { display: none; }
   .files-workspace:not(.preview-open) .file-pane { border-right: 0; }

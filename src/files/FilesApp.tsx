@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, LayoutGrid, List as ListIcon, Lock, Paperclip, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Sparkles, Upload, Users, X } from "lucide-react";
+import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, LayoutGrid, List as ListIcon, Lock, Paperclip, Menu, RotateCcw, Search, Sparkles, Upload, Users, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
 import { restoredMessage } from "../bin/binFormat";
@@ -120,7 +120,6 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   // A document the URL named that the list does not include (for example beyond the list limit).
   const [extraDocument, setExtraDocument] = useState<DocumentSummary | null>(null);
   const [panel, setPanel] = useState<FilesPanel>("folders");
-  const [collapsed, setCollapsed] = useState(false);
   const [queueOpen, setQueueOpen] = useState(true);
   const [queue, dispatch] = useReducer(uploadQueueReducer, emptyUploadQueue);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -853,13 +852,12 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
 
   const uploadDestination = folder === "all" ? defaultFolder?.name ?? "Default" : currentFolder?.name ?? "";
 
-  return <main className={`workspace files-workspace${collapsed ? " nav-collapsed" : ""}${selected ? " preview-open" : ""}`} data-mobile-panel={panel === "files" ? "notes" : panel === "preview" ? "editor" : "folders"}>
+  return <main className={`workspace files-workspace${selected ? " preview-open" : ""}`} data-mobile-panel={panel === "files" ? "notes" : panel === "preview" ? "editor" : "folders"}>
     <aside className="folder-pane" id="file-folders">
       {/* D1276: Home, the apps, Inbox, and the account are in the global sidebar; this pane keeps the folders. */}
       <header className="sidebar-header">
         <ShellMenuButton />
         <span className="sidebar-brand"><span className="brand-text"><strong>Files</strong></span></span>
-        <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse folders sidebar" aria-controls="file-folders" aria-expanded={!collapsed} title="Collapse folders"><PanelLeftClose /></button>
       </header>
       <nav className="folder-nav" aria-label="File folders">
         <button className={folder === "all" ? "active" : ""} aria-current={folder === "all" ? "page" : undefined} onClick={() => selectFolder("all")}><Files /><span>All files</span><b>{documents.length}</b></button>
@@ -889,7 +887,6 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     <section className={`note-pane file-pane${fileDragOver ? " file-drag-over" : ""}`} onDragEnter={paneDragEnter} onDragOver={paneDragOver} onDragLeave={paneDragLeave} onDrop={paneDrop}>
       {fileDragOver && <div className={`file-drop-overlay${canUpload ? "" : " refused"}`} aria-hidden="true"><Upload /><strong>{uploadDropMessage(uploadTarget)}</strong></div>}
       <header className="note-pane-header">
-        <button className="icon-button collapsed-trigger collapsed-sidebar-toggle" onClick={() => setCollapsed(false)} aria-label="Open folders sidebar" aria-controls="file-folders" aria-expanded={!collapsed} title="Open folders"><PanelLeftOpen /><span>Folders</span></button>
         <div className="mobile-header"><button className="icon-button" onClick={() => back("folders")} aria-label="Back to folders"><ChevronLeft /></button><strong>{folderTitle}</strong></div>
         <div className="note-heading"><span className="eyebrow">{folder === "shared" || currentFolder?.is_owner === 0 ? "Shared" : "Library"}</span><h1 title={folderTitle}>{folderTitle}</h1></div>
         <div className="file-header-row">

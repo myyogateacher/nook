@@ -25,8 +25,6 @@ import {
   LogOut,
   Menu,
   MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
   PenTool,
   Search,
   Settings,
@@ -1006,7 +1004,6 @@ export function App() {
   // The search hint new Notes history entries carry. Updated during render, and directly when
   // history or a folder switch changes the search before the next render.
   const searchHintRef = useRef<SearchHint | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("folders");
   // Bumped to remount Calendar when a notification opens a Calendar URL while it is on screen.
   const [calendarKey, setCalendarKey] = useState(0);
@@ -2439,13 +2436,12 @@ export function App() {
     <ModulesContext.Provider value={disabledModules}>
     <RoleContext.Provider value={session.user.role}>
     <NotificationsContext.Provider value={notificationsContext}>
-    {frame(<main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
+    {frame(<main className="workspace" data-mobile-panel={mobilePanel}>
       <aside className="folder-pane" id="note-folders">
-        {/* D1276: the global sidebar has Home, the apps, and the account, so Notes' own pane keeps only its folders. */}
+        {/* D1276: the global sidebar has Home, the apps, and the account (and collapses, D1279), so Notes' own pane keeps only its folders. */}
         <header className="sidebar-header">
           <ShellMenuButton />
           <span className="sidebar-brand"><span className="brand-text"><strong>Notes</strong></span></span>
-          <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse folders sidebar" aria-controls="note-folders" aria-expanded={!collapsed} title="Collapse folders"><PanelLeftClose /></button>
         </header>
         <nav className="folder-nav" aria-label="Note folders">
           <button className={selectedFolder === "all" ? "active" : ""} onClick={() => { void selectFolder("all"); }}><Archive /><span>All notes</span><b>{notes.length}</b></button>
@@ -2477,7 +2473,6 @@ export function App() {
 
       <section className="note-pane">
         <header className="note-pane-header">
-          <button className="icon-button collapsed-trigger collapsed-sidebar-toggle" onClick={() => setCollapsed(false)} aria-label="Open folders sidebar" aria-controls="note-folders" aria-expanded={!collapsed} title="Open folders"><PanelLeftOpen /><span>Folders</span></button>
           <div className="mobile-header"><button className="icon-button" onClick={() => mobileBack("folders")} aria-label="Back to folders"><ChevronLeft /></button><strong>Notes</strong></div>
           <div className="note-heading"><span className="eyebrow">{selectedFolder === "shared" ? "Shared" : "Library"}</span><h1>{selectedFolder === "all" ? "All notes" : selectedFolder === "shared" ? "Shared with me" : folders.find((folder) => folder.id === selectedFolder)?.name}</h1></div>
           <div className="note-header-actions">

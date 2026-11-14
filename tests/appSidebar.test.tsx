@@ -6,6 +6,7 @@ import { buildNavTree, type NavItem } from "../src/shell/navModel";
 import { AppSidebar } from "../src/shell/AppSidebar";
 import { AppFrame } from "../src/shell/AppFrame";
 import { PageHeader } from "../src/shell/PageHeader";
+import { useShellRail } from "../src/shell/shellContext";
 import { isSidebarToggleKey, readSidebarPreference, SIDEBAR_STORAGE_KEY, sidebarMode, writeSidebarPreference } from "../src/shell/useSidebarState";
 
 /**
@@ -175,3 +176,41 @@ test("the frame asks App's guard, then the page's, before it moves", async () =>
   (release as unknown as () => void)();
   expect(steps).toEqual(["app guard", "open calendar"]);
 });
+
+function FullPageCard({ open }: { open: boolean }) {
+  useShellRail(open);
+  return <main className="app-page" />;
+}
+
+test("a full-page card holds the rail: the toggle says Expand, is unavailable, says why, and ⌘\\ does nothing (D1279)", async () => {
+  quietApi();
+  window.localStorage.removeItem(SIDEBAR_STORAGE_KEY);
+  const frame = (open: boolean) => <AppFrame tree={tree("tasks")} displayName="Ada" onNavigate={noop} onSearch={noop} onAccount={noop} onSignOut={noop}><FullPageCard open={open} /></AppFrame>;
+  const view = await render(frame(true));
+  const mode = () => view.container.querySelector(".app-frame")!.getAttribute("data-sidebar");
+  const toggle = () => view.container.querySelector<HTMLButtonElement>(".app-sidebar-toggle")!;
+  expect(mode()).toBe("rail");
+  expect(toggle().getAttribute("aria-label")).toBe("Expand sidebar");
+  expect(toggle().getAttribute("aria-expanded")).toBe("false");
+  expect(toggle().getAttribute("aria-disabled")).toBe("true");
+  expect(toggle().title).toBe("The sidebar stays narrow while a card is open full-page");
+  await view.click(toggle());
+  const { act } = await import("react");
+  await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "\\", code: "Backslash", ctrlKey: true, bubbles: true, cancelable: true })); });
+  expect(mode()).toBe("rail");
+  expect(window.localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBeNull();
+  // Closing the card gives the sidebar back its own state.
+  await view.rerender(frame(false));
+  expect(mode()).toBe("expanded");
+  expect(toggle().getAttribute("aria-label")).toBe("Collapse sidebar");
+  expect(toggle().hasAttribute("aria-disabled")).toBe(false);
+});
+
+test("16 apps and the footer fit 900 px expanded and 800 px in the rail: 30 and 29 px rows (D1279)", async () => {
+  const css = await Bun.file(new URL("../src/shell/sidebar.css", import.meta.url)).text();
+  expect(css).toMatch(/\.app-sidebar-link \{ position: relative; min-width: 0; height: 30px;/);
+  expect(css).toMatch(/\.app-sidebar\[data-mode="rail"\] \.app-sidebar-link \{ width: 40px; height: 29px;/);
+  // Shorter windows still scroll the list rather than the frame.
+  expect(css).toMatch(/\.app-sidebar-scroll \{[^}]*overflow-y: auto;/);
+});
+

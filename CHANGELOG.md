@@ -4,6 +4,15 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 
 ## Unreleased
 
+**A sidebar for every app**
+
+- Every app now has a sidebar on the left: Search, Home, Inbox, and Notifications, then all your apps, then the timer, Settings, and your account. Switching apps no longer means going back to Home.
+- Collapse it to a narrow strip of icons with the button at its top or with ⌘\ (Ctrl+\ on Windows and Linux). Nook remembers your choice on this browser. Windows narrower than 1280 px start with the strip.
+- On a phone, the ☰ button at the top left opens the sidebar. A dot on it means something new is waiting in the Inbox or in Notifications.
+- Each page's header is now one short row with the page's name and its own buttons, so the page starts higher. Contacts, Forms, Goals, Time, and the other workspace apps start about 90 px higher on a computer.
+- Home no longer shows the row of app tiles on a computer, because the sidebar has them. On a phone the tiles are still there.
+- Notes and Files keep their folder lists for now. Home, Settings, and Sign out moved from the bottom of those lists into the sidebar.
+
 **Fixes: final QA of the modules**
 
 - **Open** on a goal, form, or townhall card in a note, and **Open in Bookings** after booking a colleague, open the page in the app again (they did nothing). Leaving a note saves it first; a module that is off shows its hint on Home.

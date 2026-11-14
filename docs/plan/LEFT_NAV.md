@@ -1,6 +1,6 @@
 # Collapsible left navigation: plan
 
-Status: proposal, not built. Decision ids are allocated when this is accepted.
+Status: phase 1 built (branch `feat/left-nav-phase1`, decisions D1270–D1278 in §7). Phases 2–4 are proposals.
 
 ## 1. Problem (measured at 1440×900 and 390×844, current build)
 
@@ -190,3 +190,40 @@ Each has a recommended default.
 2. **Notes, Files, Reports and Settings trees into the global sidebar (phase 3), or keep their own panes beside a rail?** Recommended: move them into the sidebar.
 3. **Home tiles on phone: keep or remove?** Recommended: keep.
 4. **Phone sibling-section chip strip: yes or no?** Recommended: decide from screenshots in phase 2.
+
+## 7. Decisions
+
+### Phase 1: frame and sidebar (branch `feat/left-nav-phase1`, decisions D1270–D1278)
+
+§6's recommended defaults were taken: expanded from 1280 px, the rail from 761 to 1279 px, the person's choice wins once set; Home's tiles stay on phones only; the app trees move into the sidebar in phase 3.
+
+| ID | Decision |
+|---|---|
+| D1270 | **One app frame and one global sidebar** (`src/shell/AppFrame.tsx`, `AppSidebar.tsx`, `sidebar.css`) around every signed-in page: Home, every top-bar app, the seven workspace modules, Notes, and Files. The 2FA setup screen and public pages have none. The tree comes from `src/shell/navModel.ts`, a pure function of the person's disabled modules, the server's `features`, the role, and the app on screen. Its apps are Home's launcher tiles exactly: `MODULES` launcher entries in order, without modules that are off (`hiddenModuleForApp`), `unavailableModules(features)` (guests included), or workspace modules that are not `ready`. Inbox shows for members, viewers, and admins with the module on; Notifications with its module on; Search with Search and Notes on. A plain click goes through App's `openApp` (Notes saves first), App's leave guard (the Settings hub's key confirm), then the page's (`useShellLeaveGuard`: Files' uploads). Every item is a real `<a href>`, so middle-click and Copy link keep working. Clicking the app already on screen returns it to its own start page as a new entry, remounted so it reads the new location. |
+| D1271 | **Sidebar states**: expanded 240 px, rail 56 px, or a phone drawer at 760 px and under. Without a choice the window decides (expanded from 1280 px). The collapse button and ⌘\ (Ctrl+\ elsewhere) toggle it; the choice is kept in `localStorage` `nook.sidebar` (`expanded` / `rail`) and wins on every computer-sized window, never on phones. In the rail each link keeps its label for its accessible name, and a tooltip shows on hover and on keyboard focus. The drawer is a modal dialog: focus moves in and is kept inside, Escape and the scrim close it, focus returns to ☰, and it closes after any navigation. |
+| D1272 | **Badges in the sidebar**: the Inbox row shows the bounded pending count (`useInboxCount`), the Notifications row the unread count. The bell's poll now sends its count on `NOTIFICATIONS_POLLED` (`detail.unread`), so the sidebar takes it without another request; it also reads once on mount, on focus, and on marks elsewhere. On phones ☰ shows a dot while either has something new. |
+| D1273 | **The one-row page header** (`src/shell/PageHeader.tsx`, 52 px; 56 px on phones): ☰ on phones, the page's title, the page's actions, and the bell on computers (on phones it is in the drawer). It keeps the `app-page-header` class, so sticky and flex rules still apply. The account row (`AccountActions`), the phone page-name line (`AppPageName`), `HeaderInboxButton`, and Notes' `SidebarInboxRow` are gone: Settings, Inbox, the timer chip, the person, and Sign out live in the sidebar. While 2FA setup is required, Settings has no sidebar and keeps Sign out in its header. Content widths that used `100vw` now use `100%` of their column. |
+| D1274 | **ModuleHome's title row is the page header**: the module's icon, its h1 (same id, still focusable), the primary action, and ⋯ sit in the one header row. The 44 px title row and its 22 px gap above the tabs are gone, so module content starts at 151 px instead of 243 px at 1440. |
+| D1275 | **Home's app tiles show on phones only** (CSS from 761 px): on a computer the sidebar is the launcher. Quick actions stay on both, and the greeting is a little smaller. |
+| D1276 | **Notes and Files keep their own panes in phase 1**, inside the frame: their brand Home button, Home row, and account footer are gone (the sidebar has them). The pane header is 52 px and holds the pane's name, ☰ on phones, and the pane's own collapse button. Files' header row has no Inbox button any more. Files registers its upload leave guard with the frame. |
+| D1277 | **Full-screen surfaces**: a whiteboard canvas still covers the window, and the sidebar under it is hidden from the frame. A task card opened full-page shows the sidebar as the rail (labels hidden, icons only) whatever the setting. |
+| D1278 | **The sidebar's Search row opens Notes' search** (Notes, then focus in its search box; on phones the notes list first) until phase 4's ⌘K palette replaces it. |
+
+Measured with headless Chrome after phase 1, as "content starts at y" (the first content below the page's chrome; before → after):
+
+| Page | 1440 | 390 |
+|---|---|---|
+| ModuleHome apps (Forms, Goals, Standups, Contacts, Bookings, Townhall) | 243 → 151 | 246–346 → 161–261 |
+| Time | 195 → 103 | 194 → 109 |
+| Form editor | 274 → 215 | 349 → 279 |
+| Tasks home | 358 → 334 | 404 → 377 |
+| Tasks board | 192 → 168 | 305 → 278 |
+| Collections home | 364 → 340 | 406 → 379 |
+| Calendar | 166 → 142 | 169 → 142 |
+| Reports | 200 → 176 | 329 → 302 |
+| Settings | 163 → 139 | 83 → 56 |
+| Home, Vault, Chat | 76–100 → 52–76 | 68–107 → 56–80 |
+| Notes, Files | unchanged (148 / 190) | 70 → 56 |
+
+Left for phase 2: the modules' `sections` in the sidebar (ModuleHome's tabs stay on the page), the Tasks and Collections intros and segments, and the phone chip strip. For phase 3: Notes', Files', Reports', and Settings' own panes.
+

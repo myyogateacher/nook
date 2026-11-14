@@ -1,0 +1,117 @@
+/*
+ * The app frame and the global sidebar (docs/plan/LEFT_NAV.md, D1270–D1274). The frame is a grid of
+ * the sidebar and the page; the page keeps scrolling itself (each `.app-page` is its own scroll
+ * container, scrollShells), so the frame never scrolls. Dark only, on the :root tokens.
+ */
+.app-frame { --sidebar-width: 240px; height: 100dvh; display: grid; grid-template-columns: var(--sidebar-width) minmax(0, 1fr); background: var(--bg); overflow: hidden; }
+.app-frame[data-sidebar="rail"] { --sidebar-width: 56px; }
+.app-frame[data-sidebar="drawer"] { grid-template-columns: minmax(0, 1fr); }
+.app-frame-page { position: relative; min-width: 0; min-height: 0; height: 100dvh; overflow: hidden; }
+/* Pages sized to the window (100dvh) fill the column; nothing in the column scrolls but the page. */
+.app-frame-page > :is(.app-page, .app-home, .workspace) { height: 100dvh; }
+
+/* Full-screen surfaces (§2.1): a full-page task card shows the rail; a whiteboard canvas covers the frame. */
+.app-frame[data-sidebar="expanded"]:has(.task-card-page-wrap) { --sidebar-width: 56px; }
+.app-frame[data-sidebar="expanded"]:has(.task-card-page-wrap) > .app-sidebar .app-sidebar-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.app-frame:has(.whiteboard-canvas-page) > .app-sidebar { visibility: hidden; }
+.app-frame:has(.whiteboard-canvas-page) { grid-template-columns: 0 minmax(0, 1fr); }
+
+.app-sidebar { position: relative; z-index: 30; min-width: 0; min-height: 0; height: 100dvh; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #0c0c0e; color: #d4d4d8; }
+.app-sidebar-head { flex: none; height: 52px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 12px; }
+.app-sidebar-brand { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 10px; border-radius: 9px; padding: 6px 4px; color: #f4f4f5; font-size: .92rem; font-weight: 750; text-decoration: none; }
+.app-sidebar-brand:hover .app-sidebar-brand-name { color: var(--yellow-strong); }
+.app-sidebar-brand:focus-visible, .app-sidebar-link:focus-visible, .app-sidebar-account-button:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; }
+.app-sidebar-brand .brand-dot { flex: none; }
+.app-sidebar-toggle { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; padding: 0; background: transparent; color: #8f8f96; cursor: pointer; }
+.app-sidebar-toggle:hover { background: var(--panel-hover); color: #fff; }
+.app-sidebar-toggle svg { width: 17px; height: 17px; }
+
+.app-sidebar-scroll { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 4px 8px 10px; scrollbar-width: thin; }
+.app-sidebar-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.app-sidebar-link { position: relative; min-width: 0; height: 32px; display: flex; align-items: center; gap: 10px; border-radius: 8px; padding: 0 10px; color: #b4b4ba; font-size: .86rem; font-weight: 550; text-decoration: none; }
+.app-sidebar-link:hover { background: var(--panel-hover); color: #fff; }
+.app-sidebar-link.active { background: #2b271d; color: var(--yellow-strong); }
+.app-sidebar-link.active svg { color: var(--yellow); }
+.app-sidebar-link svg { width: 17px; height: 17px; flex: none; color: #8f8f96; }
+.app-sidebar-link:hover svg { color: inherit; }
+.app-sidebar-label { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-sidebar-badge { flex: none; min-width: 18px; height: 18px; display: inline-grid; place-items: center; border-radius: 9px; padding: 0 5px; background: var(--yellow); color: #281f0b; font-size: .68rem; font-weight: 800; line-height: 1; }
+.app-sidebar-heading { margin: 14px 10px 5px; color: #77777e; font-size: .68rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+
+.app-sidebar-foot { position: relative; flex: none; display: grid; gap: 2px; border-top: 1px solid var(--border); padding: 8px; }
+.app-sidebar-timer { display: flex; min-width: 0; padding: 2px 2px 6px; }
+.app-sidebar-timer:empty { display: none; }
+.app-sidebar-timer .time-topbar { min-width: 0; max-width: 100%; }
+.app-sidebar-timer .ui-timer-label { max-width: 110px; }
+.app-sidebar-account { position: relative; }
+.app-sidebar-account-button { width: 100%; min-width: 0; height: 42px; display: flex; align-items: center; gap: 10px; border: 0; border-radius: 9px; padding: 0 8px; background: transparent; color: #d4d4d8; font: inherit; font-size: .85rem; text-align: left; cursor: pointer; }
+.app-sidebar-account-button:hover, .app-sidebar-account-button[aria-expanded="true"] { background: var(--panel-hover); color: #fff; }
+.app-sidebar-account-chevron { width: 15px; height: 15px; flex: none; color: #77777e; }
+.app-sidebar-account-menu { top: auto; right: auto; bottom: calc(100% + 6px); left: 0; min-width: 220px; }
+
+/* The rail's tooltip (hover and focus): fixed, so the scrolling list never clips it. */
+.app-sidebar-tip { position: fixed; z-index: 95; transform: translateY(-50%); border: 1px solid #36363b; border-radius: 7px; padding: 5px 9px; background: #18181b; box-shadow: 0 10px 30px rgb(0 0 0 / 45%); color: #f4f4f5; font-size: .8rem; font-weight: 600; white-space: nowrap; pointer-events: none; }
+
+/* The rail (56 px): icons only; each label stays in the link for its accessible name. */
+.app-sidebar[data-mode="rail"] .app-sidebar-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.app-sidebar[data-mode="rail"] .app-sidebar-head { justify-content: center; padding: 0; }
+.app-sidebar[data-mode="rail"] .app-sidebar-brand { display: none; }
+.app-sidebar[data-mode="rail"] .app-sidebar-scroll { padding: 4px 7px 10px; }
+.app-sidebar[data-mode="rail"] .app-sidebar-link { width: 40px; height: 36px; justify-content: center; margin: 0 auto; padding: 0; }
+.app-sidebar[data-mode="rail"] .app-sidebar-badge { position: absolute; top: 1px; right: -2px; min-width: 16px; height: 16px; padding: 0 4px; font-size: .6rem; }
+.app-sidebar[data-mode="rail"] .app-sidebar-heading { height: 1px; margin: 9px 6px; overflow: hidden; background: var(--border); color: transparent; font-size: 0; }
+.app-sidebar[data-mode="rail"] .app-sidebar-foot { padding: 8px 7px; justify-items: center; }
+.app-sidebar[data-mode="rail"] .app-sidebar-timer { justify-content: center; padding: 2px 0 6px; }
+/* The timer chip shrinks to its icon (idle) or its dot and Stop (running); the button keeps its label. */
+.app-sidebar[data-mode="rail"] .app-sidebar-timer :is(.ui-timer-label, .ui-timer-elapsed, .time-topbar-more) { display: none; }
+.app-sidebar[data-mode="rail"] .app-sidebar-timer button.ui-timer { width: 38px; justify-content: center; padding: 0; }
+.app-sidebar[data-mode="rail"] .app-sidebar-timer button.ui-timer > span { display: none; }
+.app-sidebar[data-mode="rail"] .app-sidebar-timer .ui-timer.running { gap: 3px; padding: 0 3px 0 8px; }
+.app-sidebar[data-mode="rail"] .app-sidebar-account-button { width: 40px; justify-content: center; padding: 0; }
+/* A full-page task card's rail (the frame is expanded, the card wants the width). */
+.app-frame:has(.task-card-page-wrap) > .app-sidebar[data-mode="expanded"] :is(.app-sidebar-brand, .app-sidebar-heading, .app-sidebar-account-chevron, .app-sidebar-timer) { display: none; }
+.app-frame:has(.task-card-page-wrap) > .app-sidebar[data-mode="expanded"] :is(.app-sidebar-link, .app-sidebar-account-button) { width: 40px; justify-content: center; margin: 0 auto; padding: 0; }
+.app-frame:has(.task-card-page-wrap) > .app-sidebar[data-mode="expanded"] .app-sidebar-head { justify-content: center; padding: 0; }
+.app-frame:has(.task-card-page-wrap) > .app-sidebar[data-mode="expanded"] .app-sidebar-badge { position: absolute; top: 1px; right: -2px; }
+
+/* The phone drawer: a modal panel over the page. */
+.app-drawer-layer { position: fixed; inset: 0; z-index: 90; }
+.app-drawer-scrim { position: absolute; inset: 0; width: 100%; border: 0; padding: 0; background: rgb(0 0 0 / 58%); cursor: default; }
+.app-drawer { position: absolute; top: 0; bottom: 0; left: 0; width: min(300px, 86vw); display: flex; box-shadow: 18px 0 50px rgb(0 0 0 / 50%); animation: app-drawer-in .16s ease-out; }
+.app-drawer .app-sidebar { width: 100%; height: 100%; padding-bottom: env(safe-area-inset-bottom); }
+.app-drawer .app-sidebar-head { height: 56px; padding-top: env(safe-area-inset-top); }
+.app-drawer .app-sidebar-toggle { width: 44px; height: 44px; }
+.app-drawer .app-sidebar-link { height: 44px; font-size: .95rem; }
+.app-drawer .app-sidebar-account-button { height: 48px; }
+@keyframes app-drawer-in { from { transform: translateX(-24px); opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .app-drawer { animation: none; } }
+
+/* The ☰ button (phones only) that opens the drawer; its dot says something new waits there. */
+.shell-menu-button { position: relative; display: none; flex: none; width: 44px; height: 44px; place-items: center; border: 0; border-radius: 10px; padding: 0; background: transparent; color: #d4d4d8; cursor: pointer; }
+.shell-menu-button:hover { background: var(--panel-hover); color: #fff; }
+.shell-menu-button svg { width: 21px; height: 21px; }
+.shell-menu-dot { position: absolute; top: 9px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); box-shadow: 0 0 0 2px #0d0d0f; }
+@media (max-width: 760px) { .shell-menu-button { display: inline-grid; } }
+
+/* The one-row page header (§2.2, D1273): [☰] title … actions … bell. */
+.app-page-header.page-header { height: 52px; min-height: 52px; display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-start; gap: 10px; padding: 0 clamp(16px, 2.6vw, 32px); row-gap: 0; }
+.page-header-title { min-width: 0; flex: 0 1 auto; display: flex; align-items: center; gap: 10px; overflow: hidden; }
+.page-header-title > strong, .page-header-title > h1, .page-header-title .app-page-title { margin: 0; overflow: hidden; color: #f4f4f5; font-size: 1rem; font-weight: 700; letter-spacing: normal; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.page-header-actions { min-width: 0; margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.page-header-bell { flex: none; margin-left: auto; display: inline-flex; align-items: center; }
+.page-header-actions + .page-header-bell { margin-left: 0; }
+.page-header-bell:empty { display: none; }
+.page-header-back { flex: none; min-height: 36px; display: inline-flex; align-items: center; gap: 4px; border: 0; border-radius: 9px; padding: 0 10px 0 6px; background: transparent; color: #b2b2b8; font: inherit; font-size: .86rem; cursor: pointer; }
+.page-header-back:hover { background: var(--panel-hover); color: #fff; }
+.page-header-back svg { width: 17px; height: 17px; }
+@media (max-width: 760px) {
+  .app-page-header.page-header { height: 56px; min-height: 56px; gap: 6px; padding: 0 12px 0 6px; }
+  .page-header-bell { display: none; }
+  .page-header-back { min-height: 44px; }
+}
+
+/* Notes' and Files' own folder panes inside the frame (D1276): their header is the page header's height
+   and holds the pane's name, the ☰ on phones, and the pane's collapse button. */
+.app-frame .folder-pane > .sidebar-header { height: 52px; gap: 6px; padding: 0 10px 0 18px; }
+.app-frame .folder-pane > .sidebar-header .sidebar-brand { flex: 1 1 auto; }
+@media (max-width: 760px) { .app-frame .folder-pane > .sidebar-header { height: 56px; padding: 0 12px 0 6px; } }

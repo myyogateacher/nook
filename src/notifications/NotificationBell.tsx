@@ -28,9 +28,11 @@ export function NotificationBell() {
 
   const refresh = useCallback(async () => {
     try {
-      setUnread((await listNotifications({ unread: true, limit: 1 })).unreadCount);
-      // Badges beside the bell (the Inbox count) refresh on the same signal.
-      window.dispatchEvent(new Event(NOTIFICATIONS_POLLED));
+      const { unreadCount } = await listNotifications({ unread: true, limit: 1 });
+      setUnread(unreadCount);
+      // Badges beside the bell (the Inbox count) refresh on the same signal; the sidebar's
+      // Notifications row takes the count from it (D1272).
+      window.dispatchEvent(new CustomEvent(NOTIFICATIONS_POLLED, { detail: { unread: unreadCount } }));
     } catch {
       // The badge is best-effort; the list shows errors.
     }

@@ -6,65 +6,24 @@
  * background is fixed to the page so it does not scroll away. Tasks and Collections keep their own
  * shell (a flex column whose content pane scrolls).
  */
-.app-page:not(.tasks-app):not(.collections-app) { height: 100dvh; overflow-y: auto; overscroll-behavior-y: contain; background-attachment: local; scroll-padding-top: 88px; }
+.app-page:not(.tasks-app):not(.collections-app) { height: 100dvh; overflow-y: auto; overscroll-behavior-y: contain; background-attachment: local; scroll-padding-top: 64px; }
 .app-page:not(.tasks-app):not(.collections-app) > .app-page-header { position: sticky; top: 0; z-index: 25; background: rgb(13 13 15 / 94%); backdrop-filter: blur(10px); }
-.app-home-header, .app-page-header { height: 76px; display: flex; align-items: center; justify-content: space-between; padding: 0 clamp(20px, 5vw, 64px); border-bottom: 1px solid rgb(255 255 255 / 7%); }
-.app-home-brand { display: inline-flex; align-items: center; gap: 11px; color: #f4f4f5; }
+/*
+ * D1273 (docs/plan/LEFT_NAV.md §2.2): the 76 px global bar (Home, the app's name, Settings, Inbox,
+ * the timer, the bell, the person, Sign out) became the global sidebar (src/shell) and a one-row
+ * page header (`PageHeader`, sized in src/shell/sidebar.css).
+ */
 .brand-text { display: flex; flex-direction: column; line-height: 1.1; min-width: 0; }
 .brand-text strong { font-size: .95rem; }
-.app-account { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.app-home-user { min-width: 0; margin: 0 4px 0 8px; display: inline-flex; align-items: center; gap: 8px; overflow: hidden; color: #9a9aa1; font-size: .83rem; white-space: nowrap; }
-.app-home-user-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Wave 35 (QA U4): the signed-in person's picture, or their letter. */
 .app-user-avatar { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 50%; background: #2b271d; color: #f5cf79; font-size: .78rem; font-weight: 750; }
+/* The bell's button (the page header's last item on a computer). */
 .app-account-button { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 9px; padding: 8px 10px; background: transparent; color: #b2b2b8; font-size: .83rem; cursor: pointer; }
 .app-account-button:hover { background: #222225; color: #fff; }
 .app-account-button svg { width: 16px; flex: none; }
-.app-account-inbox { position: relative; }
-.app-account-badge { min-width: 18px; height: 18px; display: inline-grid; place-items: center; border-radius: 9px; padding: 0 5px; background: #2d281b; color: #f4ca67; font-size: .68rem; font-weight: 750; line-height: 1; }
-.app-page-header { justify-content: flex-start; gap: 20px; }
-.app-page-header .app-account { margin-left: auto; }
-.app-home-button { display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 9px; padding: 9px 10px; background: transparent; color: #b2b2b8; cursor: pointer; }
-.app-home-button:hover { background: #222225; color: #fff; }
-.app-home-button svg { width: 17px; }
-.sidebar-home-button { border: 0; padding: 0; background: transparent; text-align: left; cursor: pointer; }
-.sidebar-home-button:hover strong { color: #f5cf79; }
-@media (max-width: 760px) { .app-home-header, .app-page-header { height: 68px; padding: 0 18px; } .app-page-header { gap: 8px; } .app-home-user { display: none; } .app-account-button { width: 44px; min-width: 44px; height: 44px; min-height: 44px; justify-content: center; padding: 0; } .app-account-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } .app-account-badge { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; font-size: .62rem; } .app-home ~ .toast, .app-page ~ .toast { bottom: calc(24px + env(safe-area-inset-bottom)); } }
-/*
- * Phones: the header's Home button shows only its icon and the app name next to the brand mark is
- * visually hidden (each app's page heading names it); both texts stay in the accessibility tree.
- * (Added when the Team button made the header wider than 390 px; Wave 38 moved the Bin and Team
- * buttons into Settings, and the rule stays so the account row fits.)
- */
-@media (max-width: 760px) {
-  .app-page-header .app-home-button { flex: none; width: 44px; min-width: 44px; height: 44px; justify-content: center; padding: 0; font-size: 0; }
-  .app-page-header .app-home-button svg { width: 20px; height: 20px; }
-  .app-page-header .app-home-brand { flex: 1 1 auto; min-width: 0; }
-  .app-page-header .brand-dot { flex: none; }
-  .app-page-header .brand-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .app-page-header .app-account, .app-page-header .app-notification-bell { flex: none; }
-}
-/*
- * F2: the phone header hides the brand name, so each app page shows a compact visible page name on
- * a second header line instead. Calendar and Team have no other h1, so their brand name is the h1.
- */
+.app-account { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .app-page-title { margin: 0; font-size: .95rem; font-weight: 700; letter-spacing: normal; }
-.app-page-name { display: none; }
-@media (max-width: 760px) {
-  /* Wave 35 (QA U4): the name is hidden, the picture (or letter) stays, beside Sign out (Wave 37). */
-  .app-home-user { display: inline-flex; margin: 0 2px; }
-  .app-home-user-name { display: none; }
-  .app-page-header { flex-wrap: wrap; height: auto; min-height: 68px; row-gap: 2px; padding-top: 12px; padding-bottom: 8px; }
-  .app-page-name { order: 10; flex: 0 0 100%; display: block; min-width: 0; overflow: hidden; padding-left: 2px; color: var(--yellow); font-size: .72rem; font-weight: 700; letter-spacing: .12em; line-height: 1.4; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
-}
-/*
- * QA note 2: Home spread its header items with space-between, leaving a wide gap between Sign out
- * and the Inbox button on phones; they now sit together at the end. The Inbox count is a call to
- * action like the bell's unread count, so it uses the bell's bright badge.
- */
-.app-home-header { justify-content: flex-start; gap: 4px; }
-.app-home-header .app-home-brand { margin-right: auto; min-width: 0; }
-.app-account-inbox .app-account-badge { background: var(--yellow); color: #281f0b; font-weight: 800; }
+@media (max-width: 760px) { .app-home ~ .toast, .app-page ~ .toast { bottom: calc(24px + env(safe-area-inset-bottom)); } }
 /*
  * F1 (v0.16.0 QA): two-pane pages (Team and its sections, the Inbox proposals) on a computer. Both
  * panes used to scroll together as one page with a sticky right pane that could be taller than the

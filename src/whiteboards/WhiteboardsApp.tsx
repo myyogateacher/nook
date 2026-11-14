@@ -1,7 +1,7 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Ellipsis, FileUp, House, LayoutGrid, List as ListIcon, PenTool, Plus, RotateCcw, Sparkles, TriangleAlert, Users } from "lucide-react";
+import { Ellipsis, FileUp, LayoutGrid, List as ListIcon, PenTool, Plus, RotateCcw, TriangleAlert, Users } from "lucide-react";
 import { api } from "../api";
-import { AccountActions, AppPageName } from "../AppShell";
+import { PageHeader } from "../shell/PageHeader";
 import { readHistoryDepth } from "../appShellNavigation";
 import { relativeTime } from "../files/format";
 import { popStateClosedDialog } from "../historyDialogs";
@@ -336,11 +336,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
   const heading = route.folder === "shared" ? "Shared with me" : route.folder === "all" ? "All whiteboards" : folders.find((folder) => folder.id === route.folder)?.name ?? "Folder";
 
   return <main className="app-page whiteboards-app">
-    <header className="app-page-header">
-      <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Whiteboards</strong></span></span><AppPageName name="Whiteboards" />
-      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
-    </header>
+    <PageHeader title="Whiteboards" />
     <ReadOnlyBanner />
     <section className="whiteboards-body" aria-labelledby="whiteboards-title">
       <div className="whiteboards-toolbar">

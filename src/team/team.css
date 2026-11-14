@@ -1,5 +1,5 @@
 .team-app .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.team-layout { width: min(1120px, calc(100vw - 40px)); margin: 0 auto; padding: clamp(28px, 5vh, 56px) 0 calc(56px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 28px; align-items: start; }
+.team-layout { width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: clamp(28px, 5vh, 56px) 0 calc(56px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 28px; align-items: start; }
 .team-unavailable { grid-template-columns: minmax(0, 560px); justify-content: center; }
 .team-intro h1 { margin: 8px 0 8px; color: #fafafa; font-size: clamp(2rem, 4.5vw, 3rem); letter-spacing: -.055em; line-height: 1.05; }
 .team-intro p { max-width: 520px; margin: 0; color: #9a9aa1; font-size: .92rem; line-height: 1.55; }
@@ -99,7 +99,7 @@
 .team-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 @media (max-width: 760px) {
-  .team-layout { width: calc(100vw - 32px); padding-top: 22px; grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .team-layout { width: calc(100% - 32px); padding-top: 22px; grid-template-columns: minmax(0, 1fr); gap: 0; }
   .team-detail-pane { position: static; }
   .team-app:not(.team-detail-open) .team-detail-pane { display: none; }
   .team-app.team-detail-open .team-list-pane { display: none; }
@@ -111,7 +111,6 @@
   .team-dialog { left: 0; right: 0; top: auto; bottom: 0; width: auto; max-height: 90dvh; transform: none; border-bottom: 0; border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); }
   .team-dialog-actions { flex-direction: column-reverse; }
   .team-dialog-actions .team-action { width: 100%; }
-  .team-app .app-home-button { min-height: 44px; }
 }
 
 /* Invites (Wave 18) */

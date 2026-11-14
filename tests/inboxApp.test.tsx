@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AccountActions, InboxNavContext } from "../src/AppShell";
+import { buildNavTree } from "../src/shell/navModel";
 import { diffStats, lineDiff } from "../src/diff/lineDiff";
 import { InboxApp, ProposalCard, ProposalView, RejectDialog } from "../src/inbox/InboxApp";
 import type { ProposalDetail, ProposalSummary } from "../src/inbox/inboxApi";
 import { actionLabel, bulkConfirmText, bulkSummary, expiresText, failureText, groupTitle, inboxBackAction, rejectedText, rejectEffectText, statusLabel } from "../src/inbox/inboxFormat";
-import { hiddenModuleForApp, hiddenTodaySections, MODULES, ModulesContext } from "../src/modules";
+import { hiddenModuleForApp, hiddenTodaySections, MODULES, type ModuleId } from "../src/modules";
 import { formatRoute, parseRoute } from "../src/router";
 import { safeNotificationPath } from "../src/notifications/notificationsApi";
 import { readHiddenSections } from "../src/today/todayPreferences";
@@ -51,13 +51,12 @@ describe("Inbox module and Today", () => {
     expect(inbox.headerItem).toBe("inbox");
     expect(hiddenModuleForApp(["inbox"], "inbox")).toBe("inbox");
     expect(hiddenTodaySections(["inbox"])).toEqual(["proposals"]);
-    const account = { displayName: "Ada", onSettings: noop, onSignOut: noop };
-    const nav = { role: "member" as const, openInbox: noop, onInbox: false };
-    const shown = renderToStaticMarkup(<InboxNavContext.Provider value={nav}><AccountActions {...account} /></InboxNavContext.Provider>);
-    expect(shown).toContain('aria-label="Inbox"');
-    expect(renderToStaticMarkup(<ModulesContext.Provider value={["inbox"]}><InboxNavContext.Provider value={nav}><AccountActions {...account} /></InboxNavContext.Provider></ModulesContext.Provider>)).not.toContain('title="Inbox"');
-    expect(renderToStaticMarkup(<InboxNavContext.Provider value={{ ...nav, role: "guest" }}><AccountActions {...account} /></InboxNavContext.Provider>)).not.toContain('title="Inbox"');
-    expect(renderToStaticMarkup(<InboxNavContext.Provider value={{ ...nav, onInbox: true }}><AccountActions {...account} /></InboxNavContext.Provider>)).not.toContain('title="Inbox"');
+    // D1270: the Inbox is a sidebar row (on the Inbox itself it is the current page, not hidden).
+    const ids = (disabledModules: ModuleId[], role: "member" | "guest", active: "home" | "inbox" = "home") => buildNavTree({ disabledModules, role, active }).primary.map((item) => item.id);
+    expect(ids([], "member")).toContain("inbox");
+    expect(ids(["inbox"], "member")).not.toContain("inbox");
+    expect(ids([], "guest")).not.toContain("inbox");
+    expect(buildNavTree({ disabledModules: [], role: "member", active: "inbox" }).primary.find((item) => item.id === "inbox")?.current).toBe(true);
   });
 
   test("Proposals awaiting you is in the Today group and links to the proposal; a hidden Drafts from agents carries over", () => {
@@ -169,13 +168,14 @@ describe("Inbox rendering", () => {
     expect(noteMarkup).toContain("Approve and publish");
   });
 
-  test("the Inbox page starts loading with Home, the segments, and no launcher tile", () => {
+  test("the Inbox page starts loading with its header, the segments, and no launcher tile", () => {
     const globals = globalThis as { window?: unknown };
     const previous = globals.window;
     globals.window = { location: { pathname: "/inbox" } };
     try {
       const markup = renderToStaticMarkup(<RoleContext.Provider value="member"><InboxApp displayName="Ada" navigate={noop} flash={noop} onHome={noop} onSettings={noop} onSignOut={noop} onOpenPath={noop} /></RoleContext.Provider>);
-      expect(markup).toContain(">Home</button>");
+      // D1273: Home is in the sidebar; the page header names the page.
+      expect(markup).toContain('<div class="page-header-title"><strong>Inbox</strong></div>');
       expect(markup).toContain("<h1 id=\"inbox-title\">Inbox</h1>");
       expect(markup).toContain('aria-pressed="true">Pending');
       expect(markup).toContain(">History</button>");

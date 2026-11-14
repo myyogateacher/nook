@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Bot, Check, ChevronLeft, ChevronRight, Copy, CopyPlus, Ellipsis, Globe, House, ImagePlus, KeyRound, MessagesSquare, Paperclip, Pencil, Pin, Plus, RotateCcw, Search, Send, Share2, Sparkles, Square, Trash2, UsersRound, X } from "lucide-react";
+import { Bot, Check, ChevronLeft, ChevronRight, Copy, CopyPlus, Ellipsis, Globe, ImagePlus, KeyRound, MessagesSquare, Paperclip, Pencil, Pin, Plus, RotateCcw, Search, Send, Share2, Square, Trash2, UsersRound, X } from "lucide-react";
 import { AccessSheet } from "../access/AccessSheet";
-import { AccountActions, AppPageName } from "../AppShell";
+import { PageHeader } from "../shell/PageHeader";
 import { appName } from "../appName";
 import { readHistoryDepth } from "../appShellNavigation";
 import { ApiError } from "../api";
@@ -609,7 +609,6 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
   // Wave 43 (AC-D): a chat shared with me is read-only; I continue in my own copy.
   const readOnly = detail?.chat.yourLevel === "view";
   const composerOpen = Boolean(route.newChat || (detail && !readOnly && route.chatId));
-  const account = <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />;
 
   // --- Screens the module shows instead of chats ---
   const notice = statusError ? <section className="chat-state chat-error" role="alert"><p>{statusError}</p><button className="secondary-button" onClick={() => { void loadStatus(); }}>Retry</button></section>
@@ -755,11 +754,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
   </section>;
 
   return <main className={`app-page chat-app${detailOpen ? " chat-detail-open" : ""}`}>
-    <header className="app-page-header">
-      <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Chat</strong></span></span><AppPageName name="Chat" />
-      {account}
-    </header>
+    <PageHeader title="Chat" />
     {notice ?? (route.audit ? <AuditLog route={route} role={role} phone={phone} go={go} back={back} context={renderContext} /> : <div className="chat-layout split-layout">{list}{pane}</div>)}
     {renaming && detail && <RenameDialog title={detail.chat.title} onCancel={() => setRenaming(false)} onSave={(title) => { void rename(title); }} />}
     {externalLink && <ExternalLinkSheet href={externalLink} onClose={() => setExternalLink(null)} />}

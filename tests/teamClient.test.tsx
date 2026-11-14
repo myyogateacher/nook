@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as serverRoles from "../server/team/roles";
-import { AccountActions } from "../src/AppShell";
 import type { TeamEvent, TeamMember } from "../src/team/teamApi";
 import { eventLabel, filterTeam, isNewAccount, lastAdminReason, NEW_ACCOUNT_MS, statusLabel, teamBackAction, teamFilters } from "../src/team/teamFormat";
 import { canManageTeam, canSeeTeam, roleOptions, ROLE_DESCRIPTIONS, ROLES, SELECTABLE_ROLES } from "../src/team/teamRoles";
@@ -106,12 +105,10 @@ describe("Team role picker (shared Select, D91)", () => {
 });
 
 describe("Team chrome", () => {
-  const account = { displayName: "Ada", onSettings: () => undefined, onSignOut: () => undefined };
-  test("the account row has no Team button (Wave 38: Team is in Settings): Settings · … · Sign out", () => {
-    const markup = renderToStaticMarkup(<AccountActions {...account} />);
-    const titles = [...markup.matchAll(/title="([^"]+)"/g)].map((match) => match[1]);
-    expect(titles).toEqual(["Settings", "Sign out"]);
+  test("no app chrome has a Team button (Wave 38: Team is in Settings; D1270: Settings is a sidebar row)", () => {
     expect(readFileSync(new URL("../src/AppShell.tsx", import.meta.url), "utf8")).not.toContain("TeamNavContext");
+    const sidebar = readFileSync(new URL("../src/shell/AppSidebar.tsx", import.meta.url), "utf8");
+    expect(sidebar).not.toContain("Team");
   });
 
   test("Team → Members in the Settings hub renders its list shell, and tells guests it is unavailable", () => {

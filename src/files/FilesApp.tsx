@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LayoutGrid, List as ListIcon, Lock, LogOut, Paperclip, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
+import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, LayoutGrid, List as ListIcon, Lock, Paperclip, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Sparkles, Upload, Users, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
 import { restoredMessage } from "../bin/binFormat";
@@ -8,7 +8,7 @@ import { dialogPopDirection, popStateClosedDialog, registerHistoryDialogGuard, u
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { useConfirm } from "../ui/useConfirm";
 import { NotificationBell } from "../notifications/NotificationBell";
-import { HeaderInboxButton } from "../AppShell";
+import { ShellMenuButton, useShellLeaveGuard } from "../shell/shellContext";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
 import { FileSearchResults, matchedText, useFileSearch, type FileSearchHit } from "../search/FileSearchResults";
 import { closedPreviewTarget, documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute, type FilesRoute } from "../filesRoute";
@@ -55,10 +55,7 @@ import { NameDialog, RenameDialog } from "./RenameDialog";
 import { documentIcon, relativeTime } from "./format";
 import { canRetryUpload, emptyUploadQueue, finishedBatch, uploadAnnouncement, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type NewUpload, type UploadItem } from "./uploadQueue";
 import "./files.css";
-import { Avatar } from "../ui/Avatar";
-import { useSelfAvatar } from "../ui/selfAvatar";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
-import { appName } from "../appName";
 
 export type FilesNavigate = (route: Route, options?: { replace?: boolean; removed?: boolean; filesPanel?: FilesPanel }) => void;
 
@@ -112,7 +109,6 @@ export function leaveUploadsRequest(pending: number) {
 }
 
 export function FilesApp({ userId, displayName, navigate, flash, onHome, onSettings, onSignOut, onOpenWhiteboard }: FilesAppProps) {
-  const selfAvatar = useSelfAvatar();
   // Viewers and guests read and download; upload, new folder, rename, move, share, and delete are hidden.
   const { canWrite } = useRole();
   const canManage = (document: Pick<DocumentSummary, "is_owner">) => canWrite && ownsDocument(document);
@@ -684,6 +680,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     if (pendingUploads && !await askLeave(leaveUploadsRequest(pendingUploads))) return;
     action();
   }
+  // The global sidebar's moves and Sign out ask the same (D1276).
+  useShellLeaveGuard((leave) => { void leaveFiles(leave); });
 
   function chooseFiles(list: FileList | File[] | null) {
     if (!list?.length || uploadFolderId === undefined) return;
@@ -857,12 +855,13 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
 
   return <main className={`workspace files-workspace${collapsed ? " nav-collapsed" : ""}${selected ? " preview-open" : ""}`} data-mobile-panel={panel === "files" ? "notes" : panel === "preview" ? "editor" : "folders"}>
     <aside className="folder-pane" id="file-folders">
+      {/* D1276: Home, the apps, Inbox, and the account are in the global sidebar; this pane keeps the folders. */}
       <header className="sidebar-header">
-        <button className="sidebar-brand sidebar-home-button" onClick={() => { void leaveFiles(onHome); }} aria-label={`Open ${appName()} home`} title="Back to Home"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Files</strong></span></button>
+        <ShellMenuButton />
+        <span className="sidebar-brand"><span className="brand-text"><strong>Files</strong></span></span>
         <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse folders sidebar" aria-controls="file-folders" aria-expanded={!collapsed} title="Collapse folders"><PanelLeftClose /></button>
       </header>
       <nav className="folder-nav" aria-label="File folders">
-        <button className="nav-home" onClick={() => { void leaveFiles(onHome); }} title="Back to Home"><House /><span>Home</span></button>
         <button className={folder === "all" ? "active" : ""} aria-current={folder === "all" ? "page" : undefined} onClick={() => selectFolder("all")}><Files /><span>All files</span><b>{documents.length}</b></button>
         <button className={folder === "shared" ? "active" : ""} aria-current={folder === "shared" ? "page" : undefined} onClick={() => selectFolder("shared")}><Users /><span>Shared with me</span><b>{documents.filter((item) => item.is_owner === 0).length}</b></button>
         <div className="nav-label"><span>Folders</span>{canWrite && <button id="files-new-folder" onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button>}</div>
@@ -885,13 +884,6 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
           <FolderIcon /><span className="folder-copy" title={item.name}><span className="folder-name">{item.name}</span><small>{item.owner_name}</small></span><b>{documents.filter((document) => document.folder_id === item.id).length}</b>
         </button>)}
       </nav>
-      <footer className="sidebar-footer">
-        <button className="footer-settings" title={displayName} onClick={onSettings} aria-label={`Open settings for ${displayName}`}>
-          <strong className="footer-identity"><Avatar className="app-user-avatar" name={displayName} url={selfAvatar} /><span>{displayName}</span></strong>
-          <span><Settings />Settings</span>
-        </button>
-        <button className="footer-signout" onClick={() => { void leaveFiles(onSignOut); }}><LogOut />Sign out</button>
-      </footer>
     </aside>
 
     <section className={`note-pane file-pane${fileDragOver ? " file-drag-over" : ""}`} onDragEnter={paneDragEnter} onDragOver={paneDragOver} onDragLeave={paneDragLeave} onDrop={paneDrop}>
@@ -912,7 +904,6 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
               {fileSortOptions.map((option) => <button key={option.value} className={sort === option.value ? "active" : ""} onClick={() => chooseSort(option.value)} role="menuitemradio" aria-checked={sort === option.value}><span>{option.label}</span>{sort === option.value && <Check />}</button>)}
             </div>}
           </div>
-          <HeaderInboxButton />
           <NotificationBell />
           {canUpload && <UploadMenu destination={uploadDestination} open={uploadMenuOpen} onOpenChange={setUploadMenuOpen} camera={canTakePhoto} folder={canChooseFolder}
             onChooseFiles={() => fileInputRef.current?.click()} onPhoto={(files) => { void chooseCaptured(files); }} onFolder={(files) => { void uploadFolders(files); }} />}

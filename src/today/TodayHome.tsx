@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { ArrowRight, RotateCcw, RotateCw, SlidersHorizontal, Sparkles } from "lucide-react";
-import { AccountActions } from "../AppShell";
+import { ArrowRight, RotateCcw, RotateCw, SlidersHorizontal } from "lucide-react";
+import { PageHeader } from "../shell/PageHeader";
 import type { AppSection } from "../appShellNavigation";
 import { ApiError } from "../api";
 import { hiddenTodaySections, useDisabledModules } from "../modules";
@@ -133,7 +133,7 @@ export function TodayGroups({ names, data, busy, retrying, onRetry, onOpenRoute 
 
 /**
  * Home at `/` (WAVES_10-12.md D50, §2.3): the greeting, a launcher row of the
- * installed apps, and the Today sections. Every item is a real link routed
+ * installed apps (phones only since D1275: the sidebar launches apps on a computer), and the Today sections. Every item is a real link routed
  * through `navigate`, so Back from it returns here.
  */
 /** Today's date in the browser, for the heading when no section is requested at all. */
@@ -246,13 +246,11 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
   const firstName = displayName.split(" ")[0] || displayName;
 
   return <main className="app-home today-home">
-    <header className="app-home-header">
-      <div className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Home</strong></span></div>
-      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
-    </header>
+    <PageHeader title="Home" />
     <div className="today-content">
       <section className="today-intro" aria-labelledby="app-home-title">
         <h1 id="app-home-title">Good to see you, {firstName}.</h1>
+        {/* D1275: the sidebar is the launcher on a computer, so the tiles show on phones only (today.css). */}
         <p className="today-launcher-label" aria-hidden="true">Apps</p>
         <nav className="today-launcher" aria-label="Apps">
           <ul>

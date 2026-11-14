@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AccountActions } from "../src/AppShell";
+import { PageHeader } from "../src/shell/PageHeader";
 import { createAppHistoryState, readAppHistorySection } from "../src/appShellNavigation";
 import { reminderLabel, reminderRowLabel } from "../src/calendar/EventReminders";
 import { popStateClosedDialog, registerHistoryDialogGuard } from "../src/historyDialogs";
@@ -50,19 +50,19 @@ test("dialog guards stack: the newest is asked first, and an idle one lets the n
   expect(popStateClosedDialog({})).toBe(false);
 });
 
-test("the bell renders only inside the signed-in shell, in the account row before the person and Sign out", () => {
-  expect(renderToStaticMarkup(<AccountActions {...account} />)).not.toContain("app-notification-bell");
-  const markup = renderToStaticMarkup(<NotificationsContext.Provider value={{ openList: () => undefined, openPath: () => undefined }}><AccountActions {...account} /></NotificationsContext.Provider>);
+test("the bell renders only inside the signed-in shell, at the end of the page header (D1273)", () => {
+  expect(renderToStaticMarkup(<PageHeader title="Tasks" />)).not.toContain("app-notification-bell");
+  const markup = renderToStaticMarkup(<NotificationsContext.Provider value={{ openList: () => undefined, openPath: () => undefined }}><PageHeader title="Tasks" actions={<button>New</button>} /></NotificationsContext.Provider>);
   expect(markup).toContain('class="app-account-button app-notification-bell"');
   expect(markup).toContain('aria-label="Notifications"');
-  // Wave 37: Settings · bell · the person · Sign out, with Sign out the rightmost action.
-  const group = markup.match(/<div class="app-account" role="group" aria-label="Account">(.*?)<\/div>/)?.[1] ?? "";
-  const titles = [...group.matchAll(/<button[^>]*title="([^"]+)"/g)].map((match) => match[1]);
-  expect(titles).toEqual(["Settings", "Notifications", "Sign out"]);
-  expect(group.indexOf("app-notification-bell")).toBeLessThan(group.indexOf("app-home-user"));
+  // The page's own actions first, the bell last.
+  expect(markup.indexOf(">New</button>")).toBeLessThan(markup.indexOf("app-notification-bell"));
+  expect(markup).toMatch(/<span class="page-header-bell"><button[^>]*app-notification-bell/);
+  // No account row beside it (the account is in the sidebar).
+  expect(markup).not.toContain('title="Sign out"');
 });
 
-test("the notifications page shows its loading state, Back, and the account actions", () => {
+test("the notifications page shows its loading state, Back, and its header", () => {
   const markup = renderToStaticMarkup(<NotificationsApp {...account} onHome={() => undefined} onOpenPath={() => undefined} />);
   expect(markup).toContain("<strong>Notifications</strong>");
   expect(markup).toContain(">Back</button>");

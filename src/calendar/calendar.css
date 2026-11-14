@@ -1,7 +1,7 @@
 .app-card-calendar { background: linear-gradient(145deg, #202024, #131315); }
 
 .calendar-app { --cal-blue: #7aa7ff; --cal-green: #6fd39a; --cal-amber: #f5c15b; --cal-red: #f58c9b; --cal-violet: #b69cff; --cal-slate: #9aa3b2; }
-.calendar-content { width: min(1120px, calc(100vw - 40px)); margin: 0 auto; padding: 24px 0 calc(56px + env(safe-area-inset-bottom)); }
+.calendar-content { width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: 24px 0 calc(56px + env(safe-area-inset-bottom)); }
 .calendar-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px; }
 .calendar-view-switch { display: inline-flex; border: 1px solid #303035; border-radius: 12px; padding: 3px; background: #131315; }
 .calendar-view-switch button { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 9px; padding: 0 14px; background: transparent; color: #b7b7bd; font-size: .84rem; font-weight: 650; cursor: pointer; }
@@ -181,7 +181,7 @@
 .calendar-role-options { padding-top: 0; }
 
 @media (max-width: 760px) {
-  .calendar-content { width: calc(100vw - 32px); padding-top: 16px; }
+  .calendar-content { width: calc(100% - 32px); padding-top: 16px; }
   .calendar-toolbar { gap: 8px; }
   .calendar-view-switch { flex: 1; }
   .calendar-view-switch button { flex: 1; min-height: 44px; justify-content: center; padding: 0 8px; }

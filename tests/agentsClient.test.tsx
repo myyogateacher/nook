@@ -212,7 +212,7 @@ describe("history and shells (§13.3)", () => {
     expect(chat).toContain('className="chat-layout split-layout"');
     expect(chat).toContain('className="chat-list-pane split-pane"');
     expect(chat).toContain('className="chat-pane split-pane"');
-    expect(chat).toContain('<AppPageName name="Chat" />');
+    expect(chat).toContain('<PageHeader title="Chat" />');
     const css = read("chat/chat.css");
     expect(css).toContain(".chat-app:not(.chat-detail-open) .chat-pane { display: none; }");
     expect(css).toContain(".chat-app.chat-detail-open .chat-list-pane { display: none; }");

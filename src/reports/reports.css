@@ -35,7 +35,7 @@
  * using the full width. Under 1024 px the nav is a sheet opened from the folder button above the list.
  */
 .reports-layout { display: grid; grid-template-columns: 264px minmax(0, 1fr); align-items: start; }
-.reports-sidebar { position: sticky; top: 77px; height: calc(100dvh - 77px); overflow-y: auto; border-right: 1px solid var(--border); background: rgb(12 12 14 / 72%); padding: 14px 10px 24px; }
+.reports-sidebar { position: sticky; top: 52px; height: calc(100dvh - 52px); overflow-y: auto; border-right: 1px solid var(--border); background: rgb(12 12 14 / 72%); padding: 14px 10px 24px; }
 .reports-body.reports-main { width: 100%; max-width: none; margin: 0; padding: 22px clamp(20px, 3vw, 44px) calc(40px + env(safe-area-inset-bottom)); }
 .reports-folder-chip { display: none; }
 .reports-nav { display: grid; gap: 2px; }

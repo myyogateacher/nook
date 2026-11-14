@@ -1,5 +1,5 @@
 /* The Inbox (agent inbox §9). Phone first: one pane at a time below 761 px, list and proposal side by side above. */
-.inbox-layout { width: calc(100vw - 32px); margin: 0 auto; padding: 22px 0 calc(56px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
+.inbox-layout { width: calc(100% - 32px); margin: 0 auto; padding: 22px 0 calc(56px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
 .inbox-intro h1 { margin: 0 0 6px; color: #fafafa; font-size: clamp(1.8rem, 4.5vw, 2.6rem); letter-spacing: -.05em; line-height: 1.05; }
 .inbox-intro p { max-width: 520px; margin: 0; color: #9a9aa1; font-size: .9rem; line-height: 1.5; }
 
@@ -158,21 +158,9 @@ p.inbox-status { justify-self: start; margin: 8px 0 0; }
 .routine-confirm-scrim { z-index: 42; }
 .routine-confirm { z-index: 43; }
 
-/* The account-row Inbox button (D157) sits next to the bell. */
-.app-account-inbox { position: relative; }
-/*
- * One more 44 px button made phone headers wider than 390 px allows (see appShell.css for the Team
- * button). While the Inbox button is shown, app pages drop the brand mark and its already hidden
- * name (the Home button, each page's h1, and the document title name the app), and Home keeps its
- * mark but visually hides the word "Home", which stays available to assistive tech.
- */
-@media (max-width: 760px) {
-  .app-page-header:has(.app-account-inbox) .app-home-brand { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .app-home-header:has(.app-account-inbox) .brand-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-}
 
 @media (min-width: 761px) {
-  .inbox-layout { width: min(1180px, calc(100vw - 40px)); padding-top: clamp(28px, 5vh, 48px); grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 28px; align-items: start; }
+  .inbox-layout { width: min(1180px, calc(100% - 40px)); padding-top: clamp(28px, 5vh, 48px); grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 28px; align-items: start; }
   .inbox-detail-pane { position: sticky; top: 20px; }
   .inbox-back { display: none; }
   .inbox-detail { padding-bottom: 0; }

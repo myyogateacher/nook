@@ -6,7 +6,7 @@ test("the Files workspace renders its rail, list, and phone panels before data l
   const markup = renderToStaticMarkup(<FilesApp userId="u1" displayName="Ada Lovelace" navigate={() => undefined} flash={() => undefined} onHome={() => undefined} onSettings={() => undefined} onSignOut={() => undefined} />);
   expect(markup).toContain("<span class=\"brand-text\"><strong>Files</strong></span>");
   expect(markup).not.toContain("<small>Nook</small>");
-  for (const label of ["Home", "All files", "Shared with me", "Loading files…", "Select a file"]) expect(markup).toContain(label);
+  for (const label of ["All files", "Shared with me", "Loading files…", "Select a file"]) expect(markup).toContain(label);
   for (const label of ['aria-label="New folder"', 'aria-label="Filter files by name"', 'aria-label="Sort files: Newest modified"']) expect(markup).toContain(label);
   expect(markup).toContain('data-mobile-panel="folders"');
   expect(markup).toContain('aria-live="polite"');
@@ -18,10 +18,14 @@ test("the Files workspace renders its rail, list, and phone panels before data l
   expect(markup).not.toContain(">Upload</button>");
 });
 
-test("the Files rail footer offers Settings and Sign out; the Bin is Settings → Bin (Wave 38)", () => {
+test("the Files pane keeps its folders only: Home, Settings, and Sign out are the sidebar's (D1276)", async () => {
   const props = { userId: "u1", displayName: "Ada Lovelace", navigate: () => undefined, flash: () => undefined, onHome: () => undefined, onSettings: () => undefined, onSignOut: () => undefined };
-  const footer = (markup: string) => markup.match(/<footer class="sidebar-footer">(.*?)<\/footer>/)?.[1] ?? "";
-  const rendered = footer(renderToStaticMarkup(<FilesApp {...props} />));
-  expect([...rendered.matchAll(/<button class="([\w-]+)"/g)].map((match) => match[1])).toEqual(["footer-settings", "footer-signout"]);
-  expect(rendered).not.toContain("footer-bin");
+  const markup = renderToStaticMarkup(<FilesApp {...props} />);
+  expect(markup).not.toContain('<footer class="sidebar-footer">');
+  expect(markup).not.toContain("nav-home");
+  expect(markup).not.toContain("footer-bin");
+  expect(markup).not.toContain(">Sign out<");
+  // Uploads still ask before the sidebar leaves Files (C1).
+  const source = await Bun.file(new URL("../src/files/FilesApp.tsx", import.meta.url)).text();
+  expect(source).toContain("useShellLeaveGuard((leave) => { void leaveFiles(leave); });");
 });

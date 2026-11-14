@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import { ArrowDown, ArrowUp, CalendarClock, ChartColumn, Check, ChevronDown, Copy, Database, ExternalLink, EyeOff, Folder as FolderIcon, FolderInput, House, Inbox, ListFilter, ListMinus, ListOrdered, ListPlus, LoaderCircle, Pencil, Plus, RotateCcw, Search, Sparkles, Star, Trash2, TriangleAlert, Users } from "lucide-react";
-import { AccountActions, AppPageName } from "../AppShell";
+import { ArrowDown, ArrowUp, CalendarClock, ChartColumn, Check, ChevronDown, Copy, Database, ExternalLink, EyeOff, Folder as FolderIcon, FolderInput, Inbox, ListFilter, ListMinus, ListOrdered, ListPlus, LoaderCircle, Pencil, Plus, RotateCcw, Search, Star, Trash2, TriangleAlert, Users } from "lucide-react";
+import { PageHeader } from "../shell/PageHeader";
 import { appName } from "../appName";
 import { notifyBinned, onBinRestored } from "../bin/binUndo";
 import { ModalDialog } from "../files/Dialog";
@@ -497,11 +497,7 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
     : view === "favorites" ? "No favorites yet" : view === "shared" ? "Nothing is shared with you yet" : view === "unfiled" ? "Every report is in a folder" : currentFolder ? "This folder is empty"
     : currentList ? (currentList.hidden ? "No report here you can open" : "This list is empty") : "No reports yet";
   return <main className="app-page reports-app">
-    <header className="app-page-header">
-      <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Reports</strong></span></span><AppPageName name="Reports" />
-      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
-    </header>
+    <PageHeader title="Reports" />
     <ReadOnlyBanner />
     <div className="reports-layout">
       <aside className="reports-sidebar" aria-label="Folders">{nav(false)}</aside>

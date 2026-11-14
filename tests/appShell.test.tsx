@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AccountActions } from "../src/AppShell";
 import { WORKSPACE_MODULE_IDS } from "../shared/workspaceModules";
 // A shipped workspace module adds its launcher tile and Today section (D832, D836); these checks are about the built-in ones.
 const builtIn = (id: string) => !(WORKSPACE_MODULE_IDS as readonly string[]).includes(id);
@@ -11,39 +10,21 @@ import { BinSection } from "../src/bin/BinSection";
 const account = { displayName: "Ada Lovelace", onSettings: () => undefined, onSignOut: () => undefined };
 const home = () => renderToStaticMarkup(<TodayHome {...account} userId="u1" onOpen={() => undefined} onOpenRoute={() => undefined} />);
 
-function accountButtons(markup: string) {
-  const group = markup.match(/<div class="app-account" role="group" aria-label="Account">(.*?)<\/div>/)?.[1] ?? "";
-  return [...group.matchAll(/<button[^>]*>/g)].map(([tag]) => tag);
-}
-
-test("Home offers Settings and Sign out in its header; no Bin or Team (Wave 38: they live in Settings)", () => {
+test("Home's header is the one-row page header: its name and the bell; the account is in the sidebar (D1273)", () => {
   const markup = home();
   // The header names the section only; the product name lives on the login page and the document title.
-  expect(markup).toContain('<span class="brand-text"><strong>Home</strong></span>');
+  expect(markup).toContain('<header class="app-page-header page-header"><div class="page-header-title"><strong>Home</strong></div>');
   expect(markup).not.toContain("<small>Nook</small>");
-  const buttons = accountButtons(markup);
-  expect(buttons).toHaveLength(2);
-  // Wave 38: Settings · (Inbox · bell) · the person · Sign out, the rightmost action.
-  expect(buttons[0]).toContain('aria-label="Open settings for Ada Lovelace"');
-  // Settings is a page now, not a dialog.
-  expect(buttons[0]).not.toContain("aria-haspopup");
-  expect(buttons[1]).toContain('title="Sign out"');
+  // No account row in any header (Settings, Inbox, the person, and Sign out are in the sidebar).
+  expect(markup).not.toContain("app-account");
+  expect(markup).not.toContain('title="Sign out"');
   expect(markup).not.toContain('title="Bin"');
   expect(markup).not.toContain('title="Team"');
-  const group = markup.match(/<div class="app-account" role="group" aria-label="Account">(.*?)<\/div>/)?.[1] ?? "";
-  expect(group.indexOf("app-home-user")).toBeGreaterThan(group.indexOf('title="Settings"'));
-  expect(group.indexOf("app-home-user")).toBeLessThan(group.indexOf('title="Sign out"'));
-  expect(markup).not.toContain("app-account-badge");
-});
-
-test("the account row takes no Bin or Team props any more (Wave 38)", () => {
-  const markup = renderToStaticMarkup(<AccountActions {...account} />);
-  expect(accountButtons(markup).map((tag) => /title="([^"]+)"/.exec(tag)?.[1])).toEqual(["Settings", "Sign out"]);
 });
 
 test("the Bin is a Settings section: no header of its own, its retention line, filters, and Empty Bin", () => {
   const markup = renderToStaticMarkup(<BinSection flash={() => undefined} />);
-  // The hub brings the header (Home, the account row) and the title; the section is its scroller.
+  // The hub brings the header and the title; the section is its scroller.
   expect(markup).toMatch(/^<section class="settings-content bin-section" aria-labelledby="settings-hub-title">/);
   expect(markup).not.toContain("app-page-header");
   expect(markup).not.toContain(">Home</button>");
@@ -101,11 +82,12 @@ test("Today rows link to their app routes and show due and storage copy", () => 
   expect(storageText({ usedBytes: 0, binnedBytes: 0, quotaBytes: 10 * 1024 ** 3, binnedItems: 0 }).detail).toBe("Nothing in the Bin");
 });
 
-test("account buttons have 44px hit areas on phones without growing the icon", async () => {
-  const css = await Bun.file(new URL("../src/appShell.css", import.meta.url)).text();
+test("the bell keeps a 44px hit area on phones without growing the icon", async () => {
+  const css = await Bun.file(new URL("../src/notifications/notifications.css", import.meta.url)).text();
   const phone = css.slice(css.indexOf("@media (max-width: 760px)"));
-  expect(phone).toMatch(/\.app-account-button \{[^}]*width: 44px;[^}]*height: 44px;/);
-  expect(css).toMatch(/\.app-account-button svg \{ width: 16px;/);
+  expect(phone).toMatch(/\.app-notification-bell \{ width: 44px; height: 44px; \}/);
+  const shell = await Bun.file(new URL("../src/appShell.css", import.meta.url)).text();
+  expect(shell).toMatch(/\.app-account-button svg \{ width: 16px;/);
 });
 
 test("hidden Today sections are kept per user and survive bad storage", async () => {

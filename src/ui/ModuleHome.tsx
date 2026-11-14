@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { House, Search, Sparkles, type LucideIcon } from "lucide-react";
-import { AccountActions, AppPageName } from "../AppShell";
+import { Search, type LucideIcon } from "lucide-react";
+import { PageHeader } from "../shell/PageHeader";
 import { ReadOnlyBanner } from "../team/roleAccess";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import { useModuleShortcuts } from "./moduleKeys";
@@ -58,21 +58,16 @@ export function ModuleHome({ icon: Icon, title, heading, displayName, onHome, on
   const headingId = `module-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-title`;
 
   return <main className={`app-page ui-module-home${className ? ` ${className}` : ""}`}>
-    <header className="app-page-header">
-      <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>{title}</strong></span></span><AppPageName name={title} />
-      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
-    </header>
+    {/* D1274: the module's title row is the page header (its icon, the h1, the primary action, ⋯);
+        Home, the app list, and the account are in the sidebar. */}
+    <PageHeader className="ui-module-header"
+      title={<><span className="ui-module-icon" aria-hidden="true"><Icon /></span><h1 id={headingId} className="ui-module-title" tabIndex={-1}>{heading ?? title}</h1></>}
+      actions={(primary || (menu && menu.length > 0)) && <div className="ui-module-actions">
+        {primary && <button type="button" className="action-button" onClick={primary.onClick} disabled={primary.disabled} aria-keyshortcuts={primary.shortcut === false ? undefined : "n"}>{PrimaryIcon && <PrimaryIcon aria-hidden="true" />}{primary.label}</button>}
+        {menu && menu.length > 0 && <MoreMenu label={`More ${title} actions`} items={menu} />}
+      </div>} />
     <ReadOnlyBanner />
-    <div className="ui-module-bar">
-      <div className="ui-module-title-row">
-        <span className="ui-module-icon" aria-hidden="true"><Icon /></span>
-        <h1 id={headingId} className="ui-module-title" tabIndex={-1}>{heading ?? title}</h1>
-        <div className="ui-module-actions">
-          {primary && <button type="button" className="action-button" onClick={primary.onClick} disabled={primary.disabled} aria-keyshortcuts={primary.shortcut === false ? undefined : "n"}>{PrimaryIcon && <PrimaryIcon aria-hidden="true" />}{primary.label}</button>}
-          {menu && menu.length > 0 && <MoreMenu label={`More ${title} actions`} items={menu} />}
-        </div>
-      </div>
+    {((tabs && tabs.length > 0) || filters || search) && <div className="ui-module-bar">
       {tabs && tabs.length > 0 && <nav aria-label={`${title} views`}>
         <ul ref={tabsRef} className="ui-module-tabs">
           {tabs.map((tab) => <li key={tab.id}>
@@ -92,7 +87,7 @@ export function ModuleHome({ icon: Icon, title, heading, displayName, onHome, on
           <kbd aria-hidden="true">/</kbd>
         </label>}
       </div>}
-    </div>
+    </div>}
     <div className={`ui-module-layout${detail ? " has-detail" : ""}`}>
       <section className="ui-module-content" aria-labelledby={headingId}>{children}</section>
       {detail && <aside className="ui-module-detail" aria-label="Details">{detail}</aside>}

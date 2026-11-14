@@ -20,11 +20,12 @@
 
 /* ── Module home (E.2) ─────────────────────────────────────────────────────────────────────────── */
 .ui-module-home { display: flex; flex-direction: column; }
-.ui-module-bar { display: flex; flex-direction: column; gap: 12px; padding: 22px clamp(20px, 5vw, 64px) 0; }
-.ui-module-title-row { min-height: 44px; display: flex; align-items: center; gap: 12px; }
-.ui-module-icon { width: 36px; height: 36px; flex: none; display: grid; place-items: center; border-radius: 10px; background: #2d281b; color: #f4ca67; }
+.ui-module-bar { display: flex; flex-direction: column; gap: 12px; padding: 10px clamp(20px, 5vw, 64px) 0; }
+/* D1274: the title row is the one-row page header (PageHeader), lined up with the bar under it. */
+.app-page-header.ui-module-header { padding-inline: clamp(20px, 5vw, 64px); }
+.ui-module-icon { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 10px; background: #2d281b; color: #f4ca67; }
 .ui-module-icon svg { width: 18px; height: 18px; }
-.ui-module-title { min-width: 0; flex: 1; margin: 0; overflow: hidden; color: #f4f4f5; font-size: 1.35rem; font-weight: 750; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
+.ui-module-title { min-width: 0; flex: 1; margin: 0; overflow: hidden; color: #f4f4f5; font-size: 1.1rem; font-weight: 750; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
 .ui-module-actions { display: flex; flex: none; align-items: center; gap: 6px; }
 .ui-module-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; border-bottom: 1px solid #232327; list-style: none; }
 .ui-module-tab { position: relative; min-height: 40px; display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 8px 8px 0 0; padding: 0 12px; background: transparent; color: #a1a1a8; font: inherit; font-size: .86rem; font-weight: 600; cursor: pointer; }
@@ -45,12 +46,14 @@
 .ui-module-detail { display: none; }
 @media (min-width: 1280px) {
   .ui-module-layout.has-detail { grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); }
-  .ui-module-layout.has-detail .ui-module-detail { display: block; min-width: 0; align-self: start; position: sticky; top: 96px; border: 1px solid #29292d; border-radius: 12px; padding: 16px; background: #111113; }
+  .ui-module-layout.has-detail .ui-module-detail { display: block; min-width: 0; align-self: start; position: sticky; top: 64px; border: 1px solid #29292d; border-radius: 12px; padding: 16px; background: #111113; }
 }
 @media (max-width: 760px) {
   /* Two rows, nothing hidden (§E.1.5): the title and its actions, then the tabs; filters and search below. */
-  .ui-module-bar { gap: 8px; padding: 14px 16px 0; }
-  .ui-module-title { font-size: 1.1rem; }
+  .ui-module-bar { gap: 8px; padding: 8px 16px 0; }
+  .app-page-header.ui-module-header { padding-inline: 6px 12px; }
+  .ui-module-header .ui-module-icon { display: none; }
+  .ui-module-title { font-size: 1.02rem; }
   .ui-module-actions .action-button { min-height: 44px; padding: 0 14px; }
   .ui-module-actions .icon-button { width: 44px; height: 44px; }
   .ui-module-tab { min-height: 44px; padding: 0 10px; }

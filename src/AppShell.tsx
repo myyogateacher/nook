@@ -1,25 +1,13 @@
-import { createContext, useContext, useEffect, useState } from "react";
-import { Avatar } from "./ui/Avatar";
-import { useSelfAvatar } from "./ui/selfAvatar";
-import { Inbox, LogOut, Settings } from "lucide-react";
+import { useEffect, useState } from "react";
 import "./appShell.css";
 import { binCountClaimed, listBin, onBinChanged, onBinCount } from "./bin/binApi";
 import { INBOX_CHANGED, pendingCount } from "./inbox/inboxApi";
-import { useDisabledModules, useModuleEnabled } from "./modules";
+import { useDisabledModules } from "./modules";
 import { readyWorkspaceModules } from "./workspaceModules";
-import { NotificationBell } from "./notifications/NotificationBell";
 import { NOTIFICATIONS_POLLED } from "./notifications/notificationsApi";
-import type { Role } from "./team/teamRoles";
 
 /**
- * The Inbox button in the account row, next to the bell (agent inbox D157), provided once by App.
- * Hidden for guests (they have no inbox), when the Inbox module is off, and on the Inbox itself.
- */
-export type InboxNav = { role: Role | undefined; openInbox: () => void; onInbox: boolean };
-export const InboxNavContext = createContext<InboxNav | null>(null);
-
-/**
- * The pending badge: a bounded count (at most 100, T51), fetched on mount, after inbox changes, and
+ * The Inbox's pending badge (the sidebar's Inbox row, D1270): a bounded count (at most 100, T51), fetched on mount, after inbox changes, and
  * whenever the bell refreshes (its poll and focus), so a new proposal shows without a reload.
  */
 export function useInboxCount(enabled: boolean) {
@@ -41,58 +29,9 @@ export function useInboxCount(enabled: boolean) {
 /** Window events that refresh the Inbox badge: inbox changes, the bell's refresh, and focus. */
 export const INBOX_COUNT_SIGNALS = [INBOX_CHANGED, NOTIFICATIONS_POLLED, "focus"] as const;
 
-function InboxButton({ nav }: { nav: InboxNav }) {
-  const count = useInboxCount(true);
-  const label = count > 0 ? `Inbox, ${count >= 100 ? "100 or more" : count} pending` : "Inbox";
-  return <button className="app-account-button app-account-inbox" onClick={nav.openInbox} aria-label={label} title="Inbox"><Inbox /><span className="app-account-label">Inbox</span>{count > 0 && <span className="app-account-badge" aria-hidden="true">{count > 99 ? "99+" : count}</span>}</button>;
-}
-
 /**
- * The Inbox row of a sidebar account footer (Notes, review L2): Notes renders its own shell, so on
- * a phone this row is its way into the Inbox. Same rules as the header button: hidden for guests
- * and when the Inbox module is off; the badge is the same bounded pending count.
- */
-export function SidebarInboxRow({ nav }: { nav: Pick<InboxNav, "role" | "openInbox"> }) {
-  const enabled = useModuleEnabled("inbox");
-  const shown = enabled && nav.role !== undefined && nav.role !== "guest";
-  const count = useInboxCount(shown);
-  if (!shown) return null;
-  const label = count > 0 ? `Inbox, ${count >= 100 ? "100 or more" : count} pending` : "Inbox";
-  return <button className="footer-bin footer-inbox" onClick={nav.openInbox} aria-label={label}><Inbox />Inbox{count > 0 && <span className="footer-badge" aria-hidden="true">{count > 99 ? "99+" : count}</span>}</button>;
-}
-
-type AccountProps = {
-  displayName: string;
-  /** Opens the Settings page; absent on the Settings page itself, which leaves the button out. */
-  onSettings?: () => void;
-  onSignOut: () => void;
-};
-
-/**
- * The account row of every app header. Wave 38 order, left to right: Settings · Inbox · the bell ·
- * the signed-in person (picture and name) · Sign out, so Sign out is always the rightmost action.
- * The Bin and Team live in Settings (its nav), so the row has no Bin or Team button. Phones keep the
- * same order with icon-only buttons (the name is hidden, the picture stays).
- */
-export function AccountActions({ displayName, onSettings, onSignOut }: AccountProps) {
-  const inbox = useContext(InboxNavContext);
-  const inboxEnabled = useModuleEnabled("inbox");
-  // Wave 35 (QA U4): the signed-in person's own picture beside their name (the letter without one).
-  const selfAvatar = useSelfAvatar();
-  return <div className="app-account" role="group" aria-label="Account">
-    {onSettings && <button className="app-account-button" onClick={onSettings} aria-label={`Open settings for ${displayName}`} title="Settings"><Settings /><span className="app-account-label">Settings</span></button>}
-    {inbox && inboxEnabled && inbox.role !== "guest" && !inbox.onInbox && <InboxButton nav={inbox} />}
-    <TopBarItems />
-    {/* The bell renders only inside the signed-in shell. */}
-    <NotificationBell />
-    <span className="app-home-user"><Avatar className="app-user-avatar" name={displayName} url={selfAvatar} /><span className="app-home-user-name">{displayName}</span></span>
-    <button className="app-account-button app-account-signout" onClick={onSignOut} title="Sign out"><LogOut /><span className="app-account-label">Sign out</span></button>
-  </div>;
-}
-
-/**
- * Workspace modules' header items (D833, §B.1: Time's running timer), before the bell, for the
- * ready modules that are on. Nothing while none registers one, so headers are unchanged.
+ * Workspace modules' header items (D833, §B.1: Time's running timer), in the sidebar's footer since
+ * D1270, for the ready modules that are on. Nothing while none registers one.
  */
 export function TopBarItems() {
   const disabled = useDisabledModules();
@@ -128,24 +67,4 @@ export function useBinCount(enabled = true) {
     return () => { live = false; stop(); stopReports(); };
   }, [enabled]);
   return binCount;
-}
-
-/**
- * The page name shown on phones, where the header's brand name is visually hidden to fit the
- * account buttons (F2). A compact eyebrow on its own header line; decorative, since the header's
- * brand text (or each page's h1) already names the app for assistive tech.
- */
-export function AppPageName({ name }: { name: string }) {
-  return <span className="app-page-name" aria-hidden="true">{name}</span>;
-}
-
-/**
- * The Inbox button for headers that do not use AccountActions (Files), with the same rules: hidden
- * for guests, when the Inbox module is off, and on the Inbox itself (QA note 3).
- */
-export function HeaderInboxButton() {
-  const inbox = useContext(InboxNavContext);
-  const inboxEnabled = useModuleEnabled("inbox");
-  if (!inbox || !inboxEnabled || inbox.role === "guest" || inbox.onInbox) return null;
-  return <InboxButton nav={inbox} />;
 }

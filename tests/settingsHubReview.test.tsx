@@ -98,17 +98,16 @@ describe("the phone back arrow (review)", () => {
 });
 
 describe("the leave guard's reach (review)", () => {
-  test("the hub guards Home, Sign out, and (fixed, review M1) Inbox and the bell through hub-scoped contexts", () => {
+  test("the hub guards the sidebar's moves, Sign out, and (fixed, review M1) the bell (D1270)", () => {
     const app = read("App.tsx");
-    // Wave 38: no Bin button in the account row (the Bin is a hub entry, behind the same guard as every entry).
-    expect(app).toContain("<AccountActions displayName={session.user.displayName} onSignOut={() => guardLeave(onSignOut)} />");
-    // The app-wide contexts stay as they were; inside the hub they are replaced by guarded ones.
-    expect(app).toContain('const inboxNav = { role: session.user.role, openInbox: () => { void openApp("inbox"); }, onInbox: shownApp === "inbox" };');
-    expect(app).toContain("const hubInboxNav = useMemo(() => inboxNav && { ...inboxNav, openInbox: () => guardLeave(inboxNav.openInbox) }, [guardLeave, inboxNav]);");
+    // The sidebar (Home, Inbox, the apps, Sign out) asks the hub's guard through leaveGuardRef first.
+    expect(app).toContain("guard={(leave) => { const hub = hubLeaveGuardRef.current; if (hub) hub(leave); else leave(); }}");
+    expect(app).toContain("leaveGuardRef={hubLeaveGuardRef}");
+    expect(read("shell/AppFrame.tsx")).toContain("if (app) app(page); else page();");
+    // The app-wide bell context stays as it was; inside the hub it is replaced by a guarded one.
     expect(app).toContain("openList: () => guardLeave(notificationsNav.openList), openPath: (path: string) => guardLeave(() => notificationsNav.openPath(path))");
-    expect(app).toContain("<InboxNavContext.Provider value={hubInboxNav}><NotificationsContext.Provider value={hubNotificationsNav}>");
-    // The Inbox button and the bell read those contexts, so the hub's header gets the guarded ones.
-    expect(read("AppShell.tsx")).toContain("onClick={nav.openInbox}");
+    expect(app).toContain("<NotificationsContext.Provider value={hubNotificationsNav}><HubBeforeLeaveContext.Provider value={registerBeforeLeave}>");
+    // The bell reads that context, so the hub's header gets the guarded one.
     expect(read("notifications/NotificationBell.tsx")).toContain("const context = useNotificationsContext();");
   });
 });

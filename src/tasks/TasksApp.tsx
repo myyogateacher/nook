@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TaskNotify } from "./taskActions";
 import { notifier } from "../ui/notify";
-import { House, Sparkles } from "lucide-react";
-import { AccountActions, AppPageName } from "../AppShell";
+
+import { PageHeader } from "../shell/PageHeader";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { readHistoryDepth } from "../appShellNavigation";
 import { popStateClosedDialog } from "../historyDialogs";
@@ -225,11 +225,7 @@ export function TasksApp({ userId, displayName, navigate, onHome, onSettings, on
   const followCard = useCallback((boardId: string, cardId: string) => go(tasksRoute(boardId, cardId), true), [go]);
 
   return <main data-read-only={readOnly ? "true" : undefined} className={`app-page tasks-app${route.boardId ? " tasks-board-open" : ""}`}>
-    <header className="app-page-header">
-      <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Tasks</strong></span></span><AppPageName name="Tasks" />
-      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
-    </header>
+    <PageHeader title="Tasks" />
     <ReadOnlyBanner />
     {pending && !route.boardId
       ? <p className="bin-loading" role="status">Opening {pending.kind === "card" ? pending.ref : "the board"}…</p>

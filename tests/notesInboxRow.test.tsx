@@ -1,37 +1,36 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { SidebarInboxRow } from "../src/AppShell";
-import { ModulesContext } from "../src/modules";
+import "../src/workspaceModules";
+import { AppSidebar } from "../src/shell/AppSidebar";
+import { buildNavTree } from "../src/shell/navModel";
+import type { Role } from "../src/team/teamRoles";
 
 /**
- * Review L2: Notes renders its own shell, outside the account row's InboxNavContext, so its sidebar
- * footer carries an Inbox row (with the pending badge): the phone's way into the Inbox. Wave 38: the
- * footer's Bin row is gone (the Bin is Settings → Bin); the Inbox row sits between Settings and Sign out.
+ * Review L2 (Notes' way into the Inbox), since D1270: Notes sits in the app frame like every other
+ * app, so its own sidebar footer (Settings, Inbox, Sign out) is gone and the global sidebar's Inbox
+ * row, with the same rules and pending badge, serves it.
  */
 
 const noop = () => undefined;
+const sidebar = (role: Role | undefined, disabledModules: Parameters<typeof buildNavTree>[0]["disabledModules"] = [], inboxCount = 0) => renderToStaticMarkup(<AppSidebar
+  tree={buildNavTree({ disabledModules, role, active: "notes" })} mode="expanded" displayName="Ada" inboxCount={inboxCount} unreadCount={0}
+  onNavigate={noop} onSearch={noop} onAccount={noop} onSignOut={noop} onToggle={noop} />);
 
-describe("Notes sidebar Inbox row (L2)", () => {
-  test("renders for members, viewers, and admins; not for guests or with the Inbox module off", () => {
-    for (const role of ["member", "viewer", "admin"] as const) {
-      const markup = renderToStaticMarkup(<SidebarInboxRow nav={{ role, openInbox: noop }} />);
-      expect(markup).toContain('class="footer-bin footer-inbox"');
-      expect(markup).toContain('aria-label="Inbox"');
-      expect(markup).toContain(">Inbox</button>");
-    }
-    expect(renderToStaticMarkup(<SidebarInboxRow nav={{ role: "guest", openInbox: noop }} />)).toBe("");
-    expect(renderToStaticMarkup(<SidebarInboxRow nav={{ role: undefined, openInbox: noop }} />)).toBe("");
-    expect(renderToStaticMarkup(<ModulesContext.Provider value={["inbox"]}><SidebarInboxRow nav={{ role: "member", openInbox: noop }} /></ModulesContext.Provider>)).toBe("");
+describe("the Inbox row on Notes (L2)", () => {
+  test("renders for members, viewers, and admins; not for guests, before the role is known, or with the Inbox module off", () => {
+    for (const role of ["member", "viewer", "admin"] as const) expect(sidebar(role)).toContain('href="/inbox"');
+    expect(sidebar("guest")).not.toContain('href="/inbox"');
+    expect(sidebar(undefined)).not.toContain('href="/inbox"');
+    expect(sidebar("member", ["inbox"])).not.toContain('href="/inbox"');
+    expect(sidebar("member", [], 4)).toContain('aria-label="Inbox, 4 pending"');
   });
 
-  test("the Notes sidebar footer places it between Settings and Sign out (no Bin row), and the row keeps a 44 px target", async () => {
+  test("Notes' own pane keeps only its folders: no brand Home button, no footer", async () => {
     const app = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
-    const footer = app.slice(app.indexOf('<footer className="sidebar-footer">'), app.indexOf("</footer>", app.indexOf('<footer className="sidebar-footer">')));
-    expect(footer).not.toContain('className="footer-bin"');
-    expect(footer).not.toContain("openBin");
-    expect(footer.indexOf("<SidebarInboxRow nav={inboxNav} />")).toBeGreaterThan(footer.indexOf("footer-settings"));
-    expect(footer.indexOf("footer-signout")).toBeGreaterThan(footer.indexOf("<SidebarInboxRow"));
-    const css = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
-    expect(css).toContain(".footer-bin, .footer-signout { min-height: 44px; }");
+    const pane = app.slice(app.indexOf('<aside className="folder-pane" id="note-folders">'), app.indexOf("</aside>", app.indexOf('<aside className="folder-pane" id="note-folders">')));
+    expect(pane).not.toContain('<footer className="sidebar-footer">');
+    expect(pane).not.toContain("nav-home");
+    expect(pane).not.toContain("SidebarInboxRow");
+    expect(pane).toContain("<ShellMenuButton />");
   });
 });

@@ -1,7 +1,7 @@
 import { FriendlyLinkGate } from "./FriendlyLinkGate";
 import { installCanonicalizer } from "./friendlyLinks";
 import { clearRouteNames } from "./routeNames";
-import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Archive,
   Bot,
@@ -9,7 +9,6 @@ import {
   Check,
   Copy,
   ChevronLeft,
-  House,
   ChevronRight,
   Clock3,
   Eye,
@@ -74,14 +73,17 @@ import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage
 import { ChangePasswordCard } from "./auth/ChangePassword";
 import { RecognisedDevices } from "./auth/RecognisedDevices";
 import { ProfilePictureCard } from "./settings/ProfilePicture";
-import { Avatar, SelfAvatar } from "./ui/Avatar";
+import { Avatar } from "./ui/Avatar";
 import { usePageScrollKeys, workspaceScroller } from "./ui/pageScrollKeys";
 import { setSelfAvatar } from "./ui/selfAvatar";
 import { AccountAuthContext, googleConfirmed, GoogleReauthNotice, reauthPassword, ReauthRouteToggle, useAccountAuthLoader, useReauthRoute } from "./auth/accountAuth";
 import { RecoveryCodesDialog } from "./auth/RecoveryCodesDialog";
 import { GoogleAccountCard, googleSettingsNotice, GoogleResetNoticeBanner, PasswordStateCard, type GoogleResetNotice } from "./auth/GoogleAccountCard";
 import { AuthDivider, currentReturnPath, googleOnlyHint, GoogleButton, googleErrorMessage, googleStartUrl, LINK_NOT_AUTHORITATIVE_PASSWORD, linkRequiredText, initialGoogleSettingsResult, initialGoogleSignInResult, initialGoogleTeamResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
-import { AccountActions, InboxNavContext, SidebarInboxRow, useBinCount } from "./AppShell";
+import { useBinCount } from "./AppShell";
+import { AppFrame } from "./shell/AppFrame";
+import { buildNavTree, type NavItem } from "./shell/navModel";
+import { ShellMenuButton } from "./shell/shellContext";
 import { repeatDelta, useLeaveGuard } from "./ui/useLeaveGuard";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext } from "./team/roleAccess";
@@ -762,20 +764,19 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
     : section === "about" ? <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About {appName()}</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>{appName()}</h4><p>{appName() === "Nook" ? "Built by Pankaj" : "Built on Nook by Pankaj"}</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>
     : securitySection;
 
-  // While setup is required there is nowhere else to go: Sign out is the only header action.
+  // While setup is required there is nowhere else to go (no sidebar): Sign out is the only header action.
   const accountActions = setupRequired
-    ? <div className="app-account" role="group" aria-label="Account"><button className="app-account-button" onClick={onSignOut} title="Sign out"><LogOut /><span className="app-account-label">Sign out</span></button></div>
-    : <AccountActions displayName={session.user.displayName} onSignOut={() => guardLeave(onSignOut)} />;
-  // Review M1: the header's Inbox button and the bell's items come from app-wide contexts; inside the
-  // hub they go through the same leave guard as Home and Sign out.
-  const inboxNav = useContext(InboxNavContext);
+    ? <div className="app-account" role="group" aria-label="Account"><button className="secondary-button app-account-signout" onClick={onSignOut} title="Sign out"><LogOut />Sign out</button></div>
+    : null;
+  // Review M1: the bell's items come from an app-wide context; inside the hub they go through the same
+  // leave guard as Sign out. The sidebar's moves (Home, Inbox, the apps) take the guard through
+  // `leaveGuardRef` (D1270).
   const notificationsNav = useContext(NotificationsContext);
-  const hubInboxNav = useMemo(() => inboxNav && { ...inboxNav, openInbox: () => guardLeave(inboxNav.openInbox) }, [guardLeave, inboxNav]);
   const hubNotificationsNav = useMemo(() => notificationsNav && { openList: () => guardLeave(notificationsNav.openList), openPath: (path: string) => guardLeave(() => notificationsNav.openPath(path)) }, [guardLeave, notificationsNav]);
 
   return (
     <AccountAuthContext.Provider value={account}>
-    <InboxNavContext.Provider value={hubInboxNav}><NotificationsContext.Provider value={hubNotificationsNav}><HubBeforeLeaveContext.Provider value={registerBeforeLeave}>
+    <NotificationsContext.Provider value={hubNotificationsNav}><HubBeforeLeaveContext.Provider value={registerBeforeLeave}>
     <SettingsHubShell
       displayName={session.user.displayName}
       avatarUrl={session.user.avatarUrl}
@@ -791,7 +792,7 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
       onHome={onHome ? () => guardLeave(onHome) : undefined}
       account={accountActions}
     >{content}</SettingsHubShell>
-    </HubBeforeLeaveContext.Provider></NotificationsContext.Provider></InboxNavContext.Provider>
+    </HubBeforeLeaveContext.Provider></NotificationsContext.Provider>
     {confirmElement}
     {codesDialog && recoveryCodes.length > 0 && <RecoveryCodesDialog codes={recoveryCodes} onClose={() => setCodesDialog(false)} onSaved={() => { setCodesDialog(false); onSecurityChanged(state); }} />}
     </AccountAuthContext.Provider>
@@ -1880,6 +1881,33 @@ export function App() {
     return openApp("home");
   }
 
+  // D1270: a sidebar item. Another app opens through openApp (Notes saves first); the app on screen
+  // goes back to its own start page (a board, a report, a module's sub-page) as a new entry, remounted
+  // so it reads the new location. Settings opens the hub; inside the hub its own nav moves.
+  const [appKey, setAppKey] = useState(0);
+  function openFromSidebar(item: NavItem) {
+    if (!session) return;
+    if (item.kind === "settings") {
+      if (activeApp !== "settings" && activeApp !== "team" && activeApp !== "bin") openSettings();
+      return;
+    }
+    if (item.section !== activeApp) { void openApp(item.section); return; }
+    if (item.section === "notes") return;
+    const home = routeForApp(item.section);
+    if (formatRoute(home) === locationUrl(window.location)) return;
+    navigate(home);
+    setAppKey((key) => key + 1);
+  }
+
+  // The sidebar's Search: Notes' search box (Ctrl/⌘+K there) until the phase-4 palette. Phones show the
+  // notes list first, where the box is.
+  async function openSearch() {
+    const wasNotes = activeApp === "notes";
+    if (!await openApp("notes")) return;
+    if (isMobileViewport() && (!wasNotes || mobilePanel !== "notes")) showMobilePanel("notes", wasNotes ? "push" : "replace");
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => { searchInputRef.current?.focus(); searchInputRef.current?.select(); }));
+  }
+
   // A link on Today opens its route as a new entry (depth + 1), so Back returns to Today. Notes
   // reloads its lists first so an item Today just listed is known to the Notes view.
   async function openTodayRoute(route: Route) {
@@ -2346,7 +2374,19 @@ export function App() {
 
   // Notifications off (D92): no provider, so every bell renders nothing and stops polling.
   const notificationsContext = isModuleEnabled(disabledModules, "notifications") ? { openList: () => { void openApp("notifications"); }, openPath: openNotificationPath } : null;
-  const inboxNav = { role: session.user.role, openInbox: () => { void openApp("inbox"); }, onInbox: shownApp === "inbox" };
+  // The global sidebar (docs/plan/LEFT_NAV.md, D1270): the launcher's apps, Home, Inbox, Notifications,
+  // Settings, and the account, around every signed-in page but the 2FA setup screen.
+  const navTree = buildNavTree({ disabledModules: preferredDisabled, features: session.features, role: session.user.role, active: shownApp });
+  const frame = (page: ReactNode) => <AppFrame
+    tree={navTree}
+    displayName={session.user.displayName}
+    avatarUrl={session.user.avatarUrl}
+    onNavigate={openFromSidebar}
+    onSearch={() => { void openSearch(); }}
+    onAccount={() => { if (!["settings", "team", "bin"].includes(activeApp)) openSettings(); }}
+    onSignOut={signOut}
+    guard={(leave) => { const hub = hubLeaveGuardRef.current; if (hub) hub(leave); else leave(); }}
+  >{page}</AppFrame>;
 
   // Wave 37: the Settings hub, one element for its account, Bin (Wave 38), and Team routes (moving
   // between them never remounts it). Its moves keep the app's section in step with the URL.
@@ -2374,8 +2414,8 @@ export function App() {
     {toastStatus}
   </RoleContext.Provider></ModulesContext.Provider>;
 
-  if (shownApp !== "notes") return <ModulesContext.Provider value={disabledModules}><RoleContext.Provider value={session.user.role}><NotificationsContext.Provider value={notificationsContext}><InboxNavContext.Provider value={inboxNav}>
-    {shownApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
+  if (shownApp !== "notes") return <ModulesContext.Provider value={disabledModules}><RoleContext.Provider value={session.user.role}><NotificationsContext.Provider value={notificationsContext}>
+    {frame(<Fragment key={appKey}>{shownApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
       : shownApp === "files" ? <FriendlyLinkGate app="files" listRoute={routeForApp("files")} navigate={navigate}><FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenWhiteboard={isModuleEnabled(disabledModules, "whiteboards") ? (id) => openNotificationPath(`/whiteboards/${id}`) : undefined} /></FriendlyLinkGate>
       : shownApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} />
       : shownApp === "collections" ? <FriendlyLinkGate app="collections" listRoute={routeForApp("collections")} navigate={navigate}><CollectionsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} /></FriendlyLinkGate>
@@ -2389,23 +2429,25 @@ export function App() {
       // The workspace modules (D833): one generic branch, the module's lazy app with the standard props.
       : isWorkspaceModuleId(shownApp) ? <WorkspaceModuleHost key={shownApp} id={shownApp} {...account} userId={session.user.id} role={session.user.role ?? "member"} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenPath={openInboxPath} />
       // Settings, Team, and the Bin (Wave 38) are the hub's routes.
-      : settingsPage(false)}
+      : settingsPage(false)}</Fragment>)}
     {toastStatus}
-  </InboxNavContext.Provider></NotificationsContext.Provider></RoleContext.Provider></ModulesContext.Provider>;
+  </NotificationsContext.Provider></RoleContext.Provider></ModulesContext.Provider>;
 
   // Viewers and guests read notes; create, edit, share, and delete controls are hidden (Wave 15).
   const canWrite = canWriteContent(session.user.role);
   return (
     <ModulesContext.Provider value={disabledModules}>
     <RoleContext.Provider value={session.user.role}>
-    <main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
+    <NotificationsContext.Provider value={notificationsContext}>
+    {frame(<main className={`workspace ${collapsed ? "nav-collapsed" : ""}`} data-mobile-panel={mobilePanel}>
       <aside className="folder-pane" id="note-folders">
+        {/* D1276: the global sidebar has Home, the apps, and the account, so Notes' own pane keeps only its folders. */}
         <header className="sidebar-header">
-          <button className="sidebar-brand sidebar-home-button" onClick={() => { void openHome(); }} aria-label={`Open ${appName()} home`} title="Back to Home"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Notes</strong></span></button>
+          <ShellMenuButton />
+          <span className="sidebar-brand"><span className="brand-text"><strong>Notes</strong></span></span>
           <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse folders sidebar" aria-controls="note-folders" aria-expanded={!collapsed} title="Collapse folders"><PanelLeftClose /></button>
         </header>
         <nav className="folder-nav" aria-label="Note folders">
-          <button className="nav-home" onClick={() => { void openHome(); }} title="Back to Home"><House /><span>Home</span></button>
           <button className={selectedFolder === "all" ? "active" : ""} onClick={() => { void selectFolder("all"); }}><Archive /><span>All notes</span><b>{notes.length}</b></button>
           <button className={selectedFolder === "shared" ? "active" : ""} onClick={() => { void selectFolder("shared"); }}><Users /><span>Shared with me</span><b>{notes.filter((item) => item.is_owner === 0).length}</b></button>
           <div className="nav-label"><span>Folders</span>{canWrite && <button onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button>}</div>
@@ -2431,14 +2473,6 @@ export function App() {
           </div>)}
           {!folders.length && <p className="nav-empty">Create a folder to organize your notes.</p>}
         </nav>
-        <footer className="sidebar-footer">
-          <button className="footer-settings" title={session.user.displayName} onClick={() => openSettings()} aria-label={`Open settings for ${session.user.displayName}`}>
-            <strong className="footer-identity"><SelfAvatar className="app-user-avatar" name={session.user.displayName} url={session.user.avatarUrl} /><span>{session.user.displayName}</span></strong>
-            <span><Settings />Settings</span>
-          </button>
-          <SidebarInboxRow nav={inboxNav} />
-          <button className="footer-signout" onClick={signOut}><LogOut />Sign out</button>
-        </footer>
       </aside>
 
       <section className="note-pane">
@@ -2610,7 +2644,8 @@ export function App() {
         <button className={mobilePanel === "notes" ? "active" : ""} onClick={() => showMobilePanel("notes")}><Archive />Notes</button>
         <button className={mobilePanel === "editor" ? "active" : ""} disabled={!note} onClick={() => showMobilePanel("editor")}><Sparkles />Editor</button>
       </nav>
-    </main>
+    </main>)}
+    </NotificationsContext.Provider>
     </RoleContext.Provider>
     </ModulesContext.Provider>
   );

@@ -240,3 +240,19 @@ Left for phase 2: the modules' `sections` in the sidebar (ModuleHome's tabs stay
 | D1284 | **Disclosure for every app with sections** (product owner, phase 2 review). In the expanded sidebar and the drawer, a chevron at the row's end (its own target; `aria-expanded`, `aria-controls`, "Show Contacts sections") opens or closes that app's sections without leaving the page, so Contacts › Insights is one click from Notes. The app on screen is always open (its chevron can close it until another app opens); apps opened by their chevron stay open, kept in `localStorage` `nook.sidebar.expanded`. ArrowRight on a closed chevron opens it, ArrowLeft closes it. The rail keeps its flyout and has no chevrons. Every section is a real link. |
 | D1285 | **Hover flyout in the expanded sidebar** (product owner). On a pointer that hovers precisely (`(hover: hover) and (pointer: fine)`), resting on an app whose sections are not already open in place shows the rail's flyout beside the sidebar's edge: it opens after 150 ms, closes 250 ms after the pointer leaves both the row and the flyout (an invisible bridge covers the gap, so a diagonal move keeps it), one at a time, never while the list scrolls, and Escape closes it. Keyboard focus (`:focus-visible`) on the app or its chevron opens it too. Touch and the phone drawer have no hover: the chevron opens sections in place. |
 | D1286 | **Phones: a one-row sibling strip** (§6.4 decided). Under the header, the module's sections are one row that scrolls sideways (never two rows), the current one centred, and the header reads "Contacts · Deals". It is an exception to §E.1.5's "no horizontal scroll" in the same spirit as the timesheet's day strip: the same entries are in the drawer, so nothing is reachable only by scrolling, and one row saves the 41 px a wrapped second row cost. Tasks' and the Inbox's segments stay as they are on phones (three fit). |
+
+Measured with headless Chrome after phase 2, as "content starts at y" (phase 1 → phase 2):
+
+| Page | 1440 | 390 |
+|---|---|---|
+| ModuleHome apps with filters (Forms, Goals, Contacts, Townhall) | 151 → 98 | 261 → 213 (one-row strip, filters and search) |
+| ModuleHome apps without filters (Standups, Bookings) | 151 → 98 | 161 → 161 |
+| Time | 103 → 62 | 109 → 109 |
+| Tasks home (Boards) | 334 → 124 | 377 → 194 |
+| Collections home | 340 → 194 (under the row search) | 379 → 196 |
+| Inbox | 76 → 52 | 80 → 56 |
+| A goal | one title, header holds Back | — |
+| Form editor (a form's own tabs stay) | 215 → 215 | 279 → 279 |
+| Tasks board | 168 → 168 | 278 → 278 |
+
+Left for phase 3: the Notes, Files, Reports, and Settings trees; a standup's Rounds / Insights / Settings under the open standup (needs its name in the sidebar); Chat's New chat and Audit.

@@ -22,6 +22,13 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 - The tab rows at the top of these apps are gone on a computer, so their pages start higher. On a phone the sections are one row you can swipe sideways, and the header says where you are ("Contacts · Deals").
 - The Tasks and Collections lists start with one short line instead of a large title, and the Inbox and a goal's page show their title once.
 
+**Folders and Settings in the sidebar**
+
+- Notes and Files show their folders in the sidebar, under the app: All, Shared with me, then your folders nested inside each other, with counts. The small arrow beside a folder hides or shows its subfolders, and Nook remembers your choice. Drag a note or a file onto a folder there to move it, and use the + beside Folders to make one. The separate folder column is gone on a computer, so notes and files get about 230 px more room; on a phone the Folders tab works as before.
+- Reports' folders, lists, Favorites, Unfiled, and Shared with me are in the sidebar too, with the same ⋯ menus and drag and drop. The reports list is 264 px wider. On a phone the folder button above the list opens the menu.
+- In Settings, the sidebar lists Settings' own sections (Account, Workspace with the Bin, Team) in place of the apps; **Back to apps** at its top shows the apps again. Each section is 264 px wider.
+- An open standup lists Rounds, Insights, and Settings under its name in the sidebar, and a form's header reads **Forms › Team feedback** instead of repeating the title on a second line.
+
 **Fixes: final QA of the modules**
 
 - **Open** on a goal, form, or townhall card in a note, and **Open in Bookings** after booking a colleague, open the page in the app again (they did nothing). Leaving a note saves it first; a module that is off shows its hint on Home.

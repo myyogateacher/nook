@@ -1,6 +1,6 @@
 # Collapsible left navigation: plan
 
-Status: phase 1 built (branch `feat/left-nav-phase1`, decisions D1270–D1279 in §7); phase 2 built (branch `feat/left-nav-phase2`, D1280–D1286). Phases 3–4 are proposals.
+Status: phase 1 built (branch `feat/left-nav-phase1`, decisions D1270–D1279 in §7); phase 2 built (branch `feat/left-nav-phase2`, D1280–D1286); phase 3 built (branch `feat/left-nav-phase3`, D1287–D1292). Phase 4 is a proposal.
 
 ## 1. Problem (measured at 1440×900 and 390×844, current build)
 
@@ -256,3 +256,27 @@ Measured with headless Chrome after phase 2, as "content starts at y" (phase 1 �
 | Tasks board | 168 → 168 | 278 → 278 |
 
 Left for phase 3: the Notes, Files, Reports, and Settings trees; a standup's Rounds / Insights / Settings under the open standup (needs its name in the sidebar); Chat's New chat and Audit.
+
+
+### Phase 3: the app panes fold into the sidebar (branch `feat/left-nav-phase3`, decisions D1287–D1292)
+
+Notes was first moved out of `App.tsx` into `src/notes/NotesApp.tsx` with no change (§5's risk): App keeps Notes' state and its moves (`leaveNotes`, the `mynotes:last:<user>` restore, ⌘K and `/`, the phone panels and their history), NotesApp renders them.
+
+| ID | Decision |
+|---|---|
+| D1287 | **The app draws its own tree in a sidebar slot.** The frame gives the app on screen one slot: under its row while its group is open (expanded sidebar, phone drawer), or inside its flyout (rail, or a closed group on hover). The app portals its tree there (`ShellSidebarPortal`, `useShellSidebarSlot`), so the state, drops, menus, and leave guards stay the app's own and nothing is duplicated in the shell; while no slot is shown nothing renders. Notes, Files, and Reports rows open like apps with sections while on screen (`NavItem.tree`, `TREE_APPS`). A portal's React events bubble through the app, not the nav, so the flyout's hover over the tree, the rail's tooltips (`data-sidebar-tip`), and the drawer's Escape, Tab trap, and close-on-pick are native listeners. Dragging a note or a file onto the app's rail icon opens its flyout as a drop target; it closes when the drag ends. The app row (or the footer's Settings) is `aria-current="true"` while the tree marks a row as the page, so one item is the page. |
+| D1288 | **Notes' and Files' folders** (`SidebarFolderTree`, model in `src/shell/folderTree.ts`): All notes / All files and Shared with me, then a Folders heading with a small + (New folder, for the roles that may), then the folders nested by `parent_id` in the app's order (Notes nested nothing before; a folder whose parent is not listed sits at the top; cycles are cut). Counts per folder; a chevron on folders with subfolders, closed ones kept in `localStorage` `nook.sidebar.folders.<app>`, and the folders above the current one reopened when it changes; indentation stops at four levels (deeper names truncate); the current row scrolls into view; the footer stays pinned and the list scrolls. Rows are real links; a click goes through the app (`selectFolder`: Notes saves or publishes the open note first). Everything the panes did carries over: note and file drops (highlight, refusal, move), Files' drop candidates and the Attachments lock, Shared folders, Notes' Share button (on hover). The panes had no folder rename or context menu, so there is none to move. `aside.folder-pane` is hidden from 761 px; on phones it stays the Folders panel of the bottom tab bar (task 7: kept rather than opening the drawer, since it is part of the Folders / Notes / Editor history model and has 46 px rows). The drawer shows the same tree without the Share buttons. |
+| D1289 | **Reports' nav** (`ReportFolderNav`, now with `hrefFor` so every view is a real link) in the slot with all its behaviour: report and folder drags (nest, reorder, refusal note), each folder's and list's ⋯ menu, New folder, New list. The 264 px `reports-sidebar` (and its sticky offset) is gone inside the frame, and from 761 px the folder chip and sheet that stood in for it under 1024 px; on phones the chip stays as the view's title and opens the global drawer, which carries the tree. A report's own page shows the tree read-only, linking to each view. |
+| D1290 | **Settings: the list swaps to the hub's sections.** On a Settings, Team, or Bin page the sidebar's list is "‹ Back to apps", a Settings label, and the groups `hubGroups(hubEntries(…))` gives the role (Account, Workspace with the Bin's count, Team with Members' blocked count), as the sidebar's own 30 px rows with icons; "Back to apps" shows the apps without leaving the page and the footer's Settings brings the sections back. Chosen over expanding the footer row upward, which would push the timer and account up and squeeze the list in an 800 px window. Links go through the hub's `onSelect`, so its leave guard (`hubLeaveGuardRef`, a key shown once, Team → Policies' unsaved changes) runs as before; app links take it through the frame. `nav.settings-hub-nav` is hidden from 761 px; phones keep it as the drill-in list, and the two-factor setup screen (no frame) keeps it. |
+| D1291 | **An open item's views and the module header.** `ModuleHome.tabsInSidebar` draws an item's views under its name in the slot: a standup's Rounds, Insights, Settings (Standups › Daily standup › Rounds). In the expanded sidebar the page's strip goes; the rail (its flyout comes and goes) and phones keep it, and their flyout and drawer list the views too. A form's Respond / Edit / Results stay on the page (§2.3). `ModuleHome.parent` puts the way back in the header ("Forms › Team feedback", a link), and the form page's breadcrumb row that repeated the title is gone. Chat keeps no sections (D1282): New chat and Audit are actions of its list pane, not places. |
+| D1292 | **Long trees and the rail.** The sidebar list scrolls with the footer pinned; on a page change it keeps the app's row in view (D1281) and the tree then scrolls its current row into view. The flyout is 272 px wide for a tree and scrolls within the window's height. |
+
+Measured with headless Chrome against phase 2 (same seed: 13 note/file folders three levels deep, 6 report folders, a list):
+
+| Page | 1440 (expanded) | 1100 (rail) |
+|---|---|---|
+| Notes: the editor beside the 320 px list | 650 → 880 px (content starts at x 790 → 560) | 494 → 724 px |
+| Files: the file list | 970 → 1200 px | 814 → 1044 px |
+| Reports: the list | 936 → 1200 px (x 504 → 240); rows start at y 177 as before | 780 → 1044 px |
+| Settings and Team: the section | 936 → 1200 px | 780 → 1044 px |
+| Form editor | the breadcrumb row is gone; Forms › Team feedback is the header | same |

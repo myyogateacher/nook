@@ -12,7 +12,7 @@ test("the note delete confirm is the app's dialog, not the browser's", async () 
   expect(markup).toContain("Move to Bin");
   expect(markup).toContain("Cancel");
   expect(noteDeleteMessage("")).toBe("Move “Untitled” to the Bin? You can restore it for 30 days.");
-  const source = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
+  const source = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text() + await Bun.file(new URL("../src/notes/NotesApp.tsx", import.meta.url)).text();
   expect(source).not.toContain("window.confirm(`Move “${title}” to the Bin?");
   expect(source).toMatch(/export function NoteDeleteConfirm[^\n]*\n\s+useHistoryDialogGuard\(true, onCancel\);/);
   expect(source).toContain("onClick={(event) => askDeleteNote(item.id, item.title, event.currentTarget)}");

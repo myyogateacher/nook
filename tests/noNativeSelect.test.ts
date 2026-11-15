@@ -107,7 +107,7 @@ test("the check catches every form of reaching the native dialogs, and nothing i
 });
 
 test("Notes → New folder and Add link use the app's name dialog as a history layer (A3)", async () => {
-  const app = await Bun.file(join(root, "App.tsx")).text();
+  const app = await Bun.file(join(root, "App.tsx")).text() + await Bun.file(join(root, "notes/NotesApp.tsx")).text();
   expect(app).toContain("useHistoryDialogGuard(newFolderOpen, closeNewFolder)");
   expect(app).toMatch(/newFolderOpen && <NameDialog[\s\S]*?validate=\{validateFolderName\}/);
   const editor = await Bun.file(join(root, "editor", "NoteEditor.tsx")).text();

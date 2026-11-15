@@ -247,7 +247,7 @@ describe("Access sheet rendering", () => {
   test("every share entry point opens the Access sheet; the old panels are gone; Notes guard their own Back", () => {
     const root = join(import.meta.dir, "..", "src");
     const hosts: Array<[string, string]> = [
-      ["App.tsx", 'kind="note"'], ["App.tsx", 'kind="folder"'], ["files/FilesApp.tsx", 'kind="document"'], ["tasks/BoardList.tsx", 'kind="board"'],
+      ["notes/NotesApp.tsx", 'kind="note"'], ["notes/NotesApp.tsx", 'kind="folder"'], ["files/FilesApp.tsx", 'kind="document"'], ["tasks/BoardList.tsx", 'kind="board"'],
       ["tasks/BoardView.tsx", 'kind="board"'], ["tasks/views/ViewPage.tsx", 'kind="task_view"'], ["collections/CollectionView.tsx", 'kind="collection"'],
       ["collections/CollectionList.tsx", 'kind="collection"'], ["calendar/CalendarApp.tsx", 'kind="calendar"']
     ];
@@ -256,7 +256,7 @@ describe("Access sheet rendering", () => {
       expect({ file, marker, found: source.includes(`<AccessSheet ${marker}`) }).toEqual({ file, marker, found: true });
       expect({ file, legacy: /SharePanel/.test(source) }).toEqual({ file, legacy: false });
     }
-    const app = readFileSync(join(root, "App.tsx"), "utf8");
+    const app = readFileSync(join(root, "App.tsx"), "utf8") + readFileSync(join(root, "notes/NotesApp.tsx"), "utf8");
     expect(app.match(/<AccessSheet kind="(note|folder)"[^>]*guardHistory/g)?.length).toBe(2);
     const sheet = readFileSync(join(root, "access", "AccessSheet.tsx"), "utf8");
     expect(sheet).toContain("useHistoryDialogGuard(guardHistory, onClose, { blocked: busy })");

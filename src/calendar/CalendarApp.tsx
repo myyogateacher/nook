@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CalendarDays, CalendarRange, House, Layers, List, Plus, Sparkles } from "lucide-react";
+import { CalendarDays, CalendarRange, Layers, List, Plus } from "lucide-react";
 import { ApiError } from "../api";
-import { AccountActions, AppPageName } from "../AppShell";
+import { PageHeader } from "../shell/PageHeader";
 import { readHistoryDepth } from "../appShellNavigation";
 import { createCalendarHistoryState, readCalendarHint, type CalendarHint } from "../calendarNavigation";
 import { agendaRoute, calendarBackAction, eventRoute, localDate, monthOf, monthRoute, resolveMonth, shiftMonth, type CalendarRoute } from "../calendarRoute";
@@ -657,11 +657,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   }
 
   return <main className={`app-page calendar-app calendar-view-${view}`}>
-    <header className="app-page-header">
-      <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><h1 className="app-page-title">Calendar</h1></span></span><AppPageName name="Calendar" />
-      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
-    </header>
+    <PageHeader title={<h1 className="app-page-title">Calendar</h1>} />
     <ReadOnlyBanner />
 
     <div className="calendar-content">

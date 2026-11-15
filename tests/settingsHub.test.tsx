@@ -186,7 +186,7 @@ describe("the page", () => {
   test("a page with a header, a grouped nav, and the section with the account identity and its title; no dialog", () => {
     const markup = shell(false);
     expect(markup).toContain('<main class="app-page settings-hub">');
-    expect(markup).toContain('<header class="app-page-header">');
+    expect(markup).toContain('<header class="app-page-header page-header"><div class="page-header-title"><strong>Settings</strong></div>');
     expect(markup).toContain('aria-label="Settings sections"');
     expect(markup).toContain('<h2 id="settings-hub-group-account">Account</h2>');
     expect(markup).toContain('<h2 id="settings-hub-group-team">Team</h2>');
@@ -366,12 +366,14 @@ describe("history at 390 px", () => {
 });
 
 describe("the leave guard (a key shown only once)", () => {
-  test("switching section, the back arrow, Home, sign-out, and Back/Forward all ask first", () => {
+  test("switching section, the back arrow, the sidebar (Home, the apps, sign-out), and Back/Forward all ask first", () => {
     const app = read("App.tsx");
     expect(app).toContain('guardLeave(() => go(entry.route), "section");');
     expect(app).toContain('onBack={() => guardLeave(backToList, "section")}');
     expect(app).toContain("onHome={onHome ? () => guardLeave(onHome) : undefined}");
-    expect(app).toContain("onSignOut={() => guardLeave(onSignOut)} />");
+    // D1270: the sidebar's moves and Sign out go through the hub's guard (leaveGuardRef) first.
+    expect(app).toContain("guard={(leave) => { const hub = hubLeaveGuardRef.current; if (hub) hub(leave); else leave(); }}");
+    expect(app).toContain("leaveGuardRef.current = guardLeave;");
     expect(app).toContain("useLeaveGuard(pending && !confirmOpen, (direction) => {");
     // Both keys hold the page: Settings → API keys and a Team integration's new key.
     expect(app).toContain("<KeysSettings notice={googleNoticeLine} onPendingChange={onMcpKeyPending}");

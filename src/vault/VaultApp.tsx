@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { ChevronLeft, Copy, Download, Eye, EyeOff, History, House, KeyRound, Lock, Pencil, Plus, RotateCcw, Search, Settings2, ShieldAlert, Sparkles, Trash2, TriangleAlert, Upload, UsersRound } from "lucide-react";
-import { AccountActions, AppPageName } from "../AppShell";
+import { ChevronLeft, Copy, Download, Eye, EyeOff, History, KeyRound, Lock, Pencil, Plus, RotateCcw, Search, Settings2, ShieldAlert, Trash2, TriangleAlert, Upload, UsersRound } from "lucide-react";
+import { PageHeader } from "../shell/PageHeader";
 import { readHistoryDepth } from "../appShellNavigation";
 import { PHONE_QUERY, useMediaQuery } from "../calendar/hooks";
 import { relativeTime } from "../files/format";
@@ -115,11 +115,7 @@ export function VaultApp({ displayName, role, navigate, flash, onHome, onSetting
     if (mainRef.current) mainRef.current.scrollTop = top;
   }, []);
 
-  const header = <header className="app-page-header">
-    <button className="app-home-button" onClick={onHome}><House />Home</button>
-    <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Vault</strong></span></span><AppPageName name="Vault" />
-    <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
-  </header>;
+  const header = <PageHeader title="Vault" />;
 
   let body: React.ReactNode;
   if (statusError) {

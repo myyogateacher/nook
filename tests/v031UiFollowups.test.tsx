@@ -76,16 +76,14 @@ describe("phone sizing at 390 px", () => {
     expect(phone).toContain(".collections-row-open .collection-controls { display: none; }");
   });
 
-  test("the app header's top row fits 390 px: four 44 px buttons and the picture beside Home", async () => {
-    const shell = await read("AppShell.tsx");
-    const actions = shell.slice(shell.indexOf("export function AccountActions"), shell.indexOf("</div>;", shell.indexOf("export function AccountActions")));
-    // Settings, Inbox, the bell, and Sign out (the Bin and Team buttons moved into Settings in Wave 38).
-    expect(actions.match(/<button |<InboxButton |<NotificationBell /g)?.length).toBe(4);
-    const css = await read("appShell.css");
-    expect(css).toContain(".app-account-button { width: 44px; min-width: 44px; height: 44px;");
-    // 390 − 2 × 18 px padding = 354 px: Home 44 + gap 8 + the brand mark 30 + gap 8 + (4 × 44 + the 28 px
-    // picture with 2 × 2 px margins + 4 × 4 px gaps = 224) = 314 px, so the bell never wraps.
-    expect(44 + 8 + 30 + 8 + (4 * 44 + 28 + 4 + 4 * 4)).toBeLessThanOrEqual(390 - 2 * 18);
+  test("the page header's row fits 390 px: the menu button, the title, and the page's actions; 44 px targets (D1273)", async () => {
+    const css = await read("shell/sidebar.css");
+    // The menu button is 44 px; the bell moves into the drawer on phones, so the row never wraps.
+    expect(css).toContain(".shell-menu-button { position: relative; display: none; flex: none; width: 44px; height: 44px;");
+    const phone = css.slice(css.indexOf("@media (max-width: 760px) {\n  .app-page-header.page-header"));
+    expect(phone).toContain(".page-header-bell { display: none; }");
+    expect(phone).toContain(".page-header-back { min-height: 44px; }");
+    expect(css).toContain("flex-wrap: nowrap;");
   });
 
   test("the whiteboard editor-load error uses the shared action buttons with room between", async () => {

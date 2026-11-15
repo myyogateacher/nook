@@ -4,7 +4,8 @@ import { MODULE_IDS as SERVER_MODULE_IDS } from "../server/moduleIds";
 import { WORKSPACE_MODULE_IDS } from "../shared/workspaceModules";
 // A workspace module joins these lists once its lane ships it (ready, D800); the checks below are about the rest.
 const builtIn = (id: string) => !(WORKSPACE_MODULE_IDS as readonly string[]).includes(id);
-import { AccountActions } from "../src/AppShell";
+import { AppSidebar } from "../src/shell/AppSidebar";
+import { buildNavTree } from "../src/shell/navModel";
 import { hubEntries } from "../src/settings/hubModel";
 import { ModulesSettings } from "../src/ModulesSettings";
 import {
@@ -140,10 +141,12 @@ describe("gating (client only)", () => {
   test("Wave 38: no header has a Bin or Team button, whatever the modules; Bin off removes Settings → Bin", () => {
     for (const disabled of [[], ["bin"], ["team"]] as ModuleId[][]) {
       expect(home(disabled)).not.toContain('title="Bin"');
-      const row = renderToStaticMarkup(<ModulesContext.Provider value={disabled}><AccountActions {...account} /></ModulesContext.Provider>);
-      expect(row).not.toContain('title="Bin"');
-      expect(row).not.toContain('title="Team"');
-      expect(row).toContain('title="Settings"');
+      // D1270: the account lives in the sidebar, whose footer has Settings and never the Bin or Team.
+      const row = renderToStaticMarkup(<ModulesContext.Provider value={disabled}><AppSidebar tree={buildNavTree({ disabledModules: disabled, role: "member", active: "home" })} mode="expanded" displayName="Ada"
+        inboxCount={0} unreadCount={0} onNavigate={() => undefined} onSearch={() => undefined} onAccount={() => undefined} onSignOut={() => undefined} onToggle={() => undefined} /></ModulesContext.Provider>);
+      expect(row).not.toContain(">Bin<");
+      expect(row).not.toContain(">Team<");
+      expect(row).toContain('href="/settings"');
     }
     expect(hubEntries("member", { teamModuleEnabled: true }).map((entry) => entry.id)).toContain("bin");
     expect(hubEntries("member", { teamModuleEnabled: true, binModuleEnabled: false }).map((entry) => entry.id)).not.toContain("bin");

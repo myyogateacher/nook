@@ -80,10 +80,11 @@ test("Whiteboards: the list scrolls as a page with a fixed header; the canvas fi
 test("F2: Home (Today) keeps its header fixed while its content scrolls, like the module pages", async () => {
   const today = await read("today/today.css");
   expect(bounded(rule(today, ".today-home"))).toBe(true);
-  const header = rule(today, ".today-home > .app-home-header") ?? "";
+  const header = rule(today, ".today-home > .app-page-header") ?? "";
   expect(header).toContain("position: sticky");
   expect(header).toContain("top: 0");
-  expect(await read("today/TodayHome.tsx")).toMatch(/<main className="app-home today-home">\s*<header className="app-home-header">/);
+  // D1273: Home's header is the one-row page header too.
+  expect(await read("today/TodayHome.tsx")).toMatch(/<main className="app-home today-home">\s*<PageHeader title="Home" \/>/);
 });
 
 test("F1: two-pane pages (Team and its sections, Inbox proposals) scroll each pane on its own on a computer, as one page on phones", async () => {
@@ -182,7 +183,7 @@ test("Wave 37: the Settings hub scrolls its nav and its section on their own on 
   expect(hub.replace(desktop, "")).not.toMatch(/\.(app-page\.)?settings-hub(-layout|-main)?\s*\{[^}]*overflow/);
   const shell = await read("settings/SettingsHub.tsx");
   expect(shell).toContain("<main className={`app-page settings-hub");
-  expect(shell).toContain(`<header className="app-page-header">`);
+  expect(shell).toContain(`<PageHeader title="Settings" actions={account} bell={onHome !== undefined} />`);
 });
 
 test("Wave 38: Settings → Bin scrolls inside the hub's section scroller, not as a page of its own", async () => {
@@ -196,4 +197,19 @@ test("Wave 38: Settings → Bin scrolls inside the hub's section scroller, not a
   const css = await read("bin/bin.css");
   expect(css).not.toContain("100vw");
   expect(css).not.toContain(".bin-app");
+});
+
+test("D1270: the app frame never scrolls; each page in it stays its own scroll container, sized to the window", async () => {
+  const frame = await read("shell/sidebar.css");
+  expect(rule(frame, ".app-frame")).toContain("height: 100dvh");
+  expect(rule(frame, ".app-frame")).toContain("overflow: hidden");
+  expect(rule(frame, ".app-frame-page")).toContain("overflow: hidden");
+  expect(rule(frame, ".app-frame-page > :is(.app-page, .app-home, .workspace)")).toContain("height: 100dvh");
+  // The sidebar's own list scrolls when the apps outgrow a short window; the frame does not.
+  expect(rule(frame, ".app-sidebar-scroll")).toMatch(/overflow-y: auto/);
+  // Page widths follow their column, not the window (the sidebar takes part of it).
+  for (const file of ["today/today.css", "calendar/calendar.css", "inbox/inbox.css", "team/team.css", "notifications/notifications.css", "tasks/tasks.css", "collections/collections.css"]) {
+    const sheet = await read(file);
+    expect({ file, inFlow100vw: /(-content|-layout) \{[^}]*100vw/.test(sheet) }).toEqual({ file, inFlow100vw: false });
+  }
 });

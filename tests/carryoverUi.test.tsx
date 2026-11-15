@@ -21,11 +21,11 @@ describe("C6: a muted calendar says Muted in words", () => {
   });
 });
 
-describe("C8 (superseded by Wave 38): Calendar's header has the same account row as the other modules, with no Bin button", () => {
-  test("CalendarApp passes the account row its Settings and Sign out; the Bin is Settings → Bin", async () => {
+describe("C8 (superseded by Wave 38 and D1273): Calendar's header is the same page header as the other modules, with no Bin button", () => {
+  test("CalendarApp's header is the shared page header (the account is in the sidebar); the Bin is Settings → Bin", async () => {
     const calendar = await read("calendar/CalendarApp.tsx");
     expect(calendar).not.toContain("useBinCount");
-    expect(calendar).toContain("<AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />");
+    expect(calendar).toContain('<PageHeader title={<h1 className="app-page-title">Calendar</h1>} />');
     const app = await read("App.tsx");
     expect(app).not.toMatch(/onBin=/);
   });

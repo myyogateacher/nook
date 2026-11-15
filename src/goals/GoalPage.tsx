@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { ArrowLeft, CheckSquare, CircleCheck, GitBranch, Link2, ListChecks, Lock, MessageSquareText, Pencil, Plus, RotateCcw, Share2, Square, Target, Trash2, TrendingUp, Zap } from "lucide-react";
-import { AccountActions, AppPageName } from "../AppShell";
+import { PageHeader } from "../shell/PageHeader";
 import { ReadOnlyBanner } from "../team/roleAccess";
 import { EmptyState } from "../ui/EmptyState";
 import { MoreMenu } from "../ui/MoreMenu";
@@ -102,11 +102,7 @@ export default function GoalPage({ segment, navigate, onOpenPath, userId, displa
   ];
 
   return <main className="app-page">
-    <header className="app-page-header">
-      <button className="app-home-button" onClick={back}><ArrowLeft />Goals</button>
-      <span className="app-home-brand"><span className="brand-dot"><Target /></span><span className="brand-text"><strong>Goals</strong></span></span><AppPageName name={goal.title} />
-      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
-    </header>
+    <PageHeader back={{ label: "Goals", onClick: back }} title={goal.title} />
     <ReadOnlyBanner />
     <div className="goals-page">
       <div className="goals-head">

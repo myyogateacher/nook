@@ -175,12 +175,13 @@ describe("history at 390 px: Home → Settings list → Bin → a row's sheet �
 });
 
 describe("the top bar (Wave 38)", () => {
-  test("no Bin or Team button anywhere: Settings · Inbox · bell · picture and name · Sign out", () => {
+  test("no Bin or Team button anywhere: the sidebar has Home · Inbox · Notifications · the apps · Settings · the account (D1270)", () => {
     const shell = read("AppShell.tsx");
     expect(shell).not.toContain("TeamNavContext");
     expect(shell).not.toMatch(/\bonBin\b/);
-    const row = shell.slice(shell.indexOf('<div className="app-account" role="group" aria-label="Account">'), shell.indexOf("</div>;", shell.indexOf('<div className="app-account"')));
-    const order = ["onSettings &&", "<InboxButton", "<NotificationBell", "app-home-user", "app-account-signout"].map((marker) => row.indexOf(marker));
+    const sidebar = read("shell/AppSidebar.tsx");
+    expect(sidebar).not.toMatch(/\bonBin\b/);
+    const order = ["tree.search &&", "tree.primary.map", "tree.apps.map", "<TopBarItems />", "link(tree.settings", "<AccountMenu "].map((marker) => sidebar.indexOf(marker));
     expect(order.every((position) => position >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     // No app hands its header a Bin, and neither sidebar footer (Notes, Files) has a Bin row.

@@ -1,5 +1,4 @@
 /* Bell (in every AccountActions group's row) */
-.app-home-header .app-account { margin-left: auto; }
 .app-notification-bell { position: relative; width: 40px; justify-content: center; padding: 0; }
 .app-notification-badge { position: absolute; top: 3px; right: 1px; min-width: 17px; height: 17px; display: grid; place-items: center; border-radius: 999px; padding: 0 4px; background: var(--yellow); color: #281f0b; font-size: .64rem; font-weight: 800; line-height: 1; }
 .notification-popover-scrim { position: fixed; z-index: 44; inset: 0; border: 0; background: transparent; }
@@ -24,7 +23,7 @@
 .notification-empty { margin: 0; padding: 18px 16px; color: #8d8d94; font-size: .86rem; line-height: 1.5; }
 
 /* /notifications */
-.notifications-content { width: min(720px, calc(100vw - 32px)); margin: 0 auto; padding: 20px 0 calc(48px + env(safe-area-inset-bottom)); }
+.notifications-content { width: min(720px, calc(100% - 32px)); margin: 0 auto; padding: 20px 0 calc(48px + env(safe-area-inset-bottom)); }
 .notifications-intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 0 14px; }
 .notifications-intro h1 { margin: 0; color: #fafafa; font-size: clamp(1.6rem, 4vw, 2.2rem); letter-spacing: -.045em; }
 .notifications-read-all { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; font-size: .84rem; }

@@ -32,13 +32,16 @@ installDom("http://nook.test/goals");
 const account = { displayName: "Ana Silva", onHome: () => undefined, onSettings: () => undefined, onSignOut: () => undefined };
 
 describe("ModuleHome and EmptyState", () => {
-  test("header, title row with one primary action, tabs as the current page, filters and search", () => {
+  test("the title row is the page header (D1274): the h1, one primary action, ⋯; tabs as the current page, filters and search", () => {
     const markup = renderToStaticMarkup(<ModuleHome icon={Target} title="Goals" heading="Q1 2027 goals" {...account} primary={{ label: "New goal", onClick: () => undefined }}
       tabs={[{ id: "all", label: "All", count: 3 }, { id: "mine", label: "Mine" }]} activeTab="mine" search={{ value: "", onChange: () => undefined, placeholder: "Search goals", label: "Search goals" }}
       menu={[{ id: "x", label: "Import", onSelect: () => undefined }]}><p>content</p></ModuleHome>);
     expect(markup).toContain('<main class="app-page ui-module-home">');
-    expect(markup).toContain('<span class="brand-text"><strong>Goals</strong></span>');
-    expect(markup).toContain(">Q1 2027 goals</h1>");
+    // One header row: the module's icon and h1, then its actions; no Home button or account row (the sidebar has them).
+    expect(markup).toMatch(/<header class="app-page-header page-header ui-module-header"><div class="page-header-title"><span class="ui-module-icon" aria-hidden="true">.*?<h1 id="module-goals-title" class="ui-module-title" tabindex="-1">Q1 2027 goals<\/h1><\/div><div class="page-header-actions"><div class="ui-module-actions">/);
+    expect(markup).not.toContain("ui-module-title-row");
+    expect(markup).not.toContain("app-home-button");
+    expect(markup).not.toContain("app-account");
     expect(markup).toContain('aria-keyshortcuts="n">New goal</button>');
     expect(markup).toMatch(/aria-current="page"[^>]*>Mine</);
     expect(markup).toContain('aria-label="More Goals actions"');

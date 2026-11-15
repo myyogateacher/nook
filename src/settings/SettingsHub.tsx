@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { ArchiveRestore, Bell, Blocks, BookOpen, Bot, ChevronLeft, ChevronRight, Cpu, Crown, Database, History, House, Info, KeyRound, LayoutGrid, LayoutTemplate, Link2, Mail, Scale, Share2, ShieldCheck, Sparkles, Trash2, Users, UsersRound, type LucideIcon } from "lucide-react";
-import { AppPageName } from "../AppShell";
+import { ArchiveRestore, Bell, Blocks, BookOpen, Bot, ChevronLeft, ChevronRight, Cpu, Crown, Database, History, Info, KeyRound, LayoutGrid, LayoutTemplate, Link2, Mail, Scale, Share2, ShieldCheck, Trash2, Users, UsersRound, type LucideIcon } from "lucide-react";
+import { PageHeader } from "../shell/PageHeader";
 import { useAppName } from "../appName";
 import { isMobileViewport } from "../mobileNavigation";
 import { SelfAvatar } from "../ui/Avatar";
@@ -46,7 +46,8 @@ type HubShellProps = {
   onSelect: (entry: HubEntry) => void;
   /** Absent while two-factor setup is required: the page is the only way on. */
   onHome?: () => void;
-  account: ReactNode;
+  /** The header's actions: Sign out while two-factor setup is required, otherwise nothing (the sidebar has the account). */
+  account?: ReactNode;
   children: ReactNode;
 };
 
@@ -77,11 +78,9 @@ export function SettingsHubShell({ displayName, avatarUrl, role, entries, select
     { id: "team", label: "Team", items: entries.filter((entry) => entry.group === "team") }
   ].filter((group) => group.items.length > 0);
   return <main className={`app-page settings-hub${listScreen ? " settings-hub-list" : ""}`}>
-    <header className="app-page-header">
-      {onHome && <button className="app-home-button" onClick={onHome}><House />Home</button>}
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Settings</strong></span></span><AppPageName name="Settings" />
-      {account}
-    </header>
+    {/* D1273: Home and the account live in the sidebar; while two-factor setup is required there is no
+        sidebar, and `account` is the page's only way out (Sign out). */}
+    <PageHeader title="Settings" actions={account} bell={onHome !== undefined} />
     <div className="settings-hub-layout">
       <nav className="settings-hub-nav" aria-label="Settings sections">
         <div className="settings-hub-identity">

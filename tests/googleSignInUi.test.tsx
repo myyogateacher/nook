@@ -226,14 +226,12 @@ describe("end-user QA fixes (U1–U11)", () => {
   });
 
   test("U4: the header, sidebar footers, Settings, and comments draw the shared Avatar", () => {
-    expect(readFileSync(join(src, "AppShell.tsx"), "utf8")).toContain('<Avatar className="app-user-avatar"');
+    // D1270: the sidebar's account row (every app, Notes and Files included) draws the live own picture.
+    const sidebar = readFileSync(join(src, "shell", "AppSidebar.tsx"), "utf8");
+    expect(sidebar).toContain('<Avatar className="app-user-avatar" name={displayName} url={selfAvatar} />');
+    expect(sidebar).toContain("const selfAvatar = useSelfAvatar(avatarUrl);");
     expect(readFileSync(join(src, "settings", "SettingsHub.tsx"), "utf8")).toContain('className="app-user-avatar settings-avatar"');
-    // U7: the Notes footer draws the live own picture (SelfAvatar wraps the shared Avatar).
-    expect(app()).toContain('<strong className="footer-identity"><SelfAvatar');
-    expect(readFileSync(join(src, "files", "FilesApp.tsx"), "utf8")).toContain('<strong className="footer-identity"><Avatar');
     expect(readFileSync(join(src, "tasks", "CardDialog.tsx"), "utf8")).toContain("url={comment.author_avatar_url}");
-    const shell = readFileSync(join(src, "appShell.css"), "utf8");
-    expect(shell.slice(shell.lastIndexOf("@media (max-width: 760px)"))).toContain(".app-home-user { display: inline-flex; margin: 0 2px; }");
   });
 
   test("U5–U7: the Google-only hint, Google messages beside the button, and a way out of the code step", () => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { CalendarClock, ChevronLeft, Copy, Crown, CircleStop, Cpu, Database, FileSearch, FileTerminal, FileText, GitCommitVertical, History, Link2, ListFilter, ListPlus, LoaderCircle, MessageSquarePlus, MessageSquare, Pencil, Play, Plus, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert, Settings2, Ruler } from "lucide-react";
-import { AccountActions } from "../AppShell";
+import { CalendarClock, Copy, Crown, CircleStop, Cpu, Database, FileSearch, FileTerminal, FileText, GitCommitVertical, History, Link2, ListFilter, ListPlus, LoaderCircle, MessageSquarePlus, MessageSquare, Pencil, Play, Plus, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert, Settings2, Ruler } from "lucide-react";
+import { PageHeader } from "../shell/PageHeader";
 import { appName } from "../appName";
 import { notifyBinned } from "../bin/binUndo";
 import { ModalDialog } from "../files/Dialog";
@@ -301,11 +301,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     </section>;
 
   return <main className="app-page reports-app report-page">
-    <header className="app-page-header">
-      <button className="app-home-button" onClick={onBack}><ChevronLeft />Reports</button>
-      <span className="app-home-brand report-page-brand"><span className="brand-text"><strong>{report?.title ?? "Report"}</strong></span></span>
-      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
-    </header>
+    <PageHeader className="report-page-header" back={{ label: "Reports", onClick: onBack }} title={report?.title ?? "Report"} />
     <ReadOnlyBanner />
     {loadError && <section className="reports-state" role="alert"><span className="reports-state-icon"><TriangleAlert /></span><h2>Could not open the report</h2><p>{loadError}</p><button className="secondary-button" onClick={() => { void load(); }}>Try again</button></section>}
     {!loadError && !report && <p className="reports-loading" role="status">Opening the report…</p>}

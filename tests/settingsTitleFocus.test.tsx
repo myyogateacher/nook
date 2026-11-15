@@ -36,7 +36,7 @@ describe("Settings title focus", () => {
     expect(heading().hasAttribute("data-script-focus")).toBe(true);
 
     // Focus really moving elsewhere clears it.
-    view.button("Home")!.focus();
+    view.container.querySelector<HTMLButtonElement>(".settings-hub-nav button")!.focus();
     expect(heading().hasAttribute("data-script-focus")).toBe(false);
   });
 

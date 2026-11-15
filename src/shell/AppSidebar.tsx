@@ -136,8 +136,13 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
   useLayoutEffect(() => {
     const element = flyoutRef.current;
     if (!flyout || !element) return;
-    const overflow = element.getBoundingClientRect().bottom - (window.innerHeight - 8);
-    if (overflow > 0) element.style.top = `${Math.max(8, flyout.top - overflow)}px`;
+    // Again whenever it grows: the app's tree (D1287) arrives a render after the flyout opens.
+    const place = () => { element.style.top = `${Math.max(8, Math.min(flyout.top, window.innerHeight - 8 - element.offsetHeight))}px`; };
+    place();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(place);
+    observer.observe(element);
+    return () => observer.disconnect();
   }, [flyout]);
 
   // D1287: the app's own tree (a portal from the app) lives in a slot under its row or in its flyout.

@@ -7,7 +7,7 @@ test("the board list starts with its loading state and a New board action", () =
   const markup = renderToStaticMarkup(<BoardList onOpen={() => undefined} notify={() => undefined} />);
   expect(markup).toContain("Loading boards…");
   expect(markup).toContain(">New board</button>");
-  expect(markup).toContain('<h1 id="tasks-title">Tasks</h1>');
+  expect(markup).toContain('<h1 id="tasks-title">Boards</h1>');
 });
 
 test("name validation mirrors the server rules", () => {

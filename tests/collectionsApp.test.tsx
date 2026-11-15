@@ -37,7 +37,7 @@ test("the collection list starts with its loading state and a New collection act
   const markup = renderToStaticMarkup(<CollectionList onOpen={() => undefined} onOpenRow={() => undefined} notify={() => undefined} />);
   expect(markup).toContain("Loading collections…");
   expect(markup).toContain(">New collection</button>");
-  expect(markup).toContain('<h1 id="collections-title">Collections</h1>');
+  expect(markup).toContain('<h1 id="collections-title">All collections</h1>');
 });
 
 test("owned collection rows offer Rename, Share, and Move to Bin; shared rows show the owner instead", () => {

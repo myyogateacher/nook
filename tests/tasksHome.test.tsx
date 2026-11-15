@@ -184,7 +184,7 @@ test("the segments mark the current one, and My work shows its state chips and l
 
 test("the home renders Boards with segments, and the views list starts loading", () => {
   const boards = renderToStaticMarkup(<TasksHome userId={me} home={undefined} onHome={noop} onOpenBoard={noop} onOpenBoardId={noop} onOpenCard={noop} onBack={noop} notify={noop} />);
-  expect(boards).toContain('<h1 id="tasks-title">Tasks</h1>');
+  expect(boards).toContain('<h1 id="tasks-title">Boards</h1>');
   expect(boards).toContain("Loading boards…");
   expect(boards).toContain('aria-label="Tasks sections"');
   const views = renderToStaticMarkup(<ViewsList onOpen={noop} onNew={noop} />);

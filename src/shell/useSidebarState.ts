@@ -35,6 +35,17 @@ export function readSidebarPreference(storage: Pick<Storage, "getItem"> | null |
 
 export function writeSidebarPreference(storage: Pick<Storage, "setItem"> | null | undefined, value: SidebarPreference) {
   try { storage?.setItem(SIDEBAR_STORAGE_KEY, value); } catch { /* private mode: the choice lasts this visit */ }
+  announceSidebarPrefs("local");
+}
+
+/**
+ * Phase 4 (D1295): the sidebar's choices changed in this tab. `local`: the person changed one here
+ * (it is sent to the server); `server`: the server's copy was applied. The sidebar re-reads them.
+ */
+export const SIDEBAR_PREFS_EVENT = "nook:sidebar-prefs";
+export type SidebarPrefsChange = { source: "local" | "server" };
+export function announceSidebarPrefs(source: SidebarPrefsChange["source"]) {
+  if (typeof window !== "undefined" && typeof CustomEvent === "function") window.dispatchEvent(new CustomEvent<SidebarPrefsChange>(SIDEBAR_PREFS_EVENT, { detail: { source } }));
 }
 
 /** The apps the person opened in the sidebar by their chevron (D1284), kept across reloads. */
@@ -49,6 +60,7 @@ export function readExpandedApps(storage: Pick<Storage, "getItem"> | null | unde
 }
 export function writeExpandedApps(storage: Pick<Storage, "setItem"> | null | undefined, ids: readonly string[]) {
   try { storage?.setItem(SIDEBAR_EXPANDED_KEY, JSON.stringify(ids.slice(0, 40))); } catch { /* private mode: this visit only */ }
+  announceSidebarPrefs("local");
 }
 
 /** ⌘\ on a Mac, Ctrl+\ elsewhere (either is accepted: a Mac keyboard on Linux sends Meta). */
@@ -91,8 +103,11 @@ export function useSidebarState(locked = false): SidebarState {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onStorage = (event: StorageEvent) => { if (event.key === SIDEBAR_STORAGE_KEY) setPreference(readSidebarPreference(localStore())); };
+    // …or the server's copy arrived (another device chose, D1295).
+    const onPrefs = () => setPreference(readSidebarPreference(localStore()));
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    window.addEventListener(SIDEBAR_PREFS_EVENT, onPrefs);
+    return () => { window.removeEventListener("storage", onStorage); window.removeEventListener(SIDEBAR_PREFS_EVENT, onPrefs); };
   }, []);
 
   // Leaving the phone layout closes the drawer.

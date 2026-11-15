@@ -58,12 +58,14 @@ test("Home, Inbox, Notifications, Search, and Settings follow their modules and 
   const member = buildNavTree({ disabledModules: [], features: SERVER_FEATURES.member, role: "member", active: "home" });
   expect(member.primary.map((item) => [item.id, item.href])).toEqual([["home", "/"], ["inbox", "/inbox"], ["notifications", "/notifications"]]);
   expect(member.search?.href).toBe("/notes");
+  expect(member.notesSearch).toBe(true);
   expect(member.settings.href).toBe("/settings");
   const quiet = buildNavTree({ disabledModules: ["inbox", "notifications", "search"], features: SERVER_FEATURES.member, role: "member", active: "home" });
   expect(quiet.primary.map((item) => item.id)).toEqual(["home"]);
-  expect(quiet.search).toBeNull();
-  // Search is Notes' search box until the palette: no Notes, no Search row.
-  expect(buildNavTree({ disabledModules: ["notes"], role: "member", active: "home" }).search).toBeNull();
+  // Phase 4 (D1293): Search opens the ⌘K palette, so it stays; only "Search notes" needs Notes and Search.
+  expect(quiet.search?.kind).toBe("search");
+  expect(quiet.notesSearch).toBe(false);
+  expect(buildNavTree({ disabledModules: ["notes"], role: "member", active: "home" }).notesSearch).toBe(false);
   // Before /api/auth/me answers the role is unknown: no Inbox yet.
   expect(buildNavTree({ disabledModules: [], role: undefined, active: "home" }).primary.map((item) => item.id)).toEqual(["home", "notifications"]);
 });

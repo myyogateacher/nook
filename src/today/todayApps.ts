@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import { isModuleEnabled, MODULES, type LauncherSection, type ModuleId } from "../modules";
+import { arrangeApps, type AppsLayout } from "../shell/sidebarPrefs";
 
 export type TodayApp = { section: LauncherSection; label: string; href: string; icon: LucideIcon; module: ModuleId };
 
@@ -14,3 +15,9 @@ export const TODAY_APPS: TodayApp[] = MODULES.flatMap((module) => module.launche
 
 /** The launcher tiles of modules that are on. */
 export const enabledTodayApps = (disabled: readonly ModuleId[]) => TODAY_APPS.filter((app) => isModuleEnabled(disabled, app.module));
+
+/** The tiles in the sidebar's order (left navigation phase 4, D1294): pinned apps first, then the rest. */
+export function arrangedTodayApps(apps: readonly TodayApp[], layout: AppsLayout | null | undefined): TodayApp[] {
+  const { pinned, rest } = arrangeApps(apps, layout, (app) => app.section);
+  return [...pinned, ...rest];
+}

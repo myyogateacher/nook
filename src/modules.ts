@@ -3,6 +3,7 @@ import { Archive, Bell, CalendarDays, ChartColumn, FileText, Inbox, KanbanSquare
 import type { AppSection } from "./appShellNavigation";
 import { workspaceModules, type WorkspaceModuleId } from "./workspaceModules";
 import { WORKSPACE_MODULE_IDS } from "../shared/workspaceModules";
+import { cleanSidebarLayout, type SidebarLayout } from "../shared/sidebar";
 
 /**
  * The module registry (D92, docs/plan/WAVE_13_TASK_CARD_UX.md §4.8). Settings → Modules lists these,
@@ -200,7 +201,8 @@ export function hiddenTodaySections(disabled: readonly ModuleId[]): string[] {
 /** The one-line hint after a route of a hidden module was replaced with Home. */
 export const moduleOffHint = (id: ModuleId) => `${moduleDef(id).label} is turned off. Turn it on in Settings → Modules.`;
 
-export type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: string | null };
+/** `sidebar`: the sidebar's saved layout (left navigation phase 4, D1295), absent while never saved. */
+export type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: string | null; sidebar?: SidebarLayout };
 export const DEFAULT_PREFERENCES: Preferences = { disabledModules: [], revision: 0, updatedAt: null };
 
 /** Reads a server `preferences` value defensively; anything malformed means every module is on. */
@@ -208,7 +210,8 @@ export function parsePreferences(value: unknown): Preferences {
   if (!value || typeof value !== "object") return DEFAULT_PREFERENCES;
   const raw = value as Record<string, unknown>;
   const revision = typeof raw.revision === "number" && Number.isInteger(raw.revision) && raw.revision >= 0 ? raw.revision : 0;
-  return { disabledModules: normalizeDisabledModules(raw.disabledModules), revision, updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null };
+  const sidebar = cleanSidebarLayout(raw.sidebar);
+  return { disabledModules: normalizeDisabledModules(raw.disabledModules), revision, updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null, ...(sidebar ? { sidebar } : {}) };
 }
 
 /** The disabled modules of the signed-in user. Outside a provider every module is on. */

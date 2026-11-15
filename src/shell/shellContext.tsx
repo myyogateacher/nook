@@ -4,6 +4,7 @@ import { Menu } from "lucide-react";
 import { NOTIFICATIONS_CHANGED } from "../notifications/NotificationBell";
 import { listNotifications, NOTIFICATIONS_POLLED } from "../notifications/notificationsApi";
 import type { SidebarMode } from "./useSidebarState";
+import type { AppsLayout } from "./sidebarPrefs";
 
 /** Runs `leave` now, or after the page on screen has agreed to be left (uploads running, unsaved edits). */
 export type LeaveGuard = (leave: () => void) => void;
@@ -25,7 +26,14 @@ export type ShellValue = {
    */
   sidebarSlot: HTMLElement | null;
   closeDrawer: () => void;
+  /** Phase 4 (D1294): the person's app order and pins, for Home's phone tiles; null: the default. */
+  appsLayout?: AppsLayout | null;
+  /** Phase 4 (D1293): opens the ⌘K palette. */
+  openPalette?: () => void;
 };
+
+/** The person's app order and pins inside the frame (Home's phone tiles follow the sidebar, D1294). */
+export const useShellAppsLayout = () => useContext(ShellContext)?.appsLayout ?? null;
 
 /** The app frame around the page (docs/plan/LEFT_NAV.md §3); null outside it (tests, public pages). */
 export const ShellContext = createContext<ShellValue | null>(null);

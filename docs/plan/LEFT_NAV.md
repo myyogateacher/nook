@@ -250,7 +250,7 @@ Measured with headless Chrome after phase 2, as "content starts at y" (phase 1 �
 | Time | 103 → 62 | 109 → 109 |
 | Tasks home (Boards) | 334 → 124 | 377 → 194 |
 | Collections home | 340 → 194 (under the row search) | 379 → 196 |
-| Inbox | 76 → 52 | 80 → 56 |
+| Inbox (its 42 px h1 and 54 px segments gone on a computer) | intro line at ~100, list at ~130 | segments kept |
 | A goal | one title, header holds Back | — |
 | Form editor (a form's own tabs stay) | 215 → 215 | 279 → 279 |
 | Tasks board | 168 → 168 | 278 → 278 |

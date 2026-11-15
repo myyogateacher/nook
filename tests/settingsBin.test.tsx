@@ -181,7 +181,8 @@ describe("the top bar (Wave 38)", () => {
     expect(shell).not.toMatch(/\bonBin\b/);
     const sidebar = read("shell/AppSidebar.tsx");
     expect(sidebar).not.toMatch(/\bonBin\b/);
-    const order = ["tree.search &&", "tree.primary.map", "tree.apps.map", "<TopBarItems />", "link(tree.settings", "<AccountMenu "].map((marker) => sidebar.indexOf(marker));
+    // Phase 4 (D1294): pinned apps above the rest.
+    const order = ["tree.search &&", "tree.primary.map((item) => branch", "tree.pinned.map((item) => branch", "tree.apps.map((item) => branch", "<TopBarItems />", "link(tree.settings", "<AccountMenu "].map((marker) => sidebar.indexOf(marker));
     expect(order.every((position) => position >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     // No app hands its header a Bin, and neither sidebar footer (Notes, Files) has a Bin row.

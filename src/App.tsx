@@ -67,6 +67,9 @@ import { AppFrame } from "./shell/AppFrame";
 import { buildNavTree, type NavItem } from "./shell/navModel";
 import { announceShellRoute, splitHref, useLocationHref } from "./shell/locationSignal";
 import { useRecents } from "./shell/recents";
+import { PALETTE_RECENT_NOTES } from "./shell/paletteModel";
+import { useLocalLayout, useSidebarSync } from "./shell/sidebarPrefs";
+import { visibleQuickActions } from "./today/QuickActions";
 import { repeatDelta, useLeaveGuard } from "./ui/useLeaveGuard";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { RoleContext } from "./team/roleAccess";
@@ -117,7 +120,7 @@ import { useNoteSearch } from "./search/useNoteSearch";
 import { useWhiteboardSearch } from "./search/WhiteboardSearchResults";
 import { useFileSearch } from "./search/FileSearchResults";
 import { ModulesSettings } from "./ModulesSettings";
-import { hiddenEntryStep, hiddenModuleForApp, normalizeDisabledModules, recordPopDepth, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, routeGateModules, unavailableModules, unavailableText, type ModuleId, moduleDef } from "./modules";
+import { hiddenEntryStep, hiddenModuleForApp, MODULES, normalizeDisabledModules, recordPopDepth, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, routeGateModules, unavailableModules, unavailableText, type ModuleId, moduleDef } from "./modules";
 import { usePreferences, type PreferencesStatus } from "./usePreferences";
 import { isWorkspaceModuleId, workspaceHomeRoute, workspaceModule } from "./workspaceModules";
 import { WorkspaceModuleHost } from "./workspaceModules/WorkspaceModuleHost";
@@ -971,6 +974,11 @@ export function App() {
   const unavailable = useMemo(() => unavailableModules(session?.features), [session?.features]);
   const preferredDisabled = modulePreferences.preferences.disabledModules;
   const disabledModules = useMemo(() => unavailable.length ? normalizeDisabledModules([...preferredDisabled, ...unavailable]) : preferredDisabled, [preferredDisabled, unavailable]);
+  // Left navigation phase 4 (D1294, D1295): the sidebar's layout. This browser's copy draws at once;
+  // the server's reconciles on sign-in and when the tab comes back, and changes are sent debounced.
+  const localLayout = useLocalLayout();
+  const appsLayout = useMemo(() => ({ order: localLayout.order, pinned: localLayout.pinned }), [localLayout.order, localLayout.pinned]);
+  useSidebarSync({ userId: session?.user.id ?? null, loaded: modulePreferences.loaded, server: modulePreferences.preferences.sidebar ?? null, save: modulePreferences.setSidebar });
   // TODO "Chat role message": the route gate lets /chat through when Chat is on but the role may
   // not chat, so the module says "Chat is off for your role"; tiles and launchers still hide it.
   const routeDisabled = useMemo(() => routeGateModules(disabledModules, preferredDisabled, session?.features), [disabledModules, preferredDisabled, session?.features]);
@@ -1815,13 +1823,24 @@ export function App() {
     announceShellRoute();
   }
 
-  // The sidebar's Search: Notes' search box (Ctrl/⌘+K there) until the phase-4 palette. Phones show the
-  // notes list first, where the box is.
-  async function openSearch() {
+  // The palette's "Search notes for …" (D1293): Notes' search box with the query. Notes saves first, as
+  // any app switch does; phones show the notes list first, where the box is.
+  async function openSearch(text?: string) {
     const wasNotes = activeApp === "notes";
     if (!await openApp("notes")) return;
     if (isMobileViewport() && (!wasNotes || mobilePanel !== "notes")) showMobilePanel("notes", wasNotes ? "push" : "replace");
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => { searchInputRef.current?.focus(); searchInputRef.current?.select(); }));
+    if (text !== undefined) setQuery(text);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => { searchInputRef.current?.focus(); if (text === undefined) searchInputRef.current?.select(); }));
+  }
+
+  // The palette's recent notes (D1293): a note in Notes opens through selectNote (the open note is
+  // saved or published first); from another app through openContentPath (Notes' loader, a new entry).
+  function openPalettePath(href: string) {
+    const path = inAppOpenPath(href);
+    if (!path) return;
+    const route = parseRoute(path);
+    if (activeApp === "notes" && route.app === "notes" && route.noteId) { void selectNote(route.noteId, "all"); return; }
+    void openContentPath(path);
   }
 
   // A link on Today opens its route as a new entry (depth + 1), so Back returns to Today. Notes
@@ -1984,15 +2003,15 @@ export function App() {
     document.getElementById(searchOptionId(activeSearchHit.id))?.scrollIntoView({ block: "nearest" });
   }, [activeSearchHit, activeSearchIndex]);
 
-  // Ctrl/⌘+K anywhere in Notes, or "/" outside a text field, focuses search.
+  // "/" outside a text field focuses Notes' search. ⌘K is the app-wide palette now (D1297), whose
+  // "Search notes for …" reaches the same box with the query.
   useEffect(() => {
     if (!session || activeApp !== "notes" || !searchEnabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
       const typing = Boolean(target && (target.isContentEditable || target.closest("input, textarea, select, [contenteditable='true']")));
-      const commandK = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k";
       const slash = event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey && !typing;
-      if (!commandK && !slash) return;
+      if (!slash || event.defaultPrevented) return;
       event.preventDefault();
       const focusSearch = () => {
         searchInputRef.current?.focus();
@@ -2292,16 +2311,35 @@ export function App() {
   const notificationsContext = isModuleEnabled(disabledModules, "notifications") ? { openList: () => { void openApp("notifications"); }, openPath: openNotificationPath } : null;
   // The global sidebar (docs/plan/LEFT_NAV.md, D1270): the launcher's apps, Home, Inbox, Notifications,
   // Settings, and the account, around every signed-in page but the 2FA setup screen.
-  const navTree = buildNavTree({ disabledModules: preferredDisabled, features: session.features, role: session.user.role, active: shownApp, location: splitHref(locationHref), recents: { tasks: recentTasks, collections: recentCollections } });
+  const navTree = buildNavTree({ disabledModules: preferredDisabled, features: session.features, role: session.user.role, active: shownApp, location: splitHref(locationHref), recents: { tasks: recentTasks, collections: recentCollections }, layout: appsLayout });
+  // Phase 4 (D1293): the palette's recent notes (the list this tab already loaded), the quick actions
+  // Home offers this role, and (D1294) every app the Customize sheet may list, off ones included:
+  // its Show switch is Settings → Modules' own (one hide mechanism).
+  const recentNotes = isModuleEnabled(disabledModules, "notes")
+    ? [...notes].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, PALETTE_RECENT_NOTES).map((item) => ({ id: item.id, name: item.title, href: formatRoute(notesRoute("all", item.id)) }))
+    : [];
+  const candidateTree = buildNavTree({ disabledModules: [], features: session.features, role: session.user.role, active: shownApp });
+  const moduleOfApp = (id: string) => MODULES.find((module) => module.launcher?.section === id)?.id ?? null;
+  const customizeApps = [...candidateTree.pinned, ...candidateTree.apps].map((item) => { const owner = moduleOfApp(item.id); return { id: item.id, label: item.label, icon: item.icon, shown: !owner || !preferredDisabled.includes(owner) }; });
+  const shownModule = isWorkspaceModuleId(shownApp) ? workspaceModule(shownApp) : null;
   const frame = (page: ReactNode) => <AppFrame
     tree={navTree}
     displayName={session.user.displayName}
     avatarUrl={session.user.avatarUrl}
     onNavigate={openFromSidebar}
-    onSearch={() => { void openSearch(); }}
     onAccount={() => { if (!["settings", "team", "bin"].includes(activeApp)) openSettings(); }}
     onSignOut={signOut}
     guard={(leave) => { const hub = hubLeaveGuardRef.current; if (hub) hub(leave); else leave(); }}
+    layout={appsLayout}
+    palette={{
+      recentNotes,
+      quickActions: visibleQuickActions(disabledModules, session.user.role),
+      moduleLabels: Object.fromEntries(MODULES.map((module) => [module.id, module.label])),
+      onOpenPath: openPalettePath,
+      onSearchNotes: (text) => { void openSearch(text); }
+    }}
+    shortcuts={{ module: shownModule ? { label: shownModule.label, shortcuts: shownModule.shortcuts } : null, notes: shownApp === "notes", time: isModuleEnabled(disabledModules, "time") }}
+    customize={{ apps: customizeApps, onShown: (id, shown) => { const owner = moduleOfApp(id); if (owner) modulePreferences.setModuleEnabled(owner, shown); } }}
   >{page}</AppFrame>;
 
   // Wave 37: the Settings hub, one element for its account, Bin (Wave 38), and Team routes (moving

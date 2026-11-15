@@ -26,7 +26,7 @@ describe("C8 (superseded by Wave 38 and D1273): Calendar's header is the same pa
     const calendar = await read("calendar/CalendarApp.tsx");
     expect(calendar).not.toContain("useBinCount");
     expect(calendar).toContain('<PageHeader title={<h1 className="app-page-title">Calendar</h1>} />');
-    const app = await read("App.tsx");
+    const app = await read("App.tsx") + await read("notes/NotesApp.tsx");
     expect(app).not.toMatch(/onBin=/);
   });
 });
@@ -37,7 +37,7 @@ describe("C11a: the change-password hint offers Forgot password? only when it ex
     expect(forgotCurrentHint(true)).toContain("Sign out and use “Forgot password?”.");
     expect(forgotCurrentHint(false)).not.toContain("Forgot password?");
     expect(forgotCurrentHint(false)).toContain("ask an admin");
-    const app = await read("App.tsx");
+    const app = await read("App.tsx") + await read("notes/NotesApp.tsx");
     expect(app).toContain("<ChangePasswordCard totpEnabled={state.enabled} passwordReset={appInfo.passwordReset === true} account={account} onChanged={reloadAccount} />");
     const card = await read("auth/ChangePassword.tsx");
     expect(card).toContain('<small className="password-change-hint">{viaPassword ? forgotCurrentHint(passwordReset) : "Use at least 12 characters."}</small>');
@@ -46,7 +46,7 @@ describe("C11a: the change-password hint offers Forgot password? only when it ex
 
 describe("C11c: Move to folder… for the open note, on phones and desktop", () => {
   test("the Files Move sheet, as a history layer, from the toolbar and the phone ⋯ menu", async () => {
-    const app = await read("App.tsx");
+    const app = await read("App.tsx") + await read("notes/NotesApp.tsx");
     expect(app).toContain("useHistoryDialogGuard(movingNote, closeMoveNote);");
     expect(app).toContain('aria-label="Move to folder…" title="Move to folder"><FolderInput /></button>');
     expect(app).toContain("<FolderInput />Move to folder…</button>");
@@ -89,7 +89,7 @@ describe("Q3 and Q4 (end-user QA, final carry-overs)", () => {
   });
 
   test("focus: Discard from the phone ⋯ menu returns to ⋯; a new API key takes focus", async () => {
-    const app = await read("App.tsx");
+    const app = await read("App.tsx") + await read("notes/NotesApp.tsx");
     expect(app).toContain('void discard(document.querySelector<HTMLElement>(".toolbar-actions .mobile-more"));');
     const keys = await read("keys/KeysSettings.tsx");
     expect(keys).toContain("window.requestAnimationFrame(() => window.requestAnimationFrame(() => tokenFieldRef.current?.focus()));");

@@ -26,7 +26,7 @@ describe("the Inbox row on Notes (L2)", () => {
   });
 
   test("Notes' own pane keeps only its folders: no brand Home button, no footer", async () => {
-    const app = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
+    const app = await Bun.file(new URL("../src/notes/NotesApp.tsx", import.meta.url)).text();
     const pane = app.slice(app.indexOf('<aside className="folder-pane" id="note-folders">'), app.indexOf("</aside>", app.indexOf('<aside className="folder-pane" id="note-folders">')));
     expect(pane).not.toContain('<footer className="sidebar-footer">');
     expect(pane).not.toContain("nav-home");

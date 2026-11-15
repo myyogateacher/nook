@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Menu } from "lucide-react";
 import { NOTIFICATIONS_CHANGED } from "../notifications/NotificationBell";
 import { listNotifications, NOTIFICATIONS_POLLED } from "../notifications/notificationsApi";
@@ -17,6 +18,13 @@ export type ShellValue = {
   leaveGuardRef: { current: LeaveGuard | null };
   /** Holds the sidebar in the rail while a full-screen surface needs the width; returns the release. */
   holdRail: () => () => void;
+  /**
+   * Phase 3 (D1287): where the app on screen draws its own tree in the sidebar (Notes' and Files'
+   * folders, Reports' folders and lists, the Settings hub's sections, a standup's views): the slot
+   * under its row (expanded, drawer) or in its flyout (rail). Null while no slot is shown.
+   */
+  sidebarSlot: HTMLElement | null;
+  closeDrawer: () => void;
 };
 
 /** The app frame around the page (docs/plan/LEFT_NAV.md §3); null outside it (tests, public pages). */
@@ -89,4 +97,17 @@ export function useUnreadNotifications(enabled: boolean) {
     };
   }, [enabled]);
   return count;
+}
+
+/** The sidebar slot for the app on screen (D1287); null outside the frame or while it is not shown. */
+export const useShellSidebarSlot = () => useShell()?.sidebarSlot ?? null;
+
+/**
+ * Draws the app's own tree in the sidebar slot (D1287), so its state and handlers stay the app's
+ * (Notes' save-on-leave, Files' drops, the Settings hub's leave guard). Nothing renders while the slot
+ * is hidden (the rail with its flyout closed, the app's group closed, a phone with the drawer shut).
+ */
+export function ShellSidebarPortal({ children }: { children: ReactNode }) {
+  const slot = useShellSidebarSlot();
+  return slot ? createPortal(children, slot) : null;
 }

@@ -1,12 +1,14 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { ArchiveRestore, Bell, Blocks, BookOpen, Bot, ChevronLeft, ChevronRight, Cpu, Crown, Database, History, Info, KeyRound, LayoutGrid, LayoutTemplate, Link2, Mail, Scale, Share2, ShieldCheck, Trash2, Users, UsersRound, type LucideIcon } from "lucide-react";
 import { PageHeader } from "../shell/PageHeader";
+import { ShellSidebarPortal } from "../shell/shellContext";
+import { formatRoute } from "../router";
 import { useAppName } from "../appName";
 import { isMobileViewport } from "../mobileNavigation";
 import { SelfAvatar } from "../ui/Avatar";
 import { focusFromScript } from "../ui/scriptFocus";
 import { ROLE_LABELS, type Role } from "../team/teamRoles";
-import { HUB_TITLE_ID, type HubEntry, type HubEntryId } from "./hubModel";
+import { HUB_TITLE_ID, hubGroups, type HubEntry, type HubEntryId, type HubGroup } from "./hubModel";
 import "./settingsHub.css";
 
 const ICONS: Record<HubEntryId, LucideIcon> = {
@@ -27,6 +29,37 @@ const hintsFor = (name: string): Record<HubEntryId, string> => ({
   "team-integrations": "Accounts for AI clients and scripts", "team-keys": "Every API key on this Nook", "team-policies": "Key lifetime and where keys work",
   "team-templates": "A role and groups for new people", "team-activity": "Who changed keys, groups, and access", "team-email": `What ${name} emailed, and how it went`
 });
+
+
+/**
+ * The hub's sections in the global sidebar (D1290): Account, Workspace (with the Bin and its count),
+ * and Team, the groups `hubEntries` gives this role, as the sidebar's own rows. Each is a real link;
+ * a plain click goes through the hub's `onSelect`, which asks its leave guard first (a key shown once,
+ * Team → Policies' unsaved changes). In the rail the rows are icons with tooltips, the badge on the icon.
+ */
+function SettingsSidebarNav({ groups, selected, onSelect }: { groups: readonly HubGroup[]; selected: HubEntryId | null; onSelect: (entry: HubEntry) => void }) {
+  return <nav className="app-sidebar-settings" aria-label="Settings sections">
+    {groups.map((group) => <div key={group.id} className="app-sidebar-settings-group" role="group" aria-labelledby={`app-sidebar-settings-${group.id}`}>
+      <p className="app-sidebar-heading" id={`app-sidebar-settings-${group.id}`}>{group.label}</p>
+      <ul className="app-sidebar-list">
+        {group.items.map((entry) => {
+          const Icon = ICONS[entry.id];
+          const current = entry.id === selected;
+          const badge = entry.badge ?? 0;
+          const noun = entry.badgeNoun ?? "item";
+          return <li key={entry.id}>
+            <a className={`app-sidebar-link${current ? " active" : ""}`} href={formatRoute(entry.route)} aria-current={current ? "page" : undefined} data-sidebar-tip={entry.label}
+              aria-label={badge > 0 ? `${entry.label}, ${badge} ${noun}${badge === 1 ? "" : "s"}` : undefined}
+              onClick={(event) => { if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); onSelect(entry); }}>
+              <Icon aria-hidden="true" /><span className="app-sidebar-label">{entry.label}</span>
+              {badge > 0 && <span className="app-sidebar-badge" aria-hidden="true">{badge > 99 ? "99+" : badge}</span>}
+            </a>
+          </li>;
+        })}
+      </ul>
+    </div>)}
+  </nav>;
+}
 
 type HubShellProps = {
   displayName: string;
@@ -72,12 +105,11 @@ export function SettingsHubShell({ displayName, avatarUrl, role, entries, select
     if (lost || (isMobileViewport() && !inSection)) focusFromScript(headingRef.current, { preventScroll: true });
   }, [listScreen, screenKey]);
   const roleLabel = role ? ROLE_LABELS[role] : null;
-  const groups = [
-    { id: "account", label: "Account", items: entries.filter((entry) => entry.group === "account") },
-    { id: "workspace", label: "Workspace", items: entries.filter((entry) => entry.group === "workspace") },
-    { id: "team", label: "Team", items: entries.filter((entry) => entry.group === "team") }
-  ].filter((group) => group.items.length > 0);
+  const groups = hubGroups(entries);
   return <main className={`app-page settings-hub${listScreen ? " settings-hub-list" : ""}`}>
+    {/* Phase 3 (D1290): inside the app frame the sections live in the global sidebar, in place of the
+        apps; the nav below stays for phones (the section list) and the two-factor setup screen. */}
+    <ShellSidebarPortal><SettingsSidebarNav groups={groups} selected={selected} onSelect={onSelect} /></ShellSidebarPortal>
     {/* D1273: Home and the account live in the sidebar; while two-factor setup is required there is no
         sidebar, and `account` is the page's only way out (Sign out). */}
     <PageHeader title="Settings" actions={account} bell={onHome !== undefined} />

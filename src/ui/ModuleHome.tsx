@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { Search, type LucideIcon } from "lucide-react";
+import { ChevronRight, Search, type LucideIcon } from "lucide-react";
 import { PageHeader } from "../shell/PageHeader";
+import { ShellSidebarPortal, useShell } from "../shell/shellContext";
 import { ReadOnlyBanner } from "../team/roleAccess";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import { useModuleShortcuts } from "./moduleKeys";
@@ -40,6 +41,14 @@ type ModuleHomeProps = {
   sections?: ModuleSections;
   /** One item's own views (a form's Respond / Edit / Results), a strip of tabs on every screen. */
   tabs?: readonly ModuleTab[];
+  /**
+   * Phase 3 (D1291): the item's views live in the global sidebar under the open item's name (a
+   * standup's Rounds / Insights / Settings): each tab's URL. On a computer the page's strip is then
+   * hidden; phones keep it.
+   */
+  tabsInSidebar?: { label: string; hrefFor: (id: string) => string };
+  /** Phase 3 (D1291): the header reads "Forms › Team feedback": the way back to the module's list. */
+  parent?: { label: string; href: string; onClick: () => void };
   activeTab?: string;
   onTab?: (id: string) => void;
   /** Filter chips (the row under the tabs, before the search). */
@@ -63,7 +72,11 @@ type ModuleHomeProps = {
  * nests under the app; on a computer they live there only, and on a phone they are one strip that
  * scrolls sideways, with the header reading "App · Section". `tabs` are one item's own views.
  */
-export function ModuleHome({ icon: Icon, title, heading, displayName, onHome, onSettings, onSignOut, primary, menu, sections, tabs, activeTab, onTab, filters, search, detail, children, className }: ModuleHomeProps) {
+export function ModuleHome({ icon: Icon, title, heading, displayName, onHome, onSettings, onSignOut, primary, menu, sections, tabs, tabsInSidebar, parent, activeTab, onTab, filters, search, detail, children, className }: ModuleHomeProps) {
+  // The item's views move to the expanded sidebar (D1291); the rail's flyout comes and goes, and
+  // phones' drawer is shut, so there the page keeps its strip (the flyout and drawer list them too).
+  const shell = useShell();
+  const tabsMoved = Boolean(tabsInSidebar && tabs && tabs.length > 0 && shell?.mode === "expanded");
   const searchRef = useRef<HTMLInputElement>(null);
   const tabsRef = useRef<HTMLUListElement>(null);
   const sectionsRef = useRef<HTMLUListElement>(null);
@@ -78,11 +91,26 @@ export function ModuleHome({ icon: Icon, title, heading, displayName, onHome, on
   const PrimaryIcon = primary?.icon;
   const headingId = `module-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-title`;
 
-  return <main className={`app-page ui-module-home${className ? ` ${className}` : ""}`}>
+  return <main className={`app-page ui-module-home${tabsMoved ? " ui-module-tabs-in-sidebar" : ""}${className ? ` ${className}` : ""}`}>
+    {tabsInSidebar && tabs && tabs.length > 0 && <ShellSidebarPortal>
+      <div className="app-sidebar-subgroup app-sidebar-item-views">
+        <p className="app-sidebar-subheading" id="app-sidebar-item-views" title={tabsInSidebar.label}>{tabsInSidebar.label}</p>
+        <ul className="app-sidebar-sublist" aria-labelledby="app-sidebar-item-views">
+          {tabs.map((tab) => <li key={tab.id}>
+            <a className={`app-sidebar-sublink${tab.id === activeTab ? " active" : ""}`} href={tabsInSidebar.hrefFor(tab.id)} aria-current={tab.id === activeTab ? "page" : undefined} data-sidebar-tip={tab.label}
+              onClick={(event) => { if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); onTab?.(tab.id); }}>
+              <span className="app-sidebar-label">{tab.label}</span>
+            </a>
+          </li>)}
+        </ul>
+      </div>
+    </ShellSidebarPortal>}
     {/* D1274: the module's title row is the page header (its icon, the h1, the primary action, ⋯);
         Home, the app list, and the account are in the sidebar. */}
     <PageHeader className="ui-module-header"
-      title={<><span className="ui-module-icon" aria-hidden="true"><Icon /></span><h1 id={headingId} className="ui-module-title" tabIndex={-1}>{heading ?? title}</h1>
+      title={<><span className="ui-module-icon" aria-hidden="true"><Icon /></span>
+        {parent && <><a className="ui-module-parent" href={parent.href} onClick={(event) => { if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); parent.onClick(); }}>{parent.label}</a><ChevronRight className="ui-module-parent-sep" aria-hidden="true" /></>}
+        <h1 id={headingId} className="ui-module-title" tabIndex={-1}>{heading ?? title}</h1>
         {/* Phones (§2.5): "Contacts · Deals", since the sections are in the drawer and the strip. */}
         {activeSection && heading === undefined && <span className="ui-module-crumb">· {activeSection.label}</span>}</>}
       actions={(primary || (menu && menu.length > 0)) && <div className="ui-module-actions">
@@ -90,7 +118,7 @@ export function ModuleHome({ icon: Icon, title, heading, displayName, onHome, on
         {menu && menu.length > 0 && <MoreMenu label={`More ${title} actions`} items={menu} />}
       </div>} />
     <ReadOnlyBanner />
-    {(sectionList.length > 0 || (tabs && tabs.length > 0) || filters || search) && <div className="ui-module-bar">
+    {(sectionList.length > 0 || (tabs && tabs.length > 0 && !tabsMoved) || filters || search) && <div className="ui-module-bar">
       {/* D1281: phones only (CSS); on a computer the sidebar lists them under the app. */}
       {sections && sectionList.length > 0 && <nav className="ui-module-sections" aria-label={`${title} sections`}>
         <ul ref={sectionsRef} className="ui-module-tabs ui-module-section-strip">
@@ -104,7 +132,7 @@ export function ModuleHome({ icon: Icon, title, heading, displayName, onHome, on
           })}
         </ul>
       </nav>}
-      {tabs && tabs.length > 0 && <nav aria-label={`${title} views`}>
+      {tabs && tabs.length > 0 && !tabsMoved && <nav className="ui-module-views" aria-label={`${title} views`}>
         <ul ref={tabsRef} className="ui-module-tabs">
           {tabs.map((tab) => <li key={tab.id}>
             <button type="button" className="ui-module-tab" aria-current={tab.id === activeTab ? "page" : undefined} onClick={() => onTab?.(tab.id)}>

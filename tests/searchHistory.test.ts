@@ -49,7 +49,7 @@ test("a phone search's own entry is marked, and clearing the search unwinds it l
   expect(isSearchPushedEntry(withSearchHint("user-1", { query: "", all: false }, pushed))).toBe(true);
   expect(isSearchPushedEntry(withSearchHint("user-1", { query: "ab", all: false }, null))).toBe(false);
   expect(isSearchPushedEntry(null)).toBe(false);
-  const app = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
+  const app = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text() + await Bun.file(new URL("../src/notes/NotesApp.tsx", import.meta.url)).text();
   const clear = app.slice(app.indexOf("function clearSearch()"), app.indexOf("function onSearchKeyDown"));
   expect(clear).toContain("isSearchPushedEntry(window.history.state)");
   expect(clear).toContain("window.history.back()");

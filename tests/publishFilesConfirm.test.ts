@@ -44,7 +44,7 @@ describe("the confirm's words", () => {
 
 describe("the wiring", () => {
   test("Publish asks through the app's confirm and publishes again with the ids; leaving a note never asks", async () => {
-    const app = await read("App.tsx");
+    const app = await read("App.tsx") + await read("notes/NotesApp.tsx");
     expect(app).toContain("if (!await appConfirm.ask(publishFilesConfirm(required))) return false;");
     expect(app).toContain("confirmAttachments: [...confirmedFiles]");
     expect(app).toContain("notify.warning(confirmLaterMessage(required));");

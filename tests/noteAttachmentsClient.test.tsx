@@ -91,7 +91,7 @@ describe("editor wiring", () => {
     expect(source("ui/attachments/AttachSheet.tsx")).toContain("useHistoryDialogGuard(true, onClose)");
     expect(source("ui/attachments/AttachmentPreview.tsx")).toContain("useHistoryDialogGuard(true, onClose)");
     // Notes turn it on; card descriptions keep their own image upload.
-    expect(source("App.tsx")).toContain('attachHost="note"');
+    expect((source("App.tsx") + source("notes/NotesApp.tsx"))).toContain('attachHost="note"');
     expect(source("tasks/CardDialog.tsx")).not.toContain("attachHost");
   });
 
@@ -100,7 +100,7 @@ describe("editor wiring", () => {
     expect(confirm).toContain("useHistoryDialogGuard(true, onCancel");
     expect(confirm).toContain("/bin/document/");
     expect(confirm).toContain("/attachments/sync");
-    const app = source("App.tsx");
+    const app = (source("App.tsx") + source("notes/NotesApp.tsx"));
     expect(app).toContain("binnedAttachments");
     expect(app).toContain("if (binned.length && reloadCurrent) setBinnedFiles");
   });

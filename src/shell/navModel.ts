@@ -41,7 +41,15 @@ export type NavItem = {
   current: boolean;
   /** An app's sections and recent items, in order (D1280); the sidebar nests them under its row. */
   children?: NavItem[];
+  /**
+   * Phase 3 (D1287): the app on screen draws its own tree under its row (Notes' and Files' folders,
+   * Reports' folders and lists), so the row opens like an app with sections even without `children`.
+   */
+  tree?: boolean;
 };
+
+/** The apps whose own tree moves into the sidebar while they are on screen (D1287). */
+export const TREE_APPS: readonly AppSection[] = ["notes", "files", "reports"];
 
 /** A recently opened board or collection (D1282), newest first. */
 export type NavRecent = { id: string; name: string; href: string };
@@ -99,7 +107,8 @@ export function buildNavTree({ disabledModules, features, role, active, readyMod
     if (isWorkspaceModuleId(launcher.section) && !ready.includes(launcher.section)) return [];
     const row = item(launcher.section, "app", module.label, launcher.href, module.icon, launcher.section);
     const children = appSections(launcher.section, { role, active, location, recents });
-    return [children.length ? { ...row, children } : row];
+    const withTree = row.current && TREE_APPS.includes(launcher.section) ? { ...row, tree: true } : row;
+    return [children.length ? { ...withTree, children } : withTree];
   });
 
   const primary = [item("home", "home", "Home", "/", House, "home")];

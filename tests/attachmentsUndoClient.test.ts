@@ -142,7 +142,7 @@ describe("upload slots: progress and Cancel", () => {
 describe("leaving a note mid-upload", () => {
   test("the app's confirm (never window.confirm), a history layer for Back, beforeunload only for the tab", () => {
     expect(LEAVE_UPLOADS_CONFIRM.message).toBe("Uploads in progress. Leave and cancel them?");
-    const app = source("App.tsx");
+    const app = source("App.tsx") + source("notes/NotesApp.tsx");
     expect(app).toContain("appConfirm.ask(LEAVE_UPLOADS_CONFIRM)");
     expect(app).toContain("useLeaveGuard(noteUploads > 0 && uploadLeaveMove === null");
     expect(app).toContain('window.addEventListener("beforeunload", onUnload)');

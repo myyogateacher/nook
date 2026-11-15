@@ -1,7 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { BarChart3, CalendarClock, ChevronRight, ClipboardList, Copy, Eye, FilePlus2, Pencil, Share2, Trash2, Vote } from "lucide-react";
+import { BarChart3, CalendarClock, ClipboardList, Copy, Eye, FilePlus2, Pencil, Share2, Trash2, Vote } from "lucide-react";
 import { ApiError } from "../api";
 import { ModuleHome, type ModulePrimaryAction } from "../ui/ModuleHome";
+import { formatWorkspaceRoute } from "../workspaceModules/registry";
 import { FORMS_SECTIONS, type FormsSection } from "./sections";
 import { EmptyState } from "../ui/EmptyState";
 import { useModuleShortcuts } from "../ui/moduleKeys";
@@ -87,8 +88,8 @@ export function FormFrame({ nav, form, view, primary, menuExtra = [], children, 
   ] : [{ id: "all", label: "All forms", icon: ClipboardList, onSelect: () => go([]) }];
   return <ModuleHome icon={form?.kind === "poll" ? Vote : form?.kind === "time_poll" ? CalendarClock : ClipboardList} title="Forms" heading={title ?? form?.title ?? "Form"}
     displayName={props.displayName} onHome={props.onHome} onSettings={props.onSettings} onSignOut={props.onSignOut}
-    primary={primary} menu={menu} tabs={tabs} activeTab={view} onTab={(id) => go(id === "respond" ? [segment] : [segment, id])} detail={detail} className="forms-page">
-    <nav className="forms-crumbs" aria-label="Breadcrumb"><button type="button" className="ui-text-button" onClick={() => go([])}>Forms</button><ChevronRight aria-hidden="true" /><span>{form?.title ?? "…"}</span></nav>
+    primary={primary} menu={menu} tabs={tabs} activeTab={view} onTab={(id) => go(id === "respond" ? [segment] : [segment, id])} detail={detail} className="forms-page"
+    parent={{ label: "Forms", href: formatWorkspaceRoute({ app: "forms", path: [], search: "" }), onClick: () => go([]) }}>
     {children}
     {confirmElement}
   </ModuleHome>;

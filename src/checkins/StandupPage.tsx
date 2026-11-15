@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertOctagon, BellRing, ChevronLeft, ChevronRight, Lock, Play, Square, Sunrise, PenLine } from "lucide-react";
 import { ModuleHome } from "../ui/ModuleHome";
+import { formatWorkspaceRoute } from "../workspaceModules/registry";
 import { EmptyState } from "../ui/EmptyState";
 import { ProgressBar } from "../ui/progress/Progress";
 import { KpiRow, KpiTile, InsightChart } from "../ui/insights/Insights";
@@ -90,6 +91,7 @@ export function StandupPage(props: PageProps) {
     primary={due ? { label: "Answer", icon: PenLine, onClick: openAnswer, shortcut: false } : canEdit && tab === "round" && roundState === "none" ? { label: "Start a round", icon: Play, onClick: () => void start(), shortcut: false } : undefined}
     menu={menu}
     tabs={[{ id: "round", label: "Rounds" }, { id: "insights", label: "Insights" }, { id: "settings", label: "Settings" }]} activeTab={tab}
+    tabsInSidebar={{ label: detail.name, hrefFor: (id) => formatWorkspaceRoute({ app: "checkins", path: id === "round" ? [segmentNow] : [segmentNow, id], search: "" }) }}
     onTab={(id) => go(id === "round" ? [segmentNow] : [segmentNow, id])}
     filters={<p className="standup-subline"><button type="button" className="ui-text-button" onClick={() => go([])}><ChevronLeft aria-hidden="true" />All standups</button><span className="standup-muted">{cadenceText(detail.schedule)}{detail.status === "paused" ? " · Paused" : ""}</span>{detail.anonymous && <span className="standup-state tone-info"><Lock aria-hidden="true" />Anonymous</span>}</p>}>
     {tab === "round" && <RoundTab {...props} detail={detail} round={round} state={roundState} view={view} setView={setView} segmentNow={segmentNow} canEdit={canEdit} onStart={() => void start()} onSkipped={refresh} />}

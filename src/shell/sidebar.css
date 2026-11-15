@@ -212,6 +212,15 @@
 }
 @media (max-width: 1020px) and (min-width: 761px) { .app-frame .workspace:not(.files-workspace) { grid-template-columns: 280px minmax(0, 1fr); } }
 
+/* D1291: an open item's own views under its name (a standup's Rounds / Insights / Settings), and a
+   header that names the item after its module ("Forms › Team feedback"). */
+.app-sidebar-sections > .app-sidebar-slot:has(> .app-sidebar-item-views) { margin-left: 0; border-left: 0; padding-left: 0; }
+.app-sidebar-item-views .app-sidebar-subheading { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: .02em; font-size: .72rem; color: #8f8f96; }
+.app-sidebar-flyout .app-sidebar-item-views .app-sidebar-subheading { margin-left: 8px; }
+.ui-module-parent { flex: none; color: #a1a1a8; font-size: .95rem; font-weight: 600; text-decoration: none; }
+.ui-module-parent:hover { color: #fff; text-decoration: underline; }
+.ui-module-parent-sep { flex: none; width: 15px; height: 15px; margin: 0 -4px; color: #6f6f76; }
+
 /* Settings (D1290): on a Settings page the list holds "Back to apps" and the hub's groups; the page
    loses its 264 px nav from 761 px (phones keep it as the section list). */
 .app-sidebar-back { width: 100%; border: 0; background: transparent; font: inherit; font-size: .86rem; text-align: left; cursor: pointer; }

@@ -6,9 +6,6 @@
 .forms-loading, .forms-muted { color: #8d8d94; font-size: .82rem; }
 .forms-muted { margin: 0; }
 .forms-warn { color: var(--tone-warning, #e2c46c); font-size: .78rem; font-weight: 600; }
-.forms-crumbs { display: flex; align-items: center; gap: 4px; margin: 0 0 10px; color: #8d8d94; font-size: .8rem; }
-.forms-crumbs svg { width: 14px; height: 14px; }
-.forms-crumbs > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c4c4c9; }
 .forms-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tone-fill, #8d8d94); }
 .forms-filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 

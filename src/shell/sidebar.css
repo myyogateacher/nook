@@ -200,7 +200,9 @@
 .app-drawer .app-sidebar-tree-link { height: 40px; font-size: .9rem; }
 .app-drawer .app-sidebar-tree-toggle { width: 28px; height: 40px; left: calc(var(--tree-pad) - 26px); }
 .app-drawer .app-sidebar-tree-row { --tree-pad: calc(28px + var(--tree-indent, 0) * 14px); }
-.app-drawer .app-sidebar-tree-action, .app-drawer .app-sidebar-tree-new { width: 40px; height: 40px; opacity: 1; }
+.app-drawer .app-sidebar-tree-new { width: 40px; height: 40px; }
+/* Phones share a folder from the Folders panel (its rows keep the button); the drawer keeps the counts. */
+.app-drawer .app-sidebar-tree-action { display: none; }
 
 /* Notes and Files (D1288): on a computer their folders are in the sidebar, so the pane is gone and
    the list and the editor (or preview) take its width. Phones keep the pane as their Folders panel. */
@@ -251,7 +253,7 @@
 .app-sidebar-slot .reports-nav-link b { font-size: .72rem; }
 .app-sidebar-slot .reports-nav > .reports-nav-link { padding-right: 8px; }
 .app-sidebar-slot .reports-nav-entry { grid-template-columns: minmax(0, 1fr); }
-.app-sidebar-slot .reports-nav-entry > .reports-nav-link { padding-right: 30px; }
+.app-sidebar-slot .reports-nav-entry:has(> .reports-nav-menu) > .reports-nav-link { padding-right: 30px; }
 .app-sidebar-slot .reports-nav-menu { position: absolute; top: 2px; right: 2px; }
 .app-sidebar-slot .reports-nav-menu > button { width: 24px; height: 24px; min-height: 24px; }
 .app-sidebar-slot .reports-nav-entry:not(:hover):not(:focus-within) .reports-nav-link b { visibility: visible; }
@@ -267,5 +269,5 @@
 .app-drawer .app-sidebar-slot :is(.reports-nav-link, .reports-nav-new) { min-height: 40px; height: 40px; font-size: .9rem; }
 .app-drawer .app-sidebar-slot .reports-nav-menu { top: 0; opacity: 1; }
 .app-drawer .app-sidebar-slot .reports-nav-menu > button { width: 40px; height: 40px; }
-.app-drawer .app-sidebar-slot .reports-nav-entry > .reports-nav-link { padding-right: 44px; }
-.app-drawer .app-sidebar-slot .reports-nav-entry .reports-nav-link b { visibility: hidden; }
+.app-drawer .app-sidebar-slot .reports-nav-entry:has(> .reports-nav-menu) > .reports-nav-link { padding-right: 44px; }
+.app-drawer .app-sidebar-slot .reports-nav-entry .reports-nav-link b { visibility: visible; }

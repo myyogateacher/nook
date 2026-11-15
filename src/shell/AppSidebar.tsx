@@ -145,6 +145,18 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
   // flyout's hover over it are native listeners on the slot and on the flyout.
   const [slotElement, setSlotElement] = useState<HTMLElement | null>(null);
   const slotRef = useCallback((element: HTMLDivElement | null) => { setSlotElement(element); onSlot?.(element); }, [onSlot]);
+  // Whether the app's tree marks a row as the page (its folder, a standup's view, a Settings section):
+  // then the app's own row (or the footer's Settings) says it holds the page instead of being it.
+  const [slotCurrent, setSlotCurrent] = useState(false);
+  useEffect(() => {
+    if (!slotElement) { setSlotCurrent(false); return; }
+    const check = () => setSlotCurrent(slotElement.querySelector('[aria-current="page"]') !== null);
+    check();
+    if (typeof MutationObserver === "undefined") return;
+    const observer = new MutationObserver(check);
+    observer.observe(slotElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-current"] });
+    return () => observer.disconnect();
+  }, [slotElement]);
   useEffect(() => {
     if (!slotElement || !rail) return;
     const tipOf = (event: Event) => (event.target instanceof Element ? event.target.closest<HTMLElement>("[data-sidebar-tip]") : null);
@@ -236,7 +248,7 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
     const badge = badgeFor(item);
     const label = badge > 0 ? `${item.label}, ${badge >= 100 ? "100 or more" : badge} ${item.kind === "inbox" ? "pending" : "unread"}` : undefined;
     return <li key={item.id}>
-      <a className={`app-sidebar-link${item.current ? " active" : ""}`} href={item.href} aria-current={item.current ? "page" : undefined} aria-label={label}
+      <a className={`app-sidebar-link${item.current ? " active" : ""}`} href={item.href} aria-current={item.current ? (item.kind === "settings" && settingsView && slotCurrent ? "true" : "page") : undefined} aria-label={label}
         onClick={(event) => { if (!isPlainClick(event)) return; event.preventDefault(); hideTip(); onClick(); }} {...tipHandlers(item.label)}>
         <Icon aria-hidden="true" /><span className="app-sidebar-label">{item.label}</span>
         {badge > 0 && <span className={`app-sidebar-badge app-sidebar-badge-${item.kind}`} aria-hidden="true">{badgeText(badge)}</span>}
@@ -261,8 +273,8 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
   const branch = (item: NavItem, onClick: () => void) => {
     const children = item.children ?? [];
     if (children.length === 0 && !item.tree) return link(item, onClick);
-    // An app whose own tree is under it (D1287) marks its current folder itself.
-    const childCurrent = children.some((child) => child.current) || Boolean(item.tree);
+    // An app whose own tree is under it (D1287) marks its current folder or view itself.
+    const childCurrent = children.some((child) => child.current) || (item.current && slotCurrent);
     const Icon = item.icon;
     const badge = badgeFor(item);
     const label = badge > 0 ? `${item.label}, ${badge >= 100 ? "100 or more" : badge} ${item.kind === "inbox" ? "pending" : "unread"}` : undefined;

@@ -108,7 +108,8 @@ function NotesTree({ current, onSelect }: { current: string | null; onSelect: (i
   return <ShellSidebarPortal><SidebarFolderTree app="notes" label="Note folders"
     entries={[{ id: "all", label: "All notes", icon: Archive, href: "/notes", count: 2, current: current === null, onSelect: () => onSelect("all") }]}
     groups={[{ id: "folders", heading: "Folders", folders, onNew: noop }]} current={current} hrefFor={(folder) => `/notes/folder/${folder.id}`}
-    onSelect={(folder) => onSelect(folder.id)} name={(folder) => folder.name} count={() => 1} /></ShellSidebarPortal>;
+    onSelect={(folder) => onSelect(folder.id)} name={(folder) => folder.name} count={() => 1}
+    action={(folder) => <button type="button" className="app-sidebar-tree-action" aria-label={`Share ${folder.name}`} />} /></ShellSidebarPortal>;
 }
 
 test("the app's tree draws under its row: real links, its own handler, the app row holds the page", async () => {
@@ -127,6 +128,7 @@ test("the app's tree draws under its row: real links, its own handler, the app r
   expect(tree_.closest(".app-sidebar-app")?.querySelector(".app-sidebar-link")?.getAttribute("href")).toBe("/notes");
   const platform = tree_.querySelector<HTMLAnchorElement>('a[href="/notes/folder/platform"]')!;
   expect(platform.getAttribute("aria-current")).toBe("page");
+  expect(tree_.querySelectorAll(".app-sidebar-tree-action").length).toBe(3);
   expect(nav.querySelector('.app-sidebar-app .app-sidebar-link[href="/notes"]')?.getAttribute("aria-current")).toBe("true");
   expect(nav.querySelectorAll('[aria-current="page"]').length).toBe(1);
   await view.click(tree_.querySelector<HTMLAnchorElement>('a[href="/notes/folder/ops"]')!);
@@ -161,6 +163,9 @@ test("in the rail the tree waits for the app's flyout; on a phone the drawer car
     expect(view.container.querySelector('nav[aria-label="Note folders"]')).toBeNull();
     await view.click(view.container.querySelector<HTMLButtonElement>(".shell-menu-button")!);
     const drawer = view.container.querySelector<HTMLElement>('[role="dialog"]')!;
+    // The drawer's rows are narrow: no per-row Share there (the Folders panel keeps it).
+    expect(drawer.querySelector("nav[aria-label=\"Note folders\"] a")).not.toBeNull();
+    expect(drawer.querySelectorAll(".app-sidebar-tree-action").length).toBe(0);
     await view.click(drawer.querySelector<HTMLAnchorElement>('nav[aria-label="Note folders"] a[href="/notes/folder/ops"]')!);
     expect(picked).toEqual(["ops"]);
     expect(view.container.querySelector('[role="dialog"]')).toBeNull();

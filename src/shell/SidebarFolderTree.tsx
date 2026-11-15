@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEventHandler, type ReactNode } from "react";
 import { ChevronRight, Folder as FolderIcon, Plus, type LucideIcon } from "lucide-react";
 import { isPlainClick } from "./AppSidebar";
+import { useShell } from "./shellContext";
 import { folderAncestors, folderForest, folderOpen, readClosedFolders, writeClosedFolders, type FolderNode, type TreeFolder } from "./folderTree";
 import "./sidebar.css";
 
@@ -55,6 +56,7 @@ const readStore = () => { try { return typeof window === "undefined" ? null : wi
  * In the rail the labels are hidden and each row names itself in a tooltip (`data-sidebar-tip`).
  */
 export function SidebarFolderTree<F extends TreeFolder>({ app, label, entries, groups, current, hrefFor, onSelect, name, count, sub, icon, badge, drop, action }: Props<F>) {
+  const inDrawer = useShell()?.mode === "drawer";
   const [closed, setClosed] = useState<string[]>(() => readClosedFolders(readStore(), app));
   const closedSet = useMemo(() => new Set(closed), [closed]);
   const allFolders = useMemo(() => groups.flatMap((group) => group.folders), [groups]);
@@ -117,7 +119,8 @@ export function SidebarFolderTree<F extends TreeFolder>({ app, label, entries, g
           {badge?.(folder)}
           {total !== undefined && <b className="app-sidebar-tree-count" aria-label={`, ${total}`}>{total}</b>}
         </>, label, { className: dropping?.className, handlers: dropping?.handlers })}
-        {action?.(folder)}
+        {/* Not in the phone drawer: its rows are narrow and the Folders panel keeps the action. */}
+        {!inDrawer && action?.(folder)}
       </div>
       {hasChildren && open && <ul id={childrenId} className="app-sidebar-tree-children">{node.children.map((child) => folderRow(child, groupId))}</ul>}
     </li>;

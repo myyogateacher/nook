@@ -87,6 +87,21 @@ export function hubEntries(role: Role | undefined, options: { teamModuleEnabled:
   return [...account, ...workspace, ...team];
 }
 
+export type HubGroup = { id: HubEntry["group"]; label: string; items: HubEntry[] };
+
+/**
+ * The entries in their nav groups, in order (Account, Workspace, Team), without empty groups: the
+ * hub's own nav (phones, the two-factor setup screen) and the global sidebar's Settings tree (D1290).
+ */
+export function hubGroups(entries: readonly HubEntry[]): HubGroup[] {
+  const groups: HubGroup[] = [
+    { id: "account", label: "Account", items: entries.filter((entry) => entry.group === "account") },
+    { id: "workspace", label: "Workspace", items: entries.filter((entry) => entry.group === "workspace") },
+    { id: "team", label: "Team", items: entries.filter((entry) => entry.group === "team") }
+  ];
+  return groups.filter((group) => group.items.length > 0);
+}
+
 /** Where a Team link opens: the first Team entry the role has, Members for everyone. */
 export function firstTeamRoute(): Route {
   return team();

@@ -13,6 +13,15 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 - Home no longer shows the row of app tiles on a computer, because the sidebar has them. On a phone the tiles are still there.
 - Notes and Files keep their folder lists for now. Home, Settings, and Sign out moved from the bottom of those lists into the sidebar.
 
+**Sections in the sidebar**
+
+- The app you are in opens up in the sidebar to show its sections: People, Companies, Deals and the rest in Contacts; Timer, Timesheet, Reports, and Projects in Time; and so on for Forms, Goals, Standups, Bookings, Townhall, Tasks, and the Inbox. The section you are on is highlighted, also when you open a link straight to it.
+- The small arrow beside an app shows its sections without leaving the page you are on, so you can go straight to, say, Contacts › Insights from Notes. Nook remembers which apps you opened this way.
+- With a mouse, resting on an app in the sidebar shows its sections beside it. In the narrow strip of icons, resting on or tabbing to an app does the same; Esc closes it.
+- Tasks lists your recently opened boards under My work and Views, and Collections your recent collections, up to eight each.
+- The tab rows at the top of these apps are gone on a computer, so their pages start higher. On a phone the sections are one row you can swipe sideways, and the header says where you are ("Contacts · Deals").
+- The Tasks and Collections lists start with one short line instead of a large title, and the Inbox and a goal's page show their title once.
+
 **Fixes: final QA of the modules**
 
 - **Open** on a goal, form, or townhall card in a note, and **Open in Bookings** after booking a colleague, open the page in the app again (they did nothing). Leaving a note saves it first; a module that is off shows its hint on Home.

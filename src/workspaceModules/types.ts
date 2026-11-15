@@ -86,6 +86,22 @@ export type SearchRendererDef = {
 /** A public page a module renders under /p/… (§B.8): no session; it fetches /api/public/… itself. */
 export type PublicPageDef = { prefix: string; component: LazyExoticComponent<ComponentType<{ path: string; search: string }>> };
 
+/**
+ * One of a module's top-level views (docs/plan/LEFT_NAV.md §2.3, §3; D1280): People, Deals, Timesheet,
+ * Insights… The global sidebar nests them under the module's app row, and ModuleHome's phone strip
+ * lists the same entries, so the two never drift. Each is a route of its own.
+ */
+export type WorkspaceSectionDef = {
+  id: string;
+  label: string;
+  /** The section's segments after the module's own ([] for the module's home). */
+  path: readonly string[];
+  /** Its query, when the section is a query view of the home (`?view=list`); "" or absent otherwise. */
+  search?: string;
+  /** Hidden for these roles (presentation only: the route gate and the server still decide, T97). */
+  hiddenFor?: readonly Role[];
+};
+
 export type WorkspaceClientModule = {
   id: WorkspaceModuleId;
   /** The URL's first segment: "forms", "contacts" (crm), "standups" (checkins). */
@@ -104,6 +120,13 @@ export type WorkspaceClientModule = {
   formatRoute?: (route: WorkspaceRoute) => string;
   /** A tile on the Today launcher (to `/<segment>`). */
   launcher?: boolean;
+  /** Its top-level views, in order: the sidebar's nested rows and ModuleHome's phone strip (D1280). */
+  sections?: readonly WorkspaceSectionDef[];
+  /**
+   * The section a route of this module belongs to, or null (an item's own page). Absent: the section
+   * whose path is the longest prefix of the route's, else the home section on the home route.
+   */
+  sectionOf?: (route: Pick<WorkspaceRoute, "path" | "search">) => string | null;
   /** Its Today sections' client copy, by section name (the server's `registerTodayProvider` names). */
   todaySections?: Record<string, TodaySectionDef>;
   quickActions?: readonly QuickActionDef[];

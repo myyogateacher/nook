@@ -37,6 +37,20 @@ export function writeSidebarPreference(storage: Pick<Storage, "setItem"> | null 
   try { storage?.setItem(SIDEBAR_STORAGE_KEY, value); } catch { /* private mode: the choice lasts this visit */ }
 }
 
+/** The apps the person opened in the sidebar by their chevron (D1284), kept across reloads. */
+export const SIDEBAR_EXPANDED_KEY = "nook.sidebar.expanded";
+export function readExpandedApps(storage: Pick<Storage, "getItem"> | null | undefined): string[] {
+  try {
+    const value: unknown = JSON.parse(storage?.getItem(SIDEBAR_EXPANDED_KEY) ?? "[]");
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 40).slice(0, 40) : [];
+  } catch {
+    return [];
+  }
+}
+export function writeExpandedApps(storage: Pick<Storage, "setItem"> | null | undefined, ids: readonly string[]) {
+  try { storage?.setItem(SIDEBAR_EXPANDED_KEY, JSON.stringify(ids.slice(0, 40))); } catch { /* private mode: this visit only */ }
+}
+
 /** ⌘\ on a Mac, Ctrl+\ elsewhere (either is accepted: a Mac keyboard on Linux sends Meta). */
 export function isSidebarToggleKey(event: Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">) {
   return (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && (event.key === "\\" || event.code === "Backslash");

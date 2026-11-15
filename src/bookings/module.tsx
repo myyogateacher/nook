@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
+import { BOOKINGS_SECTIONS } from "./sections";
 import { pickAndEmbed } from "../ui/embeds/openEmbedPicker";
 import type { ItemSlotProps } from "../ui/itemSlots";
 import { CalendarCheck2, CalendarClock, CalendarPlus, Link2 } from "lucide-react";
@@ -66,6 +67,7 @@ export const module: WorkspaceClientModule = {
   ready: true,
   app: BookingsApp,
   launcher: true,
+  sections: BOOKINGS_SECTIONS,
   parseRoute: (segments) => ({ path: segments.slice(0, 2).map((segment) => decodeURIComponent(segment)) }),
   todaySections: {
     bookingsToday: {

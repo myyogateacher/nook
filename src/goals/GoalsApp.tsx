@@ -12,6 +12,7 @@ import { GoalEditor, PeriodsSheet } from "./sheets";
 import { HEALTH_TONE } from "../ui/tone";
 import type { WorkspaceAppProps } from "../workspaceModules/types";
 import type { Route } from "../router";
+import { GOALS_SECTIONS, goalsViewOf, type GoalsView } from "./sections";
 import "../ui/workspace.css";
 import "./goals.css";
 
@@ -23,10 +24,9 @@ const GoalInsights = lazy(() => import("./GoalInsights"));
  * Mine, Insights, chosen with `?view=`; the period with `?period=`), `/goals/<slug>-<shortid>` a goal.
  */
 
-export const VIEWS = [
-  { id: "tree", label: "Tree" }, { id: "list", label: "List" }, { id: "timeline", label: "Timeline" }, { id: "mine", label: "Mine" }, { id: "insights", label: "Insights" }
-] as const;
-export type GoalsView = typeof VIEWS[number]["id"];
+/** The home's views are the module's sections (D1280), one list with the sidebar's. */
+export const VIEWS = GOALS_SECTIONS;
+export type { GoalsView };
 
 export const goalsRoute = (path: string[], search = ""): Route => ({ app: "goals", path, search }) as Route;
 
@@ -45,7 +45,7 @@ function isCurrent(period: Period) {
 
 function GoalsHome({ route, navigate, onOpenPath, userId, displayName, role, flash, onHome, onSettings, onSignOut }: WorkspaceAppProps) {
   const search = params(route.search);
-  const view = (VIEWS.some((item) => item.id === search.get("view")) ? search.get("view") : "tree") as GoalsView;
+  const view: GoalsView = goalsViewOf(route.search);
   const canWrite = role === "admin" || role === "member";
   const [periods, setPeriods] = useState<Period[] | null>(null);
   const [period, setPeriodState] = useState<string>(search.get("period") ?? "");
@@ -97,10 +97,10 @@ function GoalsHome({ route, navigate, onOpenPath, userId, displayName, role, fla
     {view !== "insights" && <button type="button" className="ui-filter-chip" aria-pressed={showClosed} onClick={() => setShowClosed((value) => !value)}>{showClosed ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}Closed</button>}
   </>;
 
-  return <ModuleHome icon={Target} title="Goals" heading="Goals" displayName={displayName} onHome={onHome} onSettings={onSettings} onSignOut={onSignOut}
+  return <ModuleHome icon={Target} title="Goals" displayName={displayName} onHome={onHome} onSettings={onSettings} onSignOut={onSignOut}
     primary={canWrite ? { label: "New goal", icon: Plus, onClick: () => setCreating({}) } : undefined}
     menu={[{ id: "periods", label: "Periods…", icon: CalendarRange, onSelect: () => setPeriodsOpen(true) }]}
-    tabs={VIEWS} activeTab={view} onTab={setView} filters={filters}
+    sections={{ module: "goals", role, active: view, onSelect: setView }} filters={filters}
     search={view === "insights" ? undefined : { value: query, onChange: setQuery, placeholder: "Search goals", label: "Search goals" }}>
     {error && <p className="ui-field-error" role="alert">{error} <button type="button" className="ui-text-button" onClick={() => setReload((value) => value + 1)}>Retry</button></p>}
     {view === "insights"

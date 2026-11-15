@@ -1,4 +1,5 @@
 import { lazy } from "react";
+import { FORMS_SECTIONS } from "./sections";
 import { BarChart3, CalendarClock, ClipboardList, Vote } from "lucide-react";
 import { WORKSPACE_MODULE_LABELS } from "../../shared/workspaceModules";
 import type { WorkspaceClientModule } from "../workspaceModules/types";
@@ -37,6 +38,7 @@ export const module: WorkspaceClientModule = {
     return { path, search: query ? `?${query}` : "" };
   },
   launcher: true,
+  sections: FORMS_SECTIONS,
   todaySections: {
     formsResponses: {
       title: "New responses", group: "today", empty: "no new responses this week", app: "Forms", viewAll: "/forms",

@@ -60,7 +60,8 @@ test("the sidebar is the Workspace nav: the app on screen is the current page, l
   const markup = renderToStaticMarkup(<AppSidebar {...sidebarProps} tree={tree("tasks")} mode="expanded" inboxCount={3} unreadCount={120} />);
   expect(markup).toContain('<nav class="app-sidebar" aria-label="Workspace" data-mode="expanded" id="app-sidebar">');
   expect(markup.match(/aria-current="page"/g)).toHaveLength(1);
-  expect(markup).toMatch(/<a class="app-sidebar-link active" href="\/tasks" aria-current="page">/);
+  // D1284: an app with sections has a disclosure chevron beside its link.
+  expect(markup).toMatch(/<a class="app-sidebar-link active has-disclosure" href="\/tasks" aria-current="page">/);
   expect(markup).toContain('href="/contacts"');
   // The collapse button says what it does and which state it is in.
   expect(markup).toContain('aria-expanded="true" aria-controls="app-sidebar" aria-label="Collapse sidebar"');

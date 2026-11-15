@@ -39,8 +39,7 @@ export function TownhallHome(props: WorkspaceAppProps & { tab: "sessions" | "ins
   return <ModuleHome icon={Presentation} title="Townhall" displayName={props.displayName} onHome={props.onHome} onSettings={props.onSettings} onSignOut={props.onSignOut}
     className="th-home"
     primary={canCreate ? { label: "New townhall", icon: Plus, onClick: () => setCreating(true) } : undefined}
-    tabs={[{ id: "sessions", label: "Sessions" }, { id: "insights", label: "Insights" }]} activeTab={props.tab}
-    onTab={(id) => navigate({ app: "townhall", path: id === "insights" ? ["insights"] : [], search: "" } as never)}
+    sections={{ module: "townhall", role: props.role, active: props.tab, onSelect: (id) => navigate({ app: "townhall", path: id === "insights" ? ["insights"] : [], search: "" } as never) }}
     filters={props.tab === "sessions" ? <div className="th-chips" role="group" aria-label="Show sessions">
       {(["all", "live", "upcoming", "ended"] as const).map((value) => <button key={value} type="button" className="ui-filter-chip" aria-pressed={filter === value} onClick={() => setFilter(value)}>{{ all: "All", live: "Live", upcoming: "Upcoming", ended: "Past" }[value]}</button>)}
     </div> : undefined}

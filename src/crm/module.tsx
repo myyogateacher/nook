@@ -1,4 +1,5 @@
 import { lazy } from "react";
+import { CRM_SECTIONS, crmSectionOf } from "./sections";
 import { Building2, Contact, Handshake, PhoneCall, UserPlus } from "lucide-react";
 import { WORKSPACE_MODULE_LABELS } from "../../shared/workspaceModules";
 import type { WorkspaceClientModule } from "../workspaceModules/types";
@@ -24,6 +25,8 @@ export const module: WorkspaceClientModule = {
   ready: true,
   app,
   launcher: true,
+  sections: CRM_SECTIONS,
+  sectionOf: crmSectionOf,
   parseRoute: (segments, search) => ({ path: segments.filter(Boolean).slice(0, 3), search: search && search !== "?" ? search : "" }),
   todaySections: {
     crmFollowups: {

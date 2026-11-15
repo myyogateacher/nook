@@ -174,9 +174,10 @@ describe("Inbox rendering", () => {
     globals.window = { location: { pathname: "/inbox" } };
     try {
       const markup = renderToStaticMarkup(<RoleContext.Provider value="member"><InboxApp displayName="Ada" navigate={noop} flash={noop} onHome={noop} onSettings={noop} onSignOut={noop} onOpenPath={noop} /></RoleContext.Provider>);
-      // D1273: Home is in the sidebar; the page header names the page.
-      expect(markup).toContain('<div class="page-header-title"><strong>Inbox</strong></div>');
-      expect(markup).toContain("<h1 id=\"inbox-title\">Inbox</h1>");
+      // D1273: Home is in the sidebar; D1283: the page header's h1 is the page's one title (it labels the list).
+      expect(markup).toContain('<div class="page-header-title"><h1 id="inbox-title">Inbox</h1></div>');
+      expect(markup.match(/<h1/g)).toHaveLength(1);
+      expect(markup).toContain('aria-labelledby="inbox-title"');
       expect(markup).toContain('aria-pressed="true">Pending');
       expect(markup).toContain(">History</button>");
       expect(markup).toContain("Loading proposals…");

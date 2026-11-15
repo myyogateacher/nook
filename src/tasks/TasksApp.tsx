@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SHELL_ROUTE_EVENT } from "../shell/locationSignal";
 import type { TaskNotify } from "./taskActions";
 import { notifier } from "../ui/notify";
 
@@ -69,8 +70,16 @@ export function TasksApp({ userId, displayName, navigate, onHome, onSettings, on
       setRoute(next);
       noteEntry(false);
     };
+    // The sidebar moved Tasks to another of its sections or a recent board (D1282): an entry this visit wrote.
+    const onShellRoute = () => {
+      const next = routeFromLocation(window.location);
+      if (next.app !== "tasks") return;
+      setRoute(next);
+      noteEntry(true);
+    };
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    window.addEventListener(SHELL_ROUTE_EVENT, onShellRoute);
+    return () => { window.removeEventListener("popstate", onPopState); window.removeEventListener(SHELL_ROUTE_EVENT, onShellRoute); };
   }, [noteEntry]);
 
 

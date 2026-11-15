@@ -1,4 +1,5 @@
 import { lazy } from "react";
+import { TIME_SECTIONS } from "./sections";
 import { Clock, FolderClock, Play, Timer } from "lucide-react";
 import { WORKSPACE_MODULE_LABELS } from "../../shared/workspaceModules";
 import type { WorkspaceClientModule, WorkspaceRoutePart } from "../workspaceModules/types";
@@ -43,6 +44,7 @@ export const module: WorkspaceClientModule = {
   app: lazy(() => import("./TimeApp")),
   parseRoute: parseTimeRoute,
   launcher: true,
+  sections: TIME_SECTIONS,
   topBarItem: TimerTopBar,
   todaySections: {
     timeToday: { title: "Time", group: "today", empty: "nothing logged yet", app: "Time", render: TodayTimeSection }

@@ -181,3 +181,8 @@ p.inbox-status { justify-self: start; margin: 8px 0 0; }
   .inbox-toggle button { min-height: 44px; }
   .inbox-facts dd .inbox-link-button { min-height: 44px; }
 }
+
+/* D1282–D1283: Pending / History / Routines are in the sidebar on a computer (phones keep the
+   segments), and the title is the page header's h1, so the intro is its one line of help. */
+@media (min-width: 761px) { .inbox-segments { display: none; } .inbox-intro { margin-bottom: 14px; } }
+.inbox-intro p { max-width: none; }

@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import { BarChart3, CalendarClock, ChevronRight, ClipboardList, Copy, Eye, FilePlus2, Pencil, Share2, Trash2, Vote } from "lucide-react";
 import { ApiError } from "../api";
 import { ModuleHome, type ModulePrimaryAction } from "../ui/ModuleHome";
+import { FORMS_SECTIONS, type FormsSection } from "./sections";
 import { EmptyState } from "../ui/EmptyState";
 import { useModuleShortcuts } from "../ui/moduleKeys";
 import { notify } from "../ui/notify";
@@ -31,8 +32,9 @@ export type FormsNav = {
   props: WorkspaceAppProps;
 };
 
-const TAB_IDS = ["mine", "shared", "answer", "insights"] as const;
-type HomeTab = typeof TAB_IDS[number];
+// The home's tabs are the module's sections (D1280), one list with the sidebar's.
+const TAB_IDS: readonly string[] = FORMS_SECTIONS.map((section) => section.id);
+type HomeTab = FormsSection;
 const segmentOf = (href: string) => href.split("/")[2] ?? "";
 
 export default function FormsApp(props: WorkspaceAppProps) {
@@ -208,13 +210,7 @@ function FormsHome({ nav, tab, search }: { nav: FormsNav; tab: HomeTab; search: 
       { id: "time", label: "Find a time", icon: CalendarClock, onSelect: () => setSheet("time_poll") },
       { id: "template", label: "From a template", icon: Copy, onSelect: () => setSheet("form") }
     ]}
-    tabs={[
-      { id: "mine", label: "My forms", ...(counts ? { count: counts.mine } : {}) },
-      { id: "shared", label: "Shared with me" },
-      { id: "answer", label: "To answer", ...(counts?.answer ? { count: counts.answer } : {}) },
-      { id: "insights", label: "Insights" }
-    ]}
-    activeTab={tab} onTab={(id) => go(id === "mine" ? [] : [id])}
+    sections={{ module: "forms", role: props.role, active: tab, onSelect: (id) => go(id === "mine" ? [] : [id]), counts: { ...(counts ? { mine: counts.mine } : {}), ...(counts?.answer ? { answer: counts.answer } : {}) } }}
     filters={tab === "insights" ? undefined : <div className="forms-filter-chips" role="group" aria-label="Kind">{KIND_FILTERS.map((filter) => <button key={filter.label} type="button" className="ui-filter-chip" aria-pressed={kind === filter.id} onClick={() => setKind(filter.id)}>{filter.label}</button>)}</div>}
     search={tab === "insights" ? undefined : { value: q, onChange: setQ, placeholder: "Search forms", label: "Search forms" }}>
     {tab === "insights" ? <Suspense fallback={<p className="ui-panel-loading">Loading…</p>}><FormsInsights nav={nav} /></Suspense>

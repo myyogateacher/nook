@@ -2,6 +2,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { FriendlyLinkGate } from "../FriendlyLinkGate";
 import { popStateClosedDialog } from "../historyDialogs";
 import { parseRoute, type Route } from "../router";
+import { SHELL_ROUTE_EVENT } from "../shell/locationSignal";
 import { workspaceHomeRoute, workspaceModule } from "./registry";
 import type { WorkspaceAppProps, WorkspaceModuleId, WorkspaceRoute } from "./types";
 
@@ -67,8 +68,14 @@ export function WorkspaceModuleHost({ id, navigate, onOpenPath, ...props }: Host
       const next = parseRoute(window.location.pathname, window.location.search);
       if (next.app === id) setRoute(next as WorkspaceRoute);
     };
+    // The sidebar moved this module to another of its sections (D1282): follow the address, as on Back.
+    const onShellRoute = () => {
+      const next = parseRoute(window.location.pathname, window.location.search);
+      if (next.app === id) setRoute(next as WorkspaceRoute);
+    };
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    window.addEventListener(SHELL_ROUTE_EVENT, onShellRoute);
+    return () => { window.removeEventListener("popstate", onPopState); window.removeEventListener(SHELL_ROUTE_EVENT, onShellRoute); };
   }, [id]);
 
   if (!module?.app) return null;

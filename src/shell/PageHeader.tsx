@@ -4,8 +4,8 @@ import { NotificationBell } from "../notifications/NotificationBell";
 import { ShellMenuButton } from "./shellContext";
 
 type PageHeaderProps = {
-  /** The page's title: a string (shown as the app's name) or the page's own heading element. */
-  title: ReactNode;
+  /** The page's title: a string (shown as the app's name) or the page's own heading element; none when the content carries it (a goal, D1283). */
+  title?: ReactNode;
   /** A Back button before the title (a goal back to Goals, a report back to Reports). */
   back?: { label: string; onClick: () => void };
   /** The page's own actions, at the end of the row (New, ⋯, Sign out while 2FA setup is required). */
@@ -26,7 +26,7 @@ export function PageHeader({ title, back, actions, bell = true, className }: Pag
   return <header className={`app-page-header page-header${className ? ` ${className}` : ""}`}>
     <ShellMenuButton />
     {back && <button type="button" className="page-header-back" onClick={back.onClick}><ChevronLeft aria-hidden="true" />{back.label}</button>}
-    <div className="page-header-title">{typeof title === "string" ? <strong>{title}</strong> : title}</div>
+    {title !== undefined && title !== null && <div className="page-header-title">{typeof title === "string" ? <strong>{title}</strong> : title}</div>}
     {actions && <div className="page-header-actions">{actions}</div>}
     {bell && <span className="page-header-bell"><NotificationBell /></span>}
   </header>;

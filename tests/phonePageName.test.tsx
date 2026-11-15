@@ -13,7 +13,6 @@ const root = join(import.meta.dir, "..", "src");
 const pages: Record<string, string> = {
   "tasks/TasksApp.tsx": "Tasks",
   "collections/CollectionsApp.tsx": "Collections",
-  "inbox/InboxApp.tsx": "Inbox",
   "chat/ChatApp.tsx": "Chat",
   "notifications/NotificationsApp.tsx": "Notifications",
   "whiteboards/WhiteboardsApp.tsx": "Whiteboards",
@@ -35,6 +34,9 @@ test("every app page has the one-row page header with its name (F2, D1273)", asy
 test("Calendar, which has no other h1, names the page with an h1 in the header; the Settings hub names its section", async () => {
   const calendar = await Bun.file(join(root, "calendar/CalendarApp.tsx")).text();
   expect(calendar).toContain('<PageHeader title={<h1 className="app-page-title">Calendar</h1>} />');
+  // D1283: the Inbox too: its header h1 is the page's one title and labels its list.
+  const inbox = await Bun.file(join(root, "inbox/InboxApp.tsx")).text();
+  expect(inbox).toContain('<PageHeader title={<h1 id="inbox-title">Inbox</h1>} />');
   // Wave 37: Team lives in the Settings hub, whose section header carries the page's h1.
   const hub = await Bun.file(join(root, "settings/SettingsHub.tsx")).text();
   expect(hub).toContain('<h1 id={HUB_TITLE_ID} ref={headingRef} tabIndex={-1}>{title}</h1>');

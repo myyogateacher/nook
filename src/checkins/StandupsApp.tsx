@@ -47,7 +47,7 @@ function Home(props: HomeProps) {
   const canCreate = role === "admin" || role === "member";
   return <ModuleHome icon={Sunrise} title="Standups" displayName={props.displayName} onHome={props.onHome} onSettings={props.onSettings} onSignOut={props.onSignOut}
     primary={canCreate ? { label: "New standup", icon: Plus, onClick: () => go(["new"]) } : undefined}
-    tabs={[{ id: "standups", label: "Standups" }, { id: "feed", label: "Feed" }]} activeTab={tab} onTab={(id) => go(id === "feed" ? ["feed"] : [])}
+    sections={{ module: "checkins", role, active: tab, onSelect: (id) => go(id === "feed" ? ["feed"] : []) }}
     search={{ value: query, onChange: setQuery, placeholder: tab === "feed" ? "Search answers" : "Find a standup", label: tab === "feed" ? "Search answers" : "Find a standup" }}>
     {tab === "standups" ? <StandupList {...props} query={query} canCreate={canCreate} /> : <Feed {...props} query={query} />}
     {props.creating && canCreate && <NewStandup onClose={() => go([], { replace: true })} onCreated={(href) => props.onOpenPath(href)} flash={props.flash} userId={props.userId} displayName={props.displayName} />}

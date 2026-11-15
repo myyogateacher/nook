@@ -111,3 +111,82 @@ describe("preferences API (D92, T97)", () => {
     expect((await request("/calendars", {}, owner)).status).toBe(200);
   });
 });
+
+describe("the sidebar's layout in preferences (left navigation phase 4, D1295, T97)", () => {
+  type WithSidebar = Preferences & { sidebar?: { mode?: string; order?: string[]; pinned?: string[]; expanded?: string[] } };
+
+  test("absent until saved; saved whole with the modules, and kept by a modules-only save", async () => {
+    const user = await createUser("Prefs sidebar save");
+    expect(await getPreferences(user)).toEqual({ disabledModules: [], revision: 0, updatedAt: null });
+    const sidebar = { mode: "rail", order: ["crm", "notes", "tasks"], pinned: ["crm"], expanded: ["inbox", "crm"] };
+    const first = await put(user, { disabledModules: ["bin"], revision: 0, sidebar });
+    expect(first.status).toBe(200);
+    expect((await json<{ preferences: WithSidebar }>(first)).preferences).toMatchObject({ disabledModules: ["bin"], revision: 1, sidebar });
+    // Settings → Modules sends no sidebar: the layout stays.
+    expect((await put(user, { disabledModules: [], revision: 1 })).status).toBe(200);
+    expect(await getPreferences(user)).toMatchObject({ disabledModules: [], revision: 2, sidebar });
+    const me = await json<{ preferences: WithSidebar }>(await request("/auth/me", {}, user));
+    expect(me.preferences.sidebar).toEqual(sidebar);
+    // A new layout replaces the old whole; null clears it.
+    expect((await json<{ preferences: WithSidebar }>(await put(user, { disabledModules: [], revision: 2, sidebar: { pinned: [] } }))).preferences.sidebar).toEqual({ pinned: [] });
+    const cleared = await json<{ preferences: WithSidebar }>(await put(user, { disabledModules: [], revision: 3, sidebar: null }));
+    expect(cleared.preferences).toEqual({ disabledModules: [], revision: 4, updatedAt: expect.any(String) });
+    const audits = db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = 'preferences.update' ORDER BY created_at").all(user.userId) as Array<{ metadata_json: string }>;
+    expect(audits.length).toBe(4);
+    expect(JSON.parse(audits[0]!.metadata_json).sidebar).toEqual(sidebar);
+  });
+
+  test("a stale revision gets 409 with the other device's layout, and exactly one of two racers wins", async () => {
+    const user = await createUser("Prefs sidebar race");
+    expect((await put(user, { disabledModules: [], revision: 0, sidebar: { order: ["tasks", "notes"] } })).status).toBe(200);
+    const stale = await put(user, { disabledModules: [], revision: 0, sidebar: { order: ["files"] } });
+    expect(stale.status).toBe(409);
+    expect((await json<{ code: string; preferences: WithSidebar }>(stale)).preferences).toMatchObject({ revision: 1, sidebar: { order: ["tasks", "notes"] } });
+    const racers = await Promise.all([
+      put(user, { disabledModules: [], revision: 1, sidebar: { pinned: ["calendar"] } }),
+      put(user, { disabledModules: [], revision: 1, sidebar: { pinned: ["files"] } })
+    ]);
+    expect(racers.map((response) => response.status).sort()).toEqual([200, 409]);
+    const after = await getPreferences(user) as WithSidebar;
+    expect(after.revision).toBe(2);
+    expect([["calendar"], ["files"]]).toContainEqual(after.sidebar?.pinned);
+  });
+
+  test("unknown ids, duplicates, other modes, extra keys, and oversized lists get 400 and change nothing", async () => {
+    const user = await createUser("Prefs sidebar invalid");
+    for (const sidebar of [
+      { mode: "wide" },
+      { order: ["home"] },
+      { order: ["agents"] },
+      { order: ["settings"] },
+      { pinned: ["notes", "notes"] },
+      { expanded: ["Inbox"] },
+      { order: ["notes", "files", "tasks", "collections", "calendar", "whiteboards", "vault", "chat", "reports", "forms", "time", "goals", "checkins", "crm", "bookings", "townhall", "notes"] },
+      { order: "notes" },
+      { order: [], admin: true },
+      [],
+      "rail"
+    ]) expect((await put(user, { disabledModules: [], revision: 0, sidebar })).status).toBe(400);
+    expect(await getPreferences(user)).toEqual({ disabledModules: [], revision: 0, updatedAt: null });
+  });
+
+  test("ids that are no longer known are dropped on read; the stored value is bounded", async () => {
+    const user = await createUser("Prefs sidebar legacy");
+    db.query("INSERT INTO user_preferences (user_id, disabled_modules, revision, updated_at, sidebar) VALUES (?, '[]', 2, ?, ?)")
+      .run(user.userId, new Date().toISOString(), JSON.stringify({ mode: "rail", order: ["retired", "crm"], pinned: ["retired"] }));
+    expect(await getPreferences(user)).toMatchObject({ revision: 2, sidebar: { mode: "rail", order: ["crm"], pinned: [] } });
+    expect(() => db.query("UPDATE user_preferences SET sidebar = ? WHERE user_id = ?").run("not json", user.userId)).toThrow();
+    expect(() => db.query("UPDATE user_preferences SET sidebar = ? WHERE user_id = ?").run("[]", user.userId)).toThrow();
+    expect(() => db.query("UPDATE user_preferences SET sidebar = ? WHERE user_id = ?").run(JSON.stringify({ order: "x".repeat(3000) }), user.userId)).toThrow();
+  });
+
+  test("ordering and pinning are presentation: a pinned app turned off stays off, and its API still enforces access", async () => {
+    const owner = await createUser("Prefs sidebar pinned owner");
+    const stranger = await createUser("Prefs sidebar pinned stranger");
+    const created = await request("/tasks/boards", { method: "POST", body: JSON.stringify({ name: "Pinned elsewhere" }) }, owner);
+    const boardId = (await json<{ board: { id: string } }>(created)).board.id;
+    expect((await put(stranger, { disabledModules: ["tasks"], revision: 0, sidebar: { pinned: ["tasks"], order: ["tasks"] } })).status).toBe(200);
+    expect((await getPreferences(stranger)).disabledModules).toEqual(["tasks"]);
+    expect((await request(`/tasks/boards/${boardId}`, {}, stranger)).status).toBe(404);
+  });
+});

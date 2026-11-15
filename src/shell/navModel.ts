@@ -6,6 +6,7 @@ import type { Role } from "../team/teamRoles";
 import { readyWorkspaceModules, workspaceModule } from "../workspaceModules/registry";
 import { sectionHref, sectionOfRoute, visibleSections } from "../workspaceModules/sections";
 import { isWorkspaceModuleId, type WorkspaceModuleId, type WorkspaceRoute } from "../workspaceModules/types";
+import { arrangeApps, type AppsLayout } from "./sidebarPrefs";
 
 /**
  * The global sidebar's tree (docs/plan/LEFT_NAV.md §2.1, §3; D1270). A pure function of the person's
@@ -58,11 +59,18 @@ export type NavRecents = { tasks?: readonly NavRecent[]; collections?: readonly 
 export const NAV_RECENT_LIMIT = 8;
 
 export type NavTree = {
-  /** Search (Notes' search box and ⌘K until the phase-4 palette); null when Search or Notes is off. */
+  /**
+   * Search: opens the ⌘K palette (phase 4, D1293), so it is always there; the palette offers
+   * "Search notes for …" only while Notes and Search are on (`notesSearch`).
+   */
   search: NavItem | null;
+  /** Notes' full-text search is available (Notes and Search on). */
+  notesSearch: boolean;
   /** Home, Inbox, Notifications, in that order (Inbox and Notifications only when shown). */
   primary: NavItem[];
-  /** The apps, in `MODULES` order. */
+  /** Apps the person pinned to the top of Apps (D1294), in their order. */
+  pinned: NavItem[];
+  /** The other apps, in the person's order (`MODULES` order until they reorder). */
   apps: NavItem[];
   /** Settings, in the footer. */
   settings: NavItem;
@@ -84,6 +92,8 @@ export type NavInput = {
   location?: { pathname: string; search: string };
   /** Recently opened boards and collections (D1282). */
   recents?: NavRecents;
+  /** The person's app order and pins (D1294); absent: `MODULES` order, nothing pinned. */
+  layout?: AppsLayout | null;
 };
 
 /** The sidebar item an app section belongs to: Team and the Bin are Settings routes (Wave 38). */
@@ -91,7 +101,7 @@ export function navItemForSection(section: AppSection): string {
   return section === "team" || section === "bin" ? "settings" : section;
 }
 
-export function buildNavTree({ disabledModules, features, role, active, readyModules, location, recents }: NavInput): NavTree {
+export function buildNavTree({ disabledModules, features, role, active, readyModules, location, recents, layout }: NavInput): NavTree {
   const unavailable = unavailableModules(features);
   const disabled = unavailable.length ? normalizeDisabledModules([...disabledModules, ...unavailable]) : disabledModules;
   const ready = readyModules ?? readyWorkspaceModules().map((module) => module.id);
@@ -100,7 +110,7 @@ export function buildNavTree({ disabledModules, features, role, active, readyMod
   const item = (id: string, kind: NavItemKind, label: string, href: string, icon: LucideIcon, section: AppSection): NavItem =>
     ({ id, kind, label, href, icon, section, current: kind !== "search" && currentId === id });
 
-  const apps = MODULES.flatMap((module) => {
+  const shownApps = MODULES.flatMap((module) => {
     const launcher = module.launcher;
     if (!launcher) return [];
     if (hiddenModuleForApp(disabled, launcher.section) !== null) return [];
@@ -116,16 +126,22 @@ export function buildNavTree({ disabledModules, features, role, active, readyMod
   if (on("inbox") && role !== undefined && role !== "guest") primary.push({ ...item("inbox", "inbox", "Inbox", "/inbox", Inbox, "inbox"), children: appSections("inbox", { role, active, location, recents }) });
   if (on("notifications")) primary.push(item("notifications", "notifications", "Notifications", "/notifications", Bell, "notifications"));
 
+  // D1294: the person's order and pins; turning an app off or the server not offering it still hides it.
+  const { pinned, rest: apps } = arrangeApps(shownApps, layout, (app) => app.id);
+  const notesSearch = on("search") && on("notes");
+
   return {
-    search: on("search") && on("notes") ? item("search", "search", "Search", "/notes", Search, "notes") : null,
+    search: item("search", "search", "Search", notesSearch ? "/notes" : "/", Search, notesSearch ? "notes" : "home"),
+    notesSearch,
     primary,
+    pinned,
     apps,
     settings: item("settings", "settings", "Settings", "/settings", Settings, "settings")
   };
 }
 
 /** Every item of a tree, top to bottom (search, primary, apps, settings), children after their app. */
-export const navItems = (tree: NavTree): NavItem[] => [...(tree.search ? [tree.search] : []), ...tree.primary, ...tree.apps, tree.settings]
+export const navItems = (tree: NavTree): NavItem[] => [...(tree.search ? [tree.search] : []), ...tree.primary, ...tree.pinned, ...tree.apps, tree.settings]
   .flatMap((item) => [item, ...(item.children ?? [])]);
 
 type SectionContext = Pick<NavInput, "role" | "active" | "location" | "recents">;

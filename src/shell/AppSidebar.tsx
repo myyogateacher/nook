@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type DragEvent as ReactDragEvent, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ChevronLeft, ChevronRight, ChevronsUpDown, LogOut, PanelLeftClose, PanelLeftOpen, Sparkles, UserRound, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsUpDown, Keyboard, LogOut, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pin, Search, SlidersHorizontal, Sparkles, UserRound, X } from "lucide-react";
 import { TopBarItems } from "../AppShell";
 import { appName } from "../appName";
 import { Avatar } from "../ui/Avatar";
 import { useSelfAvatar } from "../ui/selfAvatar";
 import { navItems, type NavItem, type NavTree } from "./navModel";
-import { readExpandedApps, writeExpandedApps, type SidebarMode } from "./useSidebarState";
+import { readExpandedApps, SIDEBAR_PREFS_EVENT, writeExpandedApps, type SidebarMode, type SidebarPrefsChange } from "./useSidebarState";
 import "./sidebar.css";
 
 export type AppSidebarProps = {
@@ -18,7 +18,7 @@ export type AppSidebarProps = {
   unreadCount: number;
   /** A plain click on an item (middle-click and modifier clicks keep the browser's behaviour). */
   onNavigate: (item: NavItem) => void;
-  /** The Search row: Notes' search box until the ⌘K palette (phase 4). */
+  /** The Search row: opens the ⌘K palette (phase 4, D1293). */
   onSearch: () => void;
   onAccount: () => void;
   onSignOut: () => void;
@@ -30,10 +30,24 @@ export type AppSidebarProps = {
   railForced?: boolean;
   /** Phase 3 (D1287): the slot the app on screen draws its own tree into, or null while none is shown. */
   onSlot?: (element: HTMLElement | null) => void;
+  /** Phase 4 (D1294): an app dragged to `index` of the shown apps (pinned first), pinned or not. */
+  onMoveApp?: (id: string, index: number, pinned: boolean) => void;
+  /** Phase 4: opens the Customize sidebar sheet (Apps' ⋯ and the account menu). */
+  onCustomize?: () => void;
+  /** Phase 4: opens the keyboard shortcut sheet (the account menu). */
+  onShortcuts?: () => void;
 };
 
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
+export const isMacPlatform = isMac;
 export const toggleShortcutLabel = () => isMac() ? "⌘\\" : "Ctrl+\\";
+/** The palette's shortcut, as the platform writes it (D1293). */
+export const paletteShortcutLabel = () => isMac() ? "⌘K" : "Ctrl+K";
+export const paletteKeyShortcuts = () => isMac() ? "Meta+K" : "Control+K";
+/** The drag of an app row (D1294): its id, under a type nothing else in the app reads. */
+export const APP_DRAG_TYPE = "application/x-nook-sidebar-app";
+const isAppDrag = (event: Pick<ReactDragEvent, "dataTransfer">) => Array.from(event.dataTransfer?.types ?? []).includes(APP_DRAG_TYPE);
+type DropAt = { id: string; after: boolean } | { id: "pinned-empty"; after: false };
 const badgeText = (count: number) => count > 99 ? "99+" : String(count);
 
 /** A plain left click, not one the browser should handle (new tab, download, …). */
@@ -78,8 +92,59 @@ function childGroups(children: readonly NavItem[]) {
  * it, Escape closes it and returns to the app. The list keeps the current app and its sections in
  * view whenever the page changes.
  */
-export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unreadCount, onNavigate, onSearch, onAccount, onSignOut, onToggle, onClose, railForced = false, onSlot }: AppSidebarProps) {
+export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unreadCount, onNavigate, onSearch, onAccount, onSignOut, onToggle, onClose, railForced = false, onSlot, onMoveApp, onCustomize, onShortcuts }: AppSidebarProps) {
   const rail = mode === "rail";
+  // D1294: dragging an app row reorders the apps; dropping it in Pinned pins it. Pointer only (the
+  // drawer has none): the Customize sheet is the keyboard and touch path.
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [dropAt, setDropAt] = useState<DropAt | null>(null);
+  const draggable = Boolean(onMoveApp) && mode !== "drawer";
+  useEffect(() => {
+    if (!dragging) return;
+    const end = () => { setDragging(null); setDropAt(null); };
+    window.addEventListener("dragend", end);
+    window.addEventListener("drop", end);
+    return () => { window.removeEventListener("dragend", end); window.removeEventListener("drop", end); };
+  }, [dragging]);
+  const pinnedIds = tree.pinned.map((item) => item.id);
+  const dropApp = (id: string, target: DropAt) => {
+    const shown = [...pinnedIds, ...tree.apps.map((item) => item.id)].filter((entry) => entry !== id);
+    if (target.id === "pinned-empty") { onMoveApp?.(id, 0, true); return; }
+    if (target.id === id) return;
+    const at = shown.indexOf(target.id);
+    if (at < 0) return;
+    onMoveApp?.(id, at + (target.after ? 1 : 0), pinnedIds.includes(target.id));
+  };
+  const dragHandlers = (item: NavItem) => draggable && item.kind === "app" ? {
+    draggable: true,
+    onDragStart: (event: ReactDragEvent<HTMLLIElement>) => {
+      // Only the app's own row moves it (not one of its sections).
+      if (!(event.target instanceof Element) || event.target.closest(".app-sidebar-sections, .app-sidebar-flyout") || !event.currentTarget.contains(event.target)) return;
+      event.dataTransfer.setData(APP_DRAG_TYPE, item.id);
+      event.dataTransfer.effectAllowed = "move";
+      hideTip();
+      closeFlyout();
+      setDragging(item.id);
+    },
+    onDragOver: (event: ReactDragEvent<HTMLLIElement>) => {
+      if (!isAppDrag(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const row = event.currentTarget.querySelector(".app-sidebar-row") ?? event.currentTarget.querySelector(".app-sidebar-link") ?? event.currentTarget;
+      const box = row.getBoundingClientRect();
+      const after = event.clientY > box.top + box.height / 2;
+      setDropAt((current) => current && current.id === item.id && current.after === after ? current : { id: item.id, after });
+    },
+    onDrop: (event: ReactDragEvent<HTMLLIElement>) => {
+      if (!isAppDrag(event)) return;
+      event.preventDefault();
+      const id = event.dataTransfer.getData(APP_DRAG_TYPE) || dragging;
+      if (id && dropAt && dropAt.id === item.id) dropApp(id, dropAt);
+      setDragging(null);
+      setDropAt(null);
+    }
+  } : {};
+  const dropClass = (item: NavItem) => [dragging === item.id ? "is-dragging" : "", dropAt && dropAt.id === item.id ? (dropAt.after ? "drop-after" : "drop-before") : ""].filter(Boolean).join(" ");
   const [tip, setTip] = useState<Tip | null>(null);
   useEffect(() => { if (!rail) setTip(null); }, [rail]);
   const showTip = (label: string, element: HTMLElement) => {
@@ -201,6 +266,12 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
   // can close it until the next app opens); any other app the person opened stays open, kept in
   // localStorage `nook.sidebar.expanded` across reloads.
   const [manualOpen, setManualOpen] = useState<string[]>(() => typeof window === "undefined" ? [] : readExpandedApps(window.localStorage));
+  // D1295: another device's choice arrived from the server.
+  useEffect(() => {
+    const reread = (event: Event) => { if ((event as CustomEvent<SidebarPrefsChange>).detail?.source === "server") setManualOpen(readExpandedApps(window.localStorage)); };
+    window.addEventListener(SIDEBAR_PREFS_EVENT, reread);
+    return () => window.removeEventListener(SIDEBAR_PREFS_EVENT, reread);
+  }, []);
   const [closedCurrent, setClosedCurrent] = useState<string | null>(null);
   const currentAppId = [...tree.primary, ...tree.apps].find((item) => item.current)?.id ?? null;
   useEffect(() => { setClosedCurrent(null); }, [currentAppId]);
@@ -252,7 +323,7 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
     const Icon = item.icon;
     const badge = badgeFor(item);
     const label = badge > 0 ? `${item.label}, ${badge >= 100 ? "100 or more" : badge} ${item.kind === "inbox" ? "pending" : "unread"}` : undefined;
-    return <li key={item.id}>
+    return <li key={item.id} className={dropClass(item) || undefined} {...dragHandlers(item)}>
       <a className={`app-sidebar-link${item.current ? " active" : ""}`} href={item.href} aria-current={item.current ? (item.kind === "settings" && settingsView && slotCurrent ? "true" : "page") : undefined} aria-label={label}
         onClick={(event) => { if (!isPlainClick(event)) return; event.preventDefault(); hideTip(); onClick(); }} {...tipHandlers(item.label)}>
         <Icon aria-hidden="true" /><span className="app-sidebar-label">{item.label}</span>
@@ -293,7 +364,7 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
       onMouseEnter: (event: ReactMouseEvent<HTMLLIElement>) => { if (rail || finePointer()) openFlyoutSoon(item.id, rowOf(event.currentTarget)); },
       // Moving onto the app's own tree (a portal inside the flyout) is not leaving.
       onMouseLeave: (event: ReactMouseEvent<HTMLLIElement>) => { if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return; closeFlyoutSoon(); },
-      onDragEnter: (event: ReactDragEvent<HTMLLIElement>) => { if (item.current && !open) openFlyout(item.id, rowOf(event.currentTarget)); },
+      onDragEnter: (event: ReactDragEvent<HTMLLIElement>) => { if (item.current && !open && !isAppDrag(event)) openFlyout(item.id, rowOf(event.currentTarget)); },
       onFocus: (event: ReactFocusEvent<HTMLLIElement>) => {
         if (quietFocusRef.current) return;
         const target = event.target as HTMLElement;
@@ -320,7 +391,8 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
       }
     } : {};
     const sectionsId = `app-sidebar-sections-${item.id}`;
-    return <li key={item.id} className={`app-sidebar-app${item.current ? " is-current" : ""}${expanded ? " is-open" : ""}`} {...railHandlers}>
+    const dropped = dropClass(item);
+    return <li key={item.id} className={`app-sidebar-app${item.current ? " is-current" : ""}${expanded ? " is-open" : ""}${dropped ? ` ${dropped}` : ""}`} {...railHandlers} {...dragHandlers(item)}>
       <div className="app-sidebar-row">
         <a className={`app-sidebar-link${item.current ? " active" : ""}${rail ? "" : " has-disclosure"}`} href={item.href} aria-current={item.current ? (childCurrent && (!rail || open) ? "true" : "page") : undefined} aria-label={label}
           aria-controls={open ? flyoutId : undefined} aria-expanded={rail ? open : undefined}
@@ -371,11 +443,34 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
         <div ref={slotRef} className="app-sidebar-slot app-sidebar-settings-slot" />
       </> : <>
         <ul className="app-sidebar-list">
-          {tree.search && link(tree.search, onSearch)}
+          {tree.search && <li key="search">
+            <button type="button" className="app-sidebar-link app-sidebar-search" aria-haspopup="dialog" aria-keyshortcuts={paletteKeyShortcuts()}
+              onClick={() => { hideTip(); onSearch(); }} {...tipHandlers(`Search (${paletteShortcutLabel()})`)}>
+              <Search aria-hidden="true" /><span className="app-sidebar-label">Search</span>
+              {!rail && <kbd className="app-sidebar-kbd" aria-hidden="true">{paletteShortcutLabel()}</kbd>}
+            </button>
+          </li>}
           {tree.primary.map((item) => branch(item, () => onNavigate(item)))}
         </ul>
-        {tree.apps.length > 0 && <>
-          <p className="app-sidebar-heading" id="app-sidebar-apps">Apps</p>
+        {/* D1294: apps pinned to the top; while an app is dragged, an empty Pinned group takes the drop. */}
+        {(tree.pinned.length > 0 || (dragging && draggable)) && <>
+          <p className="app-sidebar-heading" id="app-sidebar-pinned">Pinned</p>
+          <ul className="app-sidebar-list app-sidebar-pinned" aria-labelledby="app-sidebar-pinned">
+            {tree.pinned.map((item) => branch(item, () => onNavigate(item)))}
+            {tree.pinned.length === 0 && <li className={`app-sidebar-drop-empty${dropAt?.id === "pinned-empty" ? " drop-before" : ""}`} aria-hidden="true"
+              onDragOver={(event) => { if (!isAppDrag(event)) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDropAt({ id: "pinned-empty", after: false }); }}
+              onDragLeave={() => setDropAt((current) => current?.id === "pinned-empty" ? null : current)}
+              onDrop={(event) => { if (!isAppDrag(event)) return; event.preventDefault(); const id = event.dataTransfer.getData(APP_DRAG_TYPE) || dragging; if (id) dropApp(id, { id: "pinned-empty", after: false }); setDragging(null); setDropAt(null); }}>
+              <Pin aria-hidden="true" /><span className="app-sidebar-label">Drop here to pin</span>
+            </li>}
+          </ul>
+        </>}
+        {(tree.apps.length > 0 || tree.pinned.length > 0) && <>
+          <div className="app-sidebar-heading-row">
+            <p className="app-sidebar-heading" id="app-sidebar-apps">Apps</p>
+            {onCustomize && !rail && <button type="button" className="app-sidebar-heading-action" aria-label="Customize sidebar" title="Customize sidebar: order, pin, and hide apps"
+              aria-haspopup="dialog" onClick={() => { hideTip(); onCustomize(); }}><MoreHorizontal aria-hidden="true" /></button>}
+          </div>
           <ul className="app-sidebar-list" aria-labelledby="app-sidebar-apps">
             {tree.apps.map((item) => branch(item, () => onNavigate(item)))}
           </ul>
@@ -385,13 +480,13 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
     <div className="app-sidebar-foot">
       <div className="app-sidebar-timer"><TopBarItems /></div>
       <ul className="app-sidebar-list">{link(tree.settings, () => { if (settingsCurrent) setAppsOverSettings(false); onNavigate(tree.settings); })}</ul>
-      <AccountMenu displayName={displayName} avatarUrl={avatarUrl} rail={rail} onAccount={onAccount} onSignOut={onSignOut} tipHandlers={tipHandlers(displayName)} />
+      <AccountMenu displayName={displayName} avatarUrl={avatarUrl} rail={rail} onAccount={onAccount} onSignOut={onSignOut} onCustomize={onCustomize} onShortcuts={onShortcuts} tipHandlers={tipHandlers(displayName)} />
     </div>
     {tip && <span className="app-sidebar-tip" role="tooltip" aria-hidden="true" style={{ top: tip.top, left: tip.left }}>{tip.label}</span>}
   </nav>;
 }
 
-function AccountMenu({ displayName, avatarUrl, rail, onAccount, onSignOut, tipHandlers }: { displayName: string; avatarUrl?: string | null; rail: boolean; onAccount: () => void; onSignOut: () => void; tipHandlers: object }) {
+function AccountMenu({ displayName, avatarUrl, rail, onAccount, onSignOut, onCustomize, onShortcuts, tipHandlers }: { displayName: string; avatarUrl?: string | null; rail: boolean; onAccount: () => void; onSignOut: () => void; onCustomize?: () => void; onShortcuts?: () => void; tipHandlers: object }) {
   const [open, setOpen] = useState(false);
   const menuId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -430,6 +525,8 @@ function AccountMenu({ displayName, avatarUrl, rail, onAccount, onSignOut, tipHa
     </button>
     {open && <ul id={menuId} className="ui-menu app-sidebar-account-menu" role="menu" aria-label={`Account: ${displayName}`} onKeyDown={onKeyDown}>
       <li role="none"><button type="button" role="menuitem" className="ui-menu-item" onClick={() => pick(onAccount)}><UserRound aria-hidden="true" />Account and security</button></li>
+      {onCustomize && <li role="none"><button type="button" role="menuitem" className="ui-menu-item" aria-haspopup="dialog" onClick={() => pick(onCustomize)}><SlidersHorizontal aria-hidden="true" />Customize sidebar</button></li>}
+      {onShortcuts && <li role="none"><button type="button" role="menuitem" className="ui-menu-item" aria-haspopup="dialog" aria-keyshortcuts="?" onClick={() => pick(onShortcuts)}><Keyboard aria-hidden="true" />Keyboard shortcuts</button></li>}
       <li role="none"><button type="button" role="menuitem" className="ui-menu-item" onClick={() => pick(onSignOut)}><LogOut aria-hidden="true" />Sign out</button></li>
     </ul>}
   </div>;

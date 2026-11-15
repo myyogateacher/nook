@@ -4,7 +4,7 @@ This guide covers the apps a signed-in user sees. Your server may use its own na
 
 ## Home and URLs
 
-Signing in lands on **Home**, which is also **Today** (below): a row of app links (Notes, Files, Tasks, Collections, Calendar) under the greeting. The account row at the top of Today, Tasks, Collections, Calendar, and Settings holds, from left to right, **Settings**, **Inbox**, the notification bell, your picture and name, and **Sign out**, always the rightmost (inside Settings the **Settings** button is left out). The Bin and Team are in [Settings](#settings), not in the top bar. On a phone the same buttons show as icons in the same order, with your picture in place of your name. Notes and Files keep Settings and Sign out in the sidebar footer instead (Notes also has the **Inbox** row there), and Files has the bell in the file list header next to **Upload**. Each app's **Home** control leads back. Each view has a real URL, and reloading or opening a link resumes that view (a signed-out visit shows the login screen first, then continues to the requested page):
+Signing in lands on **Home**, which is also **Today** (below). Every app opens from the [sidebar](#the-sidebar-and-the-command-palette) on the left; on a phone, Home also shows the apps as tiles under the greeting. The Bin and Team are in [Settings](#settings). Each view has a real URL, and reloading or opening a link resumes that view (a signed-out visit shows the login screen first, then continues to the requested page):
 
 | URL | View |
 | --- | --- |
@@ -47,6 +47,19 @@ Unknown paths open Home. A link to a note or file you cannot read (or that is mi
 **The bell.** Each notification opens what it is about and marks itself read: an event for a reminder; the proposal itself when a key or routine suggested one change (several open the Inbox); your item when an admin removed or lowered someone's access to it; **Settings → My access** when your own access, groups, or calendar feed links changed; **Inbox → Routines** when an admin paused a routine of yours; **Settings → API keys** for a key notice; **Settings → Security** for a new sign-in or a Google sign-in change; the vault, chat, agent, or knowledge base that was shared with you (a shared chat or agent opens the notifications list while your role cannot chat). Links carry ids only, never titles. While you can no longer open the item, the notice opens the app's list instead, and a link opened later shows that app's usual "not found" message. On a phone, Back returns to the notifications list (or the page you opened the bell from). Push notifications open the same places.
 
 **Dropdowns.** Choices such as a calendar, a colour, a field type, or a sort field open a list under the control on desktop and a sheet from the bottom on phones. Type the first letters to jump to a choice, use the arrow keys, Home, and End to move, Enter or Space to choose, and Escape to close without choosing; long lists have a search box. On phones, Back closes the sheet and leaves the page and any dialog under it as they were.
+
+## The sidebar and the command palette
+
+The sidebar on the left of every app holds, from the top: **Search**, **Home**, **Inbox**, **Notifications**, your **Pinned** apps, the other **Apps**, and at the bottom the running timer, **Settings**, and your account (Account and security, Customize sidebar, Keyboard shortcuts, Sign out).
+
+- **Collapse it** to a strip of icons with the button at its top or `Ctrl+\` (`⌘\` on a Mac). Windows narrower than 1280 px start with the strip. On a phone, ☰ at the top left opens it; a dot on ☰ means something new is waiting in the Inbox or Notifications.
+- **The app you are in** shows its sections under it (Contacts: People, Companies, Deals, …; Tasks: Boards, My work, Views and your recent boards). The small arrow beside any app shows its sections without leaving the page; with a mouse, resting on an app shows them beside the sidebar. Notes and Files show their folders there, Reports its folders and lists, and Settings its sections.
+- **Reorder and pin apps.** Drag an app up or down the list, or drop it in **Pinned** to keep it at the top (drag it back to Apps to unpin). **Customize sidebar** (the ⋯ beside Apps, the account menu, or the palette) does the same with buttons: Move up, Move down, Pin, and **Show**. Show is the same switch as [Settings → Modules](#settings--modules): hiding an app turns it off for you only. **Reset order and pins** goes back to the default order. Home's app tiles on a phone follow the same order.
+- **Your layout follows you.** The collapse choice, the order, the pins, and the apps whose sections you opened are saved with your account, so another browser shows the same sidebar after you sign in. If two devices change it at once, the latest arrangement wins and nobody's module choices are undone. Ordering and pinning only arrange the sidebar; they never change who can open what.
+
+**The command palette.** `Ctrl+K` (`⌘K` on a Mac), or **Search** in the sidebar, opens it from anywhere, also while you type in a note. Type a few letters to find an app, a section (`ins` lists every app's Insights; `con ins` narrows to Contacts › Insights), a recent board, collection, or note, a quick action such as **Start timer** or **New poll**, or a command such as **Keyboard shortcuts**. `↑` and `↓` move, `Enter` opens, `Esc` closes. Whatever you type, the last line is **Search notes for "…"**, which opens Notes' search with your words. Leaving a note from the palette saves it first, as any app switch does. The palette offers exactly what your sidebar shows: apps you turned off or that your role cannot use are not in it.
+
+**Keyboard shortcuts.** Press `?` (outside a text field), or choose **Keyboard shortcuts** in the account menu or the palette, to see them all: the palette, the sidebar toggle, `Alt+T` for the timer, `/` to search the page, `n` for new, `j`/`k` to move through a list, and the shortcuts of the app you are in.
 
 ## Today
 
@@ -107,7 +120,7 @@ Type `/` for the command menu. Besides headings, lists, checklists, quotes, and 
 
 ### Search
 
-The search box at the top of the note list searches the text of your notes, not just their titles. Press `Ctrl+K` (`⌘K` on a Mac) or `/` to jump to it, and `Esc` to clear it.
+The search box at the top of the note list searches the text of your notes, not just their titles. Press `/` in Notes to jump to it, or type in the [command palette](#the-sidebar-and-the-command-palette) (`Ctrl+K`, `⌘K` on a Mac) and choose **Search notes for "…"**; `Esc` clears it.
 
 - **What matches.** Every word you type must appear in the note, in any order; case and accents are ignored, so `creme` finds "Crème". The last word matches as a prefix while you type (`brul` finds "brûlée"); end the query with a space to match whole words only. Put words in `"double quotes"` to match them as an exact phrase. Punctuation and operators such as `AND`, `OR`, `NOT`, `*`, or `title:` are treated as ordinary text, not search syntax. Link text, image descriptions, and code are searched; link addresses are not.
 - **What you see.** Your own notes are searched as you last saved them, including unpublished drafts, which are marked **Draft**. Notes shared with you are searched as their latest published version; you never see someone else's draft. Notes in the Bin are not searched until restored. Matches in the title rank first, and each result shows a highlighted excerpt, its folder, its owner when it is not yours, and when it was last edited.

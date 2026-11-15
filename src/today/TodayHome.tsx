@@ -9,7 +9,8 @@ import { CustomizeSections } from "./CustomizeSections";
 import { QuickActions } from "./QuickActions";
 import { DigestPrompt } from "./DigestPrompt";
 import { getToday, type TodayResponse, type TodaySection } from "./todayApi";
-import { enabledTodayApps } from "./todayApps";
+import { arrangedTodayApps, enabledTodayApps } from "./todayApps";
+import { useShellAppsLayout } from "../shell/shellContext";
 import { readHiddenSections, toggleHidden, writeHiddenSections } from "./todayPreferences";
 import { DEFAULT_SECTION_ORDER, groupTodaySections, sectionCount, storageText, TODAY_SECTIONS, viewAllRoute, type StorageUsage } from "./todaySections";
 import "./today.css";
@@ -161,6 +162,8 @@ async function loadVisibleToday(moduleHidden: readonly string[]): Promise<TodayR
 
 export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings, onSignOut }: TodayHomeProps) {
   const disabledModules = useDisabledModules();
+  // Left navigation phase 4 (D1294): the phone tiles follow the sidebar's order, pinned apps first.
+  const appsLayout = useShellAppsLayout();
   const moduleHiddenKey = hiddenTodaySections(disabledModules).join(",");
   const [data, setData] = useState<TodayResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -254,7 +257,7 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
         <p className="today-launcher-label" aria-hidden="true">Apps</p>
         <nav className="today-launcher" aria-label="Apps">
           <ul>
-            {enabledTodayApps(disabledModules).map(({ section, label, href, icon: Icon }) => <li key={section}>
+            {arrangedTodayApps(enabledTodayApps(disabledModules), appsLayout).map(({ section, label, href, icon: Icon }) => <li key={section}>
               <a className={`today-app today-app-${section}`} href={href} onClick={(event) => {
                 if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
                 event.preventDefault();

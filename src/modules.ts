@@ -3,6 +3,7 @@ import { Archive, Bell, CalendarDays, ChartColumn, FileText, Inbox, KanbanSquare
 import type { AppSection } from "./appShellNavigation";
 import { workspaceModules, type WorkspaceModuleId } from "./workspaceModules";
 import { WORKSPACE_MODULE_IDS } from "../shared/workspaceModules";
+import { cleanSidebarLayout, type SidebarLayout } from "../shared/sidebar";
 
 /**
  * The module registry (D92, docs/plan/WAVE_13_TASK_CARD_UX.md §4.8). Settings → Modules lists these,
@@ -70,7 +71,7 @@ export const MODULES: readonly ModuleDef[] = [
     todaySections: Object.keys(module.todaySections ?? {}),
     ...(module.ready ? {} : { planned: true })
   })),
-  { id: "search", label: "Search", description: "The search box in Notes, Ctrl+K, and the text filter on boards. The Notes list and the other board filters stay.", icon: Search, routeApps: [], todaySections: [], headerItem: "search" },
+  { id: "search", label: "Search", description: "The search box in Notes, Search notes in the Ctrl+K palette, and the text filter on boards. The Notes list, the palette, and the other board filters stay.", icon: Search, routeApps: [], todaySections: [], headerItem: "search" },
   { id: "bin", label: "Bin", description: "Hides Settings → Bin and Leaving the Bin soon. Deleting still moves items to the Bin, and they are still deleted forever after 30 days.", icon: Trash2, routeApps: ["bin"], todaySections: ["binSoon"], headerItem: "bin" },
   { id: "notifications", label: "Notifications", description: "Hides the bell and the Notifications page. Reminders and push notifications still arrive.", icon: Bell, routeApps: ["notifications"], todaySections: [], headerItem: "bell" },
   { id: "team", label: "Team", description: "Settings → Team and the people in this workspace. Roles and blocking still apply.", icon: Users, routeApps: ["team"], todaySections: [] },
@@ -200,7 +201,8 @@ export function hiddenTodaySections(disabled: readonly ModuleId[]): string[] {
 /** The one-line hint after a route of a hidden module was replaced with Home. */
 export const moduleOffHint = (id: ModuleId) => `${moduleDef(id).label} is turned off. Turn it on in Settings → Modules.`;
 
-export type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: string | null };
+/** `sidebar`: the sidebar's saved layout (left navigation phase 4, D1295), absent while never saved. */
+export type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: string | null; sidebar?: SidebarLayout };
 export const DEFAULT_PREFERENCES: Preferences = { disabledModules: [], revision: 0, updatedAt: null };
 
 /** Reads a server `preferences` value defensively; anything malformed means every module is on. */
@@ -208,7 +210,8 @@ export function parsePreferences(value: unknown): Preferences {
   if (!value || typeof value !== "object") return DEFAULT_PREFERENCES;
   const raw = value as Record<string, unknown>;
   const revision = typeof raw.revision === "number" && Number.isInteger(raw.revision) && raw.revision >= 0 ? raw.revision : 0;
-  return { disabledModules: normalizeDisabledModules(raw.disabledModules), revision, updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null };
+  const sidebar = cleanSidebarLayout(raw.sidebar);
+  return { disabledModules: normalizeDisabledModules(raw.disabledModules), revision, updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null, ...(sidebar ? { sidebar } : {}) };
 }
 
 /** The disabled modules of the signed-in user. Outside a provider every module is on. */

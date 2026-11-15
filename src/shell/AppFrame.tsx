@@ -2,9 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { useInboxCount } from "../AppShell";
 import { focusIntoDialog, trapTabKey } from "../files/Dialog";
 import { useReturnFocus } from "../calendar/hooks";
-import { AppSidebar } from "./AppSidebar";
-import type { NavItem, NavTree } from "./navModel";
+import { isEditableTarget } from "../ui/moduleKeys";
+import { notify } from "../ui/notify";
+import type { QuickActionDef } from "../workspaceModules/types";
+import { AppSidebar, isMacPlatform, toggleShortcutLabel } from "./AppSidebar";
+import type { NavItem, NavRecent, NavTree } from "./navModel";
+import { paletteEntries, type PaletteEntry } from "./paletteModel";
 import { ShellContext, useUnreadNotifications, type LeaveGuard, type ShellValue } from "./shellContext";
+import { CommandPalette } from "./CommandPalette";
+import { CustomizeSidebar, ShortcutSheet, type CustomizeApp } from "./ShellSheets";
+import { shortcutGroups, type ShortcutContext } from "./shortcuts";
+import { moveApp, updateAppsLayout, type AppsLayout } from "./sidebarPrefs";
 import { useSidebarState } from "./useSidebarState";
 import "./sidebar.css";
 
@@ -14,7 +22,6 @@ export type AppFrameProps = {
   avatarUrl?: string | null;
   /** Opens an item's app through App's `openApp` (Notes saves first). */
   onNavigate: (item: NavItem) => void;
-  onSearch: () => void;
   onAccount: () => void;
   onSignOut: () => void;
   /**
@@ -22,8 +29,39 @@ export type AppFrameProps = {
    * (Files' uploads) and before any sidebar move.
    */
   guard?: LeaveGuard;
+  /** Phase 4 (D1294): the person's app order and pins (the tree is already arranged by them). */
+  layout?: AppsLayout;
+  /** Phase 4 (D1293): what the ⌘K palette offers beyond the tree, and how it opens paths. */
+  palette?: FramePalette;
+  /** Phase 4 (D1296): the "?" sheet's context (the module on screen, Notes, Time). */
+  shortcuts?: Omit<ShortcutContext, "mac" | "notesSearch">;
+  /** Phase 4 (D1294): every app the Customize sheet lists, and the Show switch (Settings → Modules). */
+  customize?: { apps: readonly CustomizeApp[]; onShown: (id: string, shown: boolean) => void };
   children: ReactNode;
 };
+
+export type FramePalette = {
+  recentNotes?: readonly NavRecent[];
+  quickActions?: ReadonlyArray<QuickActionDef & { module: string }>;
+  moduleLabels?: Readonly<Record<string, string>>;
+  /** An in-app path (a recent note, a quick action's href), through App's openContentPath (Notes saves first). */
+  onOpenPath: (href: string) => void;
+  /** Opens Notes' search with the query (Notes saves first). */
+  onSearchNotes: (query: string) => void;
+};
+
+/** ⌘K, or Ctrl+K elsewhere (either is accepted, as for ⌘\). */
+export function isPaletteKey(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">) {
+  return (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k";
+}
+
+/** "?" outside a text field and without ⌘, Ctrl, or Alt. */
+export function isShortcutSheetKey(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "target">) {
+  return event.key === "?" && !event.metaKey && !event.ctrlKey && !event.altKey && !isEditableTarget(event.target);
+}
+
+/** A modal of the page (a dialog, a sheet) is open; the phone drawer and the palette are the frame's own. */
+const pageModalOpen = () => typeof document !== "undefined" && document.querySelector('[aria-modal="true"]:not(#app-drawer):not(.palette)') !== null;
 
 /**
  * The signed-in app frame (docs/plan/LEFT_NAV.md §2.1, §3; D1270): a grid of the global sidebar and
@@ -32,7 +70,7 @@ export type AppFrameProps = {
  * the page header's ☰ opens. A whiteboard canvas covers the frame (sidebar.css); a full-page task
  * card holds the rail through `useShellRail` (D1279).
  */
-export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onSearch, onAccount, onSignOut, guard, children }: AppFrameProps) {
+export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onAccount, onSignOut, guard, layout, palette, shortcuts, customize, children }: AppFrameProps) {
   // A full-page task card holds the rail (D1279); phones keep the drawer.
   const [railHolds, setRailHolds] = useState(0);
   const sidebar = useSidebarState(railHolds > 0);
@@ -61,9 +99,87 @@ export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onSearch, o
     if (app) app(page); else page();
   }, [closeDrawer]);
 
+  // Phase 4: the ⌘K palette (D1293), the "?" sheet (D1296), and Customize sidebar (D1294). Closing one
+  // without going anywhere puts focus back where it was.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [sheet, setSheet] = useState<"shortcuts" | "customize" | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const rememberFocus = () => {
+    const active = typeof document === "undefined" ? null : document.activeElement;
+    if (active instanceof HTMLElement && !active.closest(".palette, #app-drawer")) returnFocusRef.current = active;
+  };
+  const restoreFocus = () => {
+    const element = returnFocusRef.current;
+    returnFocusRef.current = null;
+    if (element?.isConnected) window.requestAnimationFrame(() => element.focus({ preventScroll: true }));
+  };
+  const openPalette = useCallback(() => { rememberFocus(); closeDrawer(); setSheet(null); setPaletteOpen(true); }, [closeDrawer]);
+  const openSheet = useCallback((which: "shortcuts" | "customize") => { if (!returnFocusRef.current) rememberFocus(); closeDrawer(); setPaletteOpen(false); setSheet(which); }, [closeDrawer]);
+  const closePalette = () => { setPaletteOpen(false); restoreFocus(); };
+  const closeSheet = () => { setSheet(null); restoreFocus(); };
+
+  const toggleRef = useRef(sidebar.toggle);
+  toggleRef.current = sidebar.toggle;
+  const keysRef = useRef({ paletteOpen, openPalette, openSheet, closePalette });
+  keysRef.current = { paletteOpen, openPalette, openSheet, closePalette };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      const keys = keysRef.current;
+      if (isPaletteKey(event)) {
+        // ⌘K wins everywhere in the app, Notes' editor included (D1297); a page's dialog keeps it.
+        if (keys.paletteOpen) { event.preventDefault(); keys.closePalette(); return; }
+        if (pageModalOpen()) return;
+        event.preventDefault();
+        keys.openPalette();
+      } else if (isShortcutSheetKey(event) && !keys.paletteOpen && !pageModalOpen()) {
+        event.preventDefault();
+        keys.openSheet("shortcuts");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const mac = isMacPlatform();
+  const entries = useMemo(() => paletteOpen ? paletteEntries({
+    tree,
+    recentNotes: palette?.recentNotes,
+    quickActions: palette?.quickActions,
+    moduleLabels: palette?.moduleLabels,
+    searchNotes: tree.notesSearch,
+    canToggleSidebar: mode !== "drawer" && !railForced,
+    toggleShortcut: toggleShortcutLabel(),
+    canCustomize: Boolean(customize)
+  }) : [], [paletteOpen, tree, palette, mode, railForced, customize]);
+
+  const runEntry = (entry: PaletteEntry) => {
+    const action = entry.action;
+    setPaletteOpen(false);
+    if (action.kind === "command") {
+      if (action.command === "toggleSidebar") { restoreFocus(); toggleRef.current(); }
+      else openSheet(action.command);
+      return;
+    }
+    returnFocusRef.current = null;
+    if (action.kind === "nav") guarded(() => onNavigate(action.item));
+    else if (action.kind === "path") guarded(() => palette?.onOpenPath(action.href));
+    else if (action.kind === "searchNotes") guarded(() => palette?.onSearchNotes(action.query));
+    else {
+      const quick = action.action;
+      const openPath = (path: string) => guarded(() => palette?.onOpenPath(path));
+      if (quick.href && !quick.run) openPath(quick.href);
+      else void Promise.resolve(quick.run?.({ openPath, flash: (message) => notify.info(message) })).catch((reason: unknown) => notify.error(reason instanceof Error ? reason.message : "That did not work"));
+    }
+  };
+
+  const shownIds = [...tree.pinned, ...tree.apps].map((item) => item.id);
+  const onMoveApp = (id: string, index: number, pinned: boolean) => updateAppsLayout(moveApp(layout, shownIds, id, index, pinned));
+
   // D1287: the slot the app on screen draws its own tree into (under its row, or in its flyout).
   const [sidebarSlot, setSidebarSlot] = useState<HTMLElement | null>(null);
-  const shell = useMemo<ShellValue>(() => ({ mode, drawerOpen, openDrawer, closeDrawer, attention, leaveGuardRef, holdRail, sidebarSlot }), [mode, drawerOpen, openDrawer, closeDrawer, attention, holdRail, sidebarSlot]);
+  const appsLayout = layout ?? null;
+  const shell = useMemo<ShellValue>(() => ({ mode, drawerOpen, openDrawer, closeDrawer, attention, leaveGuardRef, holdRail, sidebarSlot, appsLayout, openPalette }), [mode, drawerOpen, openDrawer, closeDrawer, attention, holdRail, sidebarSlot, appsLayout, openPalette]);
 
   const drawerRef = useRef<HTMLDivElement>(null);
   useReturnFocus(drawerOpen, ".shell-menu-button");
@@ -99,13 +215,16 @@ export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onSearch, o
     inboxCount={inboxShown ? inboxCount : 0}
     unreadCount={notificationsShown ? unreadCount : 0}
     onNavigate={(item) => guarded(() => onNavigate(item))}
-    onSearch={() => guarded(onSearch)}
+    onSearch={openPalette}
     onAccount={() => guarded(onAccount)}
     onSignOut={() => guarded(onSignOut)}
     onToggle={sidebar.toggle}
     railForced={railForced}
     onClose={drawer ? closeDrawer : undefined}
     onSlot={setSidebarSlot}
+    onMoveApp={layout ? onMoveApp : undefined}
+    onCustomize={customize ? () => openSheet("customize") : undefined}
+    onShortcuts={() => openSheet("shortcuts")}
   />;
 
   return <ShellContext.Provider value={shell}>
@@ -118,6 +237,9 @@ export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onSearch, o
           {sidebarElement(true)}
         </div>
       </div>}
+      {paletteOpen && <CommandPalette entries={entries} searchNotes={tree.notesSearch} onRun={runEntry} onClose={closePalette} />}
+      {sheet === "shortcuts" && <ShortcutSheet groups={shortcutGroups({ mac, notesSearch: tree.notesSearch, ...shortcuts })} onClose={closeSheet} />}
+      {sheet === "customize" && customize && <CustomizeSidebar apps={customize.apps} layout={layout ?? {}} onLayout={updateAppsLayout} onShown={customize.onShown} onClose={closeSheet} />}
     </div>
   </ShellContext.Provider>;
 }

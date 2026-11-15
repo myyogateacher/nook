@@ -44,6 +44,11 @@ type NavProps = {
   onDropReportOnList?: (reportId: string, list: ReportListSummary) => void;
   /** False while the dragged row is a report the caller does not own (a list's reorder drag): folders don't take it. */
   canFileDragged?: boolean;
+  /**
+   * Phase 3 (D1289): each view's URL. With it every row is a real link (middle-click, Copy link) and a
+   * plain click still goes through `onSelect`; the global sidebar's copy of the nav uses it.
+   */
+  hrefFor?: (view: ReportsFolderView | null) => string;
 };
 
 /** Phase 2: two sibling folders with the same name (two people's, from before the shared tree) show who made each. */
@@ -79,7 +84,7 @@ function mergeHandlers(first: Handlers, second: Handlers): Handlers {
   return out;
 }
 
-export function ReportFolderNav({ tree, view, onSelect, canWrite, canCreate = canWrite, canManage = canWrite, dragging, onDropReport, onNewFolder, actions, lists = null, canCreateLists = false, onNewList, listActions, onDropReportOnList, canFileDragged = true }: NavProps) {
+export function ReportFolderNav({ tree, view, onSelect, canWrite, canCreate = canWrite, canManage = canWrite, dragging, onDropReport, onNewFolder, actions, lists = null, canCreateLists = false, onNewList, listActions, onDropReportOnList, canFileDragged = true, hrefFor }: NavProps) {
   const [over, setOver] = useState<string | null>(null);
   const [draggingFolder, setDraggingFolder] = useState<string | null>(null);
   const [folderOver, setFolderOver] = useState<{ id: string; zone: FolderDropZone; plan: FolderDropPlan } | null>(null);
@@ -144,10 +149,16 @@ export function ReportFolderNav({ tree, view, onSelect, canWrite, canCreate = ca
       if (reportId) onDropReportOnList(reportId, list);
     }
   } : {};
-  const item = (key: string, label: ReactNode, icon: ReactNode, count: number | undefined, selected: boolean, onClick: () => void, extra: object = {}, more = "") =>
-    <button type="button" className={`reports-nav-link${selected ? " active" : ""}${dragging && over === key ? " drop-target" : ""}${more}`} aria-current={selected ? "page" : undefined} onClick={onClick} {...extra}>
-      {icon}<span className="reports-nav-name">{label}</span>{count !== undefined && <b>{count}</b>}
-    </button>;
+  const viewOf = (key: string): ReportsFolderView | null => key === "all" ? null : key;
+  const item = (key: string, label: ReactNode, icon: ReactNode, count: number | undefined, selected: boolean, onClick: () => void, extra: object = {}, more = "") => {
+    const className = `reports-nav-link${selected ? " active" : ""}${dragging && over === key ? " drop-target" : ""}${more}`;
+    const body = <>{icon}<span className="reports-nav-name">{label}</span>{count !== undefined && <b>{count}</b>}</>;
+    const tip = typeof label === "string" ? label : undefined;
+    return hrefFor
+      ? <a className={className} href={hrefFor(viewOf(key))} aria-current={selected ? "page" : undefined} data-sidebar-tip={tip} {...extra}
+        onClick={(event) => { if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); onClick(); }}>{body}</a>
+      : <button type="button" className={className} aria-current={selected ? "page" : undefined} onClick={onClick} {...extra}>{body}</button>;
+  };
 
   const nodes = tree ? orderedFolders(tree.folders) : [];
   const twins = sameNameSiblings(folders);

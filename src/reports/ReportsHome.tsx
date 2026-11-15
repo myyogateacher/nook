@@ -7,7 +7,9 @@ import { ModalDialog } from "../files/Dialog";
 import { NameDialog } from "../files/RenameDialog";
 import { relativeTime } from "../files/format";
 import { useLayerOpener, whenHistorySettled } from "../historyDialogs";
-import { reportsListId, reportsListView, type ReportsFilter, type ReportsFolderView } from "../router";
+import { formatRoute, reportsListId, reportsListView, type ReportsFilter, type ReportsFolderView } from "../router";
+import { reportsFolderRoute } from "../reportsRoute";
+import { ShellSidebarPortal, useShell } from "../shell/shellContext";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { errorText, notify } from "../ui/notify";
 import { useConfirm } from "../ui/useConfirm";
@@ -104,6 +106,7 @@ function checkFolderName(initial: string) {
  */
 export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, onOpen, onOpenDatasources, onOpenToolServers, folder: view = null, onFolder, filter, onFilter, flash = (message) => notify.info(message) }: HomeProps) {
   const { canWrite } = useRole();
+  const shell = useShell();
   const [reports, setReports] = useState<ReportSummary[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -468,7 +471,7 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
     ...(report.isOwner && canWrite ? [{ id: "delete", label: "Move to Bin", icon: <Trash2 aria-hidden="true" />, danger: true, onSelect: () => { void removeReport(report); } }] : [])
   ];
 
-  const nav = (inDrawer: boolean) => <ReportFolderNav tree={tree} view={view} onSelect={inDrawer ? chooseInDrawer : select} canWrite={canWrite} dragging={dragging} onDropReport={dropReport}
+  const nav = (inDrawer: boolean, hrefFor?: (next: ReportsFolderView | null) => string) => <ReportFolderNav tree={tree} view={view} onSelect={inDrawer ? chooseInDrawer : select} canWrite={canWrite} dragging={dragging} onDropReport={dropReport} hrefFor={hrefFor}
     canCreate={canWrite && (tree?.canCreateFolders ?? false)} canManage={canWrite && (tree?.canManageFolders ?? false)}
     canFileDragged={!dragging || Boolean(reports?.find((item) => item.id === dragging)?.isOwner)}
     lists={lists} canCreateLists={canWrite && (tree?.canCreateFolders ?? false)}
@@ -500,9 +503,12 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
     <PageHeader title="Reports" />
     <ReadOnlyBanner />
     <div className="reports-layout">
-      <aside className="reports-sidebar" aria-label="Folders">{nav(false)}</aside>
+      {/* Phase 3 (D1289): inside the app frame the nav lives in the global sidebar (and the phone drawer);
+          this pane and the folder sheet are for a page outside it. */}
+      <ShellSidebarPortal>{nav(false, (next) => formatRoute(reportsFolderRoute(next, filter)))}</ShellSidebarPortal>
+      {!shell && <aside className="reports-sidebar" aria-label="Folders">{nav(false)}</aside>}
       <section className="reports-body reports-main" aria-labelledby="reports-title">
-        <button type="button" className="reports-folder-chip" onClick={() => setDrawer(true)} aria-haspopup="dialog" aria-label={`Folders: ${title}`}>
+        <button type="button" className="reports-folder-chip" onClick={() => { if (shell?.mode === "drawer") shell.openDrawer(); else setDrawer(true); }} aria-haspopup="dialog" aria-label={`Folders: ${title}`}>
           <ViewIcon view={view} /><span>{title}</span>{reports && <small>{shownCount}</small>}<ChevronDown aria-hidden="true" />
         </button>
         <div className="reports-toolbar">

@@ -885,8 +885,13 @@ Per-user settings that follow the account across devices. Today they hold only t
 
 ```ts
 type ModuleId = "notes" | "files" | "tasks" | "collections" | "calendar" | "search" | "bin" | "notifications" | "team";
-type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: string | null };
+type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: string | null; sidebar?: SidebarLayout };
+// Left navigation phase 4 (D1295, migration 122): the sidebar's layout, shared with every device.
+type SidebarAppId = "notes" | "files" | "tasks" | "collections" | "calendar" | "whiteboards" | "vault" | "chat" | "reports" | WorkspaceModuleId; // shared/sidebar.ts
+type SidebarLayout = { mode?: "expanded" | "rail"; order?: SidebarAppId[]; pinned?: SidebarAppId[]; expanded?: (SidebarAppId | "inbox")[] };
 ```
+
+- **The sidebar's layout** (`sidebar`, left out until first saved) holds the collapse choice, the app order (apps it does not list keep their default place), the apps pinned to the top of Apps, and the apps opened by their chevron. It arranges the sidebar, the rail, the phone drawer, and Home's phone tiles; it hides nothing (hiding an app is `disabledModules`) and is never read for access (T97). It shares `revision` with `disabledModules`.
 
 - **A hidden module is not a security boundary (T97).** Preferences only hide UI in the web app. Every API route, ACL, MCP tool, calendar feed, reminder, and push keeps working for a module that is turned off, and keeps enforcing its own access rules. MCP never reads preferences, and there is no MCP tool to change them.
 - `team` is reserved for Wave 14. Home and Settings are not modules and cannot be turned off.
@@ -896,9 +901,9 @@ type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: s
 | Endpoint | Body | Returns | Errors |
 | --- | --- | --- | --- |
 | `GET /api/preferences` | | 200 `{ preferences }` | |
-| `PUT /api/preferences` | `{ disabledModules: ModuleId[], revision }` (strict; unique known ids, at most one per module; `revision` is the one last read, `0` before the first save) | 200 `{ preferences }` with `revision` + 1 (the first save creates revision 1) | 400 for an unknown or repeated id, a missing or negative `revision`, or an extra key. 409 `PREFERENCES_CHANGED` with the current `preferences` when `revision` is stale (compare-and-swap, one writer wins) |
+| `PUT /api/preferences` | `{ disabledModules: ModuleId[], revision, sidebar? }` (strict; unique known ids, at most one per module; `revision` is the one last read, `0` before the first save; `sidebar` absent keeps the saved layout, `null` clears it, an object replaces it whole: strict, known ids only, each list unique and at most one per app) | 200 `{ preferences }` with `revision` + 1 (the first save creates revision 1) | 400 for an unknown or repeated id, a missing or negative `revision`, another `mode`, or an extra key. 409 `PREFERENCES_CHANGED` with the current `preferences` when `revision` is stale (compare-and-swap, one writer wins) |
 
-`GET /api/auth/me` adds `preferences: Preferences`, so the app knows which modules to show before its first render. It is served before the TOTP setup gate, like the rest of `/auth/me`; `/api/preferences` is behind it. Each successful PUT is audited as `preferences.update { disabledModules, revision }` (module ids only).
+`GET /api/auth/me` adds `preferences: Preferences`, so the app knows which modules to show (and how to arrange the sidebar) before its first render. It is served before the TOTP setup gate, like the rest of `/auth/me`; `/api/preferences` is behind it. Each successful PUT is audited as `preferences.update { disabledModules, revision, sidebar? }` (ids only; `sidebar` when the request carried one). MCP has no preferences tool (D1298).
 
 ## MCP keys and tools (Wave 8)
 

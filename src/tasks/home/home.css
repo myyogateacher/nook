@@ -105,3 +105,7 @@
   .task-view-actions .icon-button, .task-view-header .task-back { width: 44px; height: 44px; }
 }
 .task-query-swim .task-swimlanes { padding: 2px 0 10px; }
+
+/* D1282: Boards / My work / Views are in the sidebar on a computer; phones keep the segments. */
+@media (min-width: 761px) { .task-home-segments { display: none; } }
+.task-home-intro { margin-bottom: 14px; }

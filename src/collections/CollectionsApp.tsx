@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SHELL_ROUTE_EVENT } from "../shell/locationSignal";
 
 import { PageHeader } from "../shell/PageHeader";
 import { readHistoryDepth } from "../appShellNavigation";
@@ -60,8 +61,16 @@ export function CollectionsApp({ userId, displayName, navigate, flash, onHome, o
       setRoute(next);
       setUnderlyingViewId(underlyingViewFor(event.state, userId, next));
     };
+    // The sidebar opened a recent collection or the list (D1282).
+    const onShellRoute = () => {
+      const next = parseRoute(window.location.pathname);
+      if (next.app !== "collections") return;
+      setRoute(next);
+      setUnderlyingViewId(null);
+    };
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    window.addEventListener(SHELL_ROUTE_EVENT, onShellRoute);
+    return () => { window.removeEventListener("popstate", onPopState); window.removeEventListener(SHELL_ROUTE_EVENT, onShellRoute); };
   }, [userId]);
 
   const go = useCallback((next: CollectionsRoute, options: GoOptions = {}) => {

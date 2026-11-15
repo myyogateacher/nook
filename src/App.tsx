@@ -81,6 +81,8 @@ import { AuthDivider, currentReturnPath, googleOnlyHint, GoogleButton, googleErr
 import { useBinCount } from "./AppShell";
 import { AppFrame } from "./shell/AppFrame";
 import { buildNavTree, type NavItem } from "./shell/navModel";
+import { announceShellRoute, splitHref, useLocationHref } from "./shell/locationSignal";
+import { useRecents } from "./shell/recents";
 import { ShellMenuButton } from "./shell/shellContext";
 import { repeatDelta, useLeaveGuard } from "./ui/useLeaveGuard";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
@@ -88,7 +90,8 @@ import { ReadOnlyBanner, RoleContext } from "./team/roleAccess";
 import { FilesApp } from "./files/FilesApp";
 import { TasksApp } from "./tasks/TasksApp";
 import { CollectionsApp } from "./collections/CollectionsApp";
-import { carriedCollectionsState } from "./collectionsRoute";
+import { carriedCollectionsState, collectionsRoute } from "./collectionsRoute";
+import { tasksRoute } from "./tasksRoute";
 import { carriedTasksState } from "./tasksNavigation";
 import { CalendarApp } from "./calendar/CalendarApp";
 import { NotificationsApp } from "./notifications/NotificationsApp";
@@ -1882,8 +1885,15 @@ export function App() {
   // goes back to its own start page (a board, a report, a module's sub-page) as a new entry, remounted
   // so it reads the new location. Settings opens the hub; inside the hub its own nav moves.
   const [appKey, setAppKey] = useState(0);
+  // D1282: the address on screen lights the sidebar's current section; recent boards and collections
+  // nest under Tasks and Collections (their lists are read while the app is on screen).
+  const locationHref = useLocationHref();
+  const recentUser = session?.user.id ?? "";
+  const recentTasks = useRecents("tasks", recentUser, Boolean(session) && isModuleEnabled(disabledModules, "tasks"), activeApp === "tasks", (id) => formatRoute(tasksRoute(id)));
+  const recentCollections = useRecents("collections", recentUser, Boolean(session) && isModuleEnabled(disabledModules, "collections"), activeApp === "collections", (id) => formatRoute(collectionsRoute(id)));
   function openFromSidebar(item: NavItem) {
     if (!session) return;
+    if (item.kind === "section" || item.kind === "recent") { void openSectionPath(item); return; }
     if (item.kind === "settings") {
       if (activeApp !== "settings" && activeApp !== "team" && activeApp !== "bin") openSettings();
       return;
@@ -1894,6 +1904,20 @@ export function App() {
     if (formatRoute(home) === locationUrl(window.location)) return;
     navigate(home);
     setAppKey((key) => key + 1);
+  }
+
+  // D1280, D1282: a section or recent item. Another app opens its path as a new entry (Notes saves
+  // first, as any app switch does; the frame already asked App's and the page's leave guards). The
+  // app on screen moves to its own section as a new entry and reads the address again (it is not
+  // remounted, so its loaded lists stay).
+  async function openSectionPath(item: NavItem) {
+    if (!session) return;
+    if (activeApp === "notes" && !await leaveNotes()) return;
+    if (item.href === locationUrl(window.location)) return;
+    if (item.section !== activeApp) { openInboxPath(item.href); return; }
+    const { pathname, search } = splitHref(item.href);
+    navigate(parseRoute(pathname, search));
+    announceShellRoute();
   }
 
   // The sidebar's Search: Notes' search box (Ctrl/⌘+K there) until the phase-4 palette. Phones show the
@@ -2373,7 +2397,7 @@ export function App() {
   const notificationsContext = isModuleEnabled(disabledModules, "notifications") ? { openList: () => { void openApp("notifications"); }, openPath: openNotificationPath } : null;
   // The global sidebar (docs/plan/LEFT_NAV.md, D1270): the launcher's apps, Home, Inbox, Notifications,
   // Settings, and the account, around every signed-in page but the 2FA setup screen.
-  const navTree = buildNavTree({ disabledModules: preferredDisabled, features: session.features, role: session.user.role, active: shownApp });
+  const navTree = buildNavTree({ disabledModules: preferredDisabled, features: session.features, role: session.user.role, active: shownApp, location: splitHref(locationHref), recents: { tasks: recentTasks, collections: recentCollections } });
   const frame = (page: ReactNode) => <AppFrame
     tree={navTree}
     displayName={session.user.displayName}

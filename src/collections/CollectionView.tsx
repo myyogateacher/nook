@@ -1,4 +1,5 @@
 import type { Notifier } from "../ui/notify";
+import { recordRecent } from "../shell/recents";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Bookmark, Columns3, Download, Eye, Pencil, RotateCcw, Save, Share2, SlidersHorizontal, Trash2, TriangleAlert, Upload, X } from "lucide-react";
 import { ApiError } from "../api";
@@ -74,7 +75,7 @@ type Dialog =
   | { kind: "picker"; rowId: string; fieldId: string }
   | { kind: "actions"; rowId: string };
 
-export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMissing, notify, openImport = false, onImportOpened }: CollectionViewProps) {
+export function CollectionView({ userId, collectionId, viewId, rowId, go, onBack, onMissing, notify, openImport = false, onImportOpened }: CollectionViewProps) {
   const [collection, setCollection] = useState<CollectionDetail | null>(null);
   const [role, setRole] = useState<CollectionRole>("viewer");
   const [views, setViews] = useState<SavedView[]>([]);
@@ -104,6 +105,9 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
   }, [collectionId, onMissing]);
 
   useEffect(() => { void loadCollection(); }, [loadCollection]);
+  // The sidebar's recent collections (D1282).
+  const collectionName = collection?.name ?? null;
+  useEffect(() => { if (collectionName !== null) recordRecent("collections", userId, { id: collectionId, name: collectionName, href: formatRoute(collectionsRoute(collectionId)) }); }, [userId, collectionId, collectionName]);
   useEffect(() => {
     if (!openImport || !collection) return;
     setDialog({ kind: "import" });

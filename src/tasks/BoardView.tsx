@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { recordRecent } from "../shell/recents";
 import { ArrowLeft, ArrowRight, ChevronLeft, ChevronsLeftRight, ChevronsRightLeft, CircleCheck, Gauge, Pencil, Plus, RotateCcw, Rows3, Settings2, Trash2, TriangleAlert } from "lucide-react";
 import { BoardSettingsSheet } from "./BoardSettingsSheet";
 import { BoardHeaderItemsOutlet } from "../ui/CardSlotOutlets";
@@ -328,6 +329,9 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   // The tab names the board, and the open card before it (QA 0.9.0).
   const openCardTitle = openCardId ? detail?.cards.find((card) => card.id === openCardId)?.title ?? null : null;
   useTasksTitle(board ? `${openCardTitle ? `${openCardTitle} · ` : ""}${savedViews.view ? `${savedViews.view.name} · ` : ""}${board.name} · Tasks` : null);
+  // The sidebar's recent boards (D1282): this board, by its own URL.
+  const boardName = board?.name ?? null;
+  useEffect(() => { if (boardName !== null) recordRecent("tasks", userId, { id: boardId, name: boardName, href: formatRoute(tasksRoute(boardId)) }); }, [userId, boardId, boardName]);
   const cardPage = Boolean(openCardId && openCardFull && board);
   // Back on the board from the full page: the phone track shows the column this entry was on.
   useEffect(() => {

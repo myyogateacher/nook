@@ -37,6 +37,24 @@
 .app-sidebar-link:hover svg { color: inherit; }
 .app-sidebar-label { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-sidebar-badge { flex: none; min-width: 18px; height: 18px; display: inline-grid; place-items: center; border-radius: 9px; padding: 0 5px; background: var(--yellow); color: #281f0b; font-size: .68rem; font-weight: 800; line-height: 1; }
+/* D1280–D1281: the app on screen opens in place to its sections (and recent items), indented under
+   its icon with a guide line; 28 px rows, so the group stays short. */
+.app-sidebar-sublist { display: grid; gap: 1px; margin: 1px 0 4px 18px; border-left: 1px solid #26262b; padding: 0 0 0 8px; list-style: none; }
+.app-sidebar-sublink { min-width: 0; height: 28px; display: flex; align-items: center; border-radius: 7px; padding: 0 8px; color: #9d9da4; font-size: .82rem; font-weight: 550; text-decoration: none; }
+.app-sidebar-sublink:hover { background: var(--panel-hover); color: #fff; }
+.app-sidebar-sublink.active { background: #211e17; color: var(--yellow-strong); }
+.app-sidebar-sublink:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; }
+.app-sidebar-subgroup { margin: 0; }
+.app-sidebar-subheading { margin: 6px 0 2px 36px; color: #6f6f76; font-size: .64rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+/* The rail's flyout: an app's sections beside its icon (hover and focus). Fixed, so the scrolling list never clips it. */
+.app-sidebar-flyout { position: fixed; z-index: 96; min-width: 190px; max-width: 260px; border: 1px solid #36363b; border-radius: 10px; background: #151517; box-shadow: 0 16px 40px rgb(0 0 0 / 50%); }
+.app-sidebar-flyout-body { max-height: calc(100dvh - 16px); overflow-y: auto; border-radius: inherit; padding: 6px; }
+/* D1285: an invisible bridge over the gap back to the row, so a diagonal move into the flyout keeps it open. */
+.app-sidebar-flyout::before { content: ""; position: absolute; top: -8px; bottom: -8px; left: -13px; width: 13px; }
+.app-sidebar-flyout-title { margin: 2px 8px 4px; color: #f4f4f5; font-size: .82rem; font-weight: 700; }
+.app-sidebar-flyout .app-sidebar-sublist { margin: 0; border-left: 0; padding: 0; }
+.app-sidebar-flyout .app-sidebar-subheading { margin: 6px 8px 2px; }
+.app-sidebar[data-mode="rail"] .app-sidebar-flyout .app-sidebar-label { position: static; width: auto; height: auto; overflow: hidden; clip-path: none; }
 .app-sidebar-heading { margin: 10px 10px 4px; color: #77777e; font-size: .68rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
 
 .app-sidebar-foot { position: relative; flex: none; display: grid; gap: 1px; border-top: 1px solid var(--border); padding: 6px 8px; }
@@ -80,6 +98,7 @@
 .app-drawer .app-sidebar-head { height: 56px; padding-top: env(safe-area-inset-top); }
 .app-drawer .app-sidebar-toggle { width: 44px; height: 44px; }
 .app-drawer .app-sidebar-link { height: 44px; font-size: .95rem; }
+.app-drawer .app-sidebar-sublink { height: 40px; font-size: .9rem; }
 .app-drawer .app-sidebar-account-button { height: 48px; }
 @keyframes app-drawer-in { from { transform: translateX(-24px); opacity: .4; } }
 @media (prefers-reduced-motion: reduce) { .app-drawer { animation: none; } }
@@ -115,3 +134,20 @@
 /* D1279: on a computer the pane's name reads as a section label beside the sidebar, not a second brand. */
 @media (min-width: 761px) { .app-frame .folder-pane > .sidebar-header .sidebar-brand strong { color: #85858c; font-size: .7rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; } }
 @media (max-width: 760px) { .app-frame .folder-pane > .sidebar-header { height: 56px; padding: 0 12px 0 6px; } }
+
+/* D1284: each app with sections has its own disclosure chevron (a separate target at the row's end);
+   the app row keeps a lighter tint while one of its sections is the current page. */
+.app-sidebar-row { position: relative; }
+.app-sidebar-link.has-disclosure { padding-right: 34px; }
+.app-sidebar-link.active[aria-current="true"] { background: #1c1a15; }
+.app-sidebar-link.active[aria-current="true"]:hover { background: var(--panel-hover); }
+.app-sidebar-disclosure { position: absolute; top: 50%; right: 3px; width: 24px; height: 24px; display: grid; place-items: center; transform: translateY(-50%); border: 0; border-radius: 6px; padding: 0; background: transparent; color: #6f6f76; cursor: pointer; }
+.app-sidebar-disclosure:hover { background: #26262b; color: #fff; }
+.app-sidebar-disclosure:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; color: #fff; }
+.app-sidebar-disclosure svg { width: 14px; height: 14px; transition: transform .12s ease; }
+.app-sidebar-disclosure[aria-expanded="true"] svg { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .app-sidebar-disclosure svg { transition: none; } }
+.app-drawer .app-sidebar-disclosure { right: 0; width: 44px; height: 44px; }
+.app-drawer .app-sidebar-link.has-disclosure { padding-right: 48px; }
+/* D1285: while a flyout or tooltip is open the sidebar sits above the page's sticky bars (z 31–45), still under sheets and dialogs (60+). */
+.app-sidebar:has(.app-sidebar-flyout, .app-sidebar-tip) { z-index: 55; }

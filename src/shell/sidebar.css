@@ -151,3 +151,112 @@
 .app-drawer .app-sidebar-link.has-disclosure { padding-right: 48px; }
 /* D1285: while a flyout or tooltip is open the sidebar sits above the page's sticky bars (z 31–45), still under sheets and dialogs (60+). */
 .app-sidebar:has(.app-sidebar-flyout, .app-sidebar-tip) { z-index: 55; }
+
+/*
+ * Phase 3 (D1287–D1291): the app on screen draws its own tree into a slot under its row (expanded,
+ * drawer) or in its flyout (rail): Notes' and Files' folders, Reports' folders and lists, a standup's
+ * views, and on a Settings page the hub's sections in place of the apps.
+ */
+.app-sidebar-slot:empty { display: none; }
+.app-sidebar-sections > .app-sidebar-slot { margin: 1px 0 4px 18px; border-left: 1px solid #26262b; padding: 0 0 0 4px; }
+.app-sidebar-flyout .app-sidebar-slot { margin: 0; }
+.app-sidebar-flyout:has(.app-sidebar-slot:not(:empty)) { width: 272px; max-width: 272px; }
+
+/* A folder tree (SidebarFolderTree, D1288). */
+.app-sidebar-tree, .app-sidebar-tree-list, .app-sidebar-tree-children { margin: 0; padding: 0; list-style: none; }
+.app-sidebar-tree-list, .app-sidebar-tree-children { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; }
+.app-sidebar-tree-item { min-width: 0; }
+.app-sidebar-tree-row { --tree-pad: calc(14px + var(--tree-indent, 0) * 12px); position: relative; min-width: 0; }
+.app-sidebar-tree-link { gap: 8px; padding-left: var(--tree-pad); padding-right: 8px; }
+.app-sidebar-tree-link > svg { width: 15px; height: 15px; flex: none; color: #7c7c83; }
+.app-sidebar-tree-link.active > svg { color: var(--yellow); }
+.app-sidebar-tree-name small { margin-left: 6px; color: #6f6f76; font-size: .7rem; }
+.app-sidebar-tree-count { flex: none; margin-left: auto; color: #67676e; font-size: .72rem; font-weight: 600; }
+.app-sidebar-tree-link .folder-system-badge { width: 12px; height: 12px; flex: none; color: #8d8d94; }
+.app-sidebar-tree-toggle { position: absolute; z-index: 1; top: 50%; left: calc(var(--tree-pad) - 15px); width: 15px; height: 22px; display: grid; place-items: center; transform: translateY(-50%); border: 0; border-radius: 5px; padding: 0; background: transparent; color: #66666d; cursor: pointer; }
+.app-sidebar-tree-toggle:hover { background: #26262b; color: #fff; }
+.app-sidebar-tree-toggle:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; color: #fff; }
+.app-sidebar-tree-toggle svg { width: 12px; height: 12px; transition: transform .12s ease; }
+.app-sidebar-tree-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .app-sidebar-tree-toggle svg { transition: none; } }
+.app-sidebar-tree-spacer { display: none; }
+/* A row's small action (Share a note folder): at its end on hover or focus, over the count. */
+.app-sidebar-tree-action { position: absolute; top: 50%; right: 3px; width: 24px; height: 24px; display: grid; place-items: center; transform: translateY(-50%); border: 0; border-radius: 6px; padding: 0; background: #151517; color: #8f8f96; cursor: pointer; opacity: 0; }
+.app-sidebar-tree-action svg { width: 13px; height: 13px; }
+.app-sidebar-tree-action:hover { background: #26262b; color: var(--yellow); }
+.app-sidebar-tree-row:hover .app-sidebar-tree-action, .app-sidebar-tree-action:focus-visible { opacity: 1; }
+.app-sidebar-tree-action:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; }
+/* Drops (a note or a file onto a folder). */
+.app-sidebar-tree-link.drop-candidate { box-shadow: inset 0 0 0 1px #4a3d20; }
+.app-sidebar-tree-link.drop-target { background: #3a301d; color: #ffdb83; box-shadow: inset 0 0 0 1px #81672d; }
+.app-sidebar-tree-heading { height: 26px; display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 6px 0 1px; padding: 0 2px 0 14px; color: #6f6f76; font-size: .64rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+.app-sidebar-tree-new { width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 6px; padding: 0; background: transparent; color: #8f8f96; cursor: pointer; }
+.app-sidebar-tree-new:hover { background: #26262b; color: var(--yellow); }
+.app-sidebar-tree-new:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; }
+.app-sidebar-tree-new svg { width: 14px; height: 14px; }
+.app-sidebar-tree-empty { margin: 2px 8px 6px 14px; color: #6f6f76; font-size: .76rem; line-height: 1.4; }
+.app-sidebar-flyout .app-sidebar-tree-heading { padding-left: 8px; }
+.app-sidebar-flyout .app-sidebar-tree-row { --tree-pad: calc(18px + var(--tree-indent, 0) * 12px); }
+.app-drawer .app-sidebar-tree-link { height: 40px; font-size: .9rem; }
+.app-drawer .app-sidebar-tree-toggle { width: 28px; height: 40px; left: calc(var(--tree-pad) - 26px); }
+.app-drawer .app-sidebar-tree-row { --tree-pad: calc(28px + var(--tree-indent, 0) * 14px); }
+.app-drawer .app-sidebar-tree-action, .app-drawer .app-sidebar-tree-new { width: 40px; height: 40px; opacity: 1; }
+
+/* Notes and Files (D1288): on a computer their folders are in the sidebar, so the pane is gone and
+   the list and the editor (or preview) take its width. Phones keep the pane as their Folders panel. */
+@media (min-width: 761px) {
+  .app-frame .workspace > .folder-pane { display: none; }
+  .app-frame .workspace:not(.files-workspace) { grid-template-columns: 320px minmax(0, 1fr); }
+  .app-frame .files-workspace { grid-template-columns: minmax(0, 1fr); }
+  .app-frame .files-workspace.preview-open { grid-template-columns: minmax(0, 1fr) var(--file-preview-width); }
+}
+@media (max-width: 1020px) and (min-width: 761px) { .app-frame .workspace:not(.files-workspace) { grid-template-columns: 280px minmax(0, 1fr); } }
+
+/* Settings (D1290): on a Settings page the list holds "Back to apps" and the hub's groups; the page
+   loses its 264 px nav from 761 px (phones keep it as the section list). */
+.app-sidebar-back { width: 100%; border: 0; background: transparent; font: inherit; font-size: .86rem; text-align: left; cursor: pointer; }
+.app-sidebar-back:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; }
+.app-sidebar-settings-heading { margin-top: 8px; color: #d4d4d8; font-size: .78rem; letter-spacing: .02em; text-transform: none; }
+.app-sidebar-settings-slot { margin: 0; }
+.app-sidebar-settings-group + .app-sidebar-settings-group { margin-top: 2px; }
+.app-sidebar[data-mode="rail"] .app-sidebar-settings-heading { display: none; }
+@media (min-width: 761px) {
+  .app-frame .settings-hub-layout { grid-template-columns: minmax(0, 1fr); }
+  .app-frame .settings-hub-nav { display: none; }
+}
+
+/* Reports (D1289): its folder nav, in the sidebar's rows. The page loses its 264 px pane (and, from
+   761 px, the folder chip and sheet that stood in for it under 1024 px); phones' chip opens the drawer. */
+.app-frame .reports-layout { display: block; }
+@media (min-width: 761px) {
+  .app-frame .reports-folder-chip { display: none; }
+  .app-frame .reports-main .reports-toolbar h1 { position: static; width: auto; height: auto; overflow: visible; clip-path: none; white-space: normal; }
+}
+.app-sidebar-slot .reports-nav { gap: 1px; }
+.app-sidebar-slot .reports-nav-link { min-height: 28px; height: 28px; grid-template-columns: 15px minmax(0, 1fr) auto; gap: 8px; border-radius: 7px; padding: 0 8px 0 14px; color: #9d9da4; font-size: .82rem; font-weight: 550; text-decoration: none; }
+.app-sidebar-slot .reports-nav-link:hover { background: var(--panel-hover); color: #fff; }
+.app-sidebar-slot .reports-nav-link.active { background: #211e17; color: var(--yellow-strong); }
+.app-sidebar-slot .reports-nav-link.active svg { color: var(--yellow); }
+.app-sidebar-slot .reports-nav-link:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; }
+.app-sidebar-slot .reports-nav-link svg { width: 15px; height: 15px; color: #7c7c83; }
+.app-sidebar-slot .reports-nav-link b { font-size: .72rem; }
+.app-sidebar-slot .reports-nav > .reports-nav-link { padding-right: 8px; }
+.app-sidebar-slot .reports-nav-entry { grid-template-columns: minmax(0, 1fr); }
+.app-sidebar-slot .reports-nav-entry > .reports-nav-link { padding-right: 30px; }
+.app-sidebar-slot .reports-nav-menu { position: absolute; top: 2px; right: 2px; }
+.app-sidebar-slot .reports-nav-menu > button { width: 24px; height: 24px; min-height: 24px; }
+.app-sidebar-slot .reports-nav-entry:not(:hover):not(:focus-within) .reports-nav-link b { visibility: visible; }
+.app-sidebar-slot .reports-nav-entry:is(:hover, :focus-within) .reports-nav-link b { visibility: hidden; }
+.app-sidebar-slot .reports-nav-label { height: 26px; display: flex; align-items: center; margin: 6px 0 1px; padding: 0 2px 0 14px; font-size: .64rem; font-weight: 750; letter-spacing: .1em; }
+.app-sidebar-slot .reports-nav-new { min-height: 28px; height: 28px; grid-template-columns: 15px minmax(0, 1fr); gap: 8px; margin-top: 1px; border-radius: 7px; padding: 0 8px 0 14px; color: #85858c; font-size: .8rem; }
+.app-sidebar-slot .reports-nav-new svg { width: 15px; height: 15px; }
+.app-sidebar-slot .reports-nav-empty { margin: 2px 8px 6px 14px; font-size: .76rem; }
+.app-sidebar-slot .reports-nav-sep { margin: 6px 8px; }
+.app-sidebar-slot .reports-nav-drop-note { margin: 4px 8px 2px 14px; }
+.app-sidebar-slot .reports-nav-tree { gap: 1px; }
+.app-sidebar-slot .reports-nav-menu .report-overflow-menu { z-index: 60; }
+.app-drawer .app-sidebar-slot :is(.reports-nav-link, .reports-nav-new) { min-height: 40px; height: 40px; font-size: .9rem; }
+.app-drawer .app-sidebar-slot .reports-nav-menu { top: 0; opacity: 1; }
+.app-drawer .app-sidebar-slot .reports-nav-menu > button { width: 40px; height: 40px; }
+.app-drawer .app-sidebar-slot .reports-nav-entry > .reports-nav-link { padding-right: 44px; }
+.app-drawer .app-sidebar-slot .reports-nav-entry .reports-nav-link b { visibility: hidden; }

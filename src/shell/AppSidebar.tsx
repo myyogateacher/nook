@@ -1,5 +1,5 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ChevronRight, ChevronsUpDown, LogOut, PanelLeftClose, PanelLeftOpen, Sparkles, UserRound, X } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type DragEvent as ReactDragEvent, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { ChevronLeft, ChevronRight, ChevronsUpDown, LogOut, PanelLeftClose, PanelLeftOpen, Sparkles, UserRound, X } from "lucide-react";
 import { TopBarItems } from "../AppShell";
 import { appName } from "../appName";
 import { Avatar } from "../ui/Avatar";
@@ -28,6 +28,8 @@ export type AppSidebarProps = {
   onClose?: () => void;
   /** The rail is held by the page (a full-page task card): the toggle is unavailable and says why. */
   railForced?: boolean;
+  /** Phase 3 (D1287): the slot the app on screen draws its own tree into, or null while none is shown. */
+  onSlot?: (element: HTMLElement | null) => void;
 };
 
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
@@ -76,7 +78,7 @@ function childGroups(children: readonly NavItem[]) {
  * it, Escape closes it and returns to the app. The list keeps the current app and its sections in
  * view whenever the page changes.
  */
-export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unreadCount, onNavigate, onSearch, onAccount, onSignOut, onToggle, onClose, railForced = false }: AppSidebarProps) {
+export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unreadCount, onNavigate, onSearch, onAccount, onSignOut, onToggle, onClose, railForced = false, onSlot }: AppSidebarProps) {
   const rail = mode === "rail";
   const [tip, setTip] = useState<Tip | null>(null);
   useEffect(() => { if (!rail) setTip(null); }, [rail]);
@@ -137,6 +139,46 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
     const overflow = element.getBoundingClientRect().bottom - (window.innerHeight - 8);
     if (overflow > 0) element.style.top = `${Math.max(8, flyout.top - overflow)}px`;
   }, [flyout]);
+
+  // D1287: the app's own tree (a portal from the app) lives in a slot under its row or in its flyout.
+  // Its React events bubble through the app, not through this nav, so the rail's tooltips and the
+  // flyout's hover over it are native listeners on the slot and on the flyout.
+  const [slotElement, setSlotElement] = useState<HTMLElement | null>(null);
+  const slotRef = useCallback((element: HTMLDivElement | null) => { setSlotElement(element); onSlot?.(element); }, [onSlot]);
+  useEffect(() => {
+    if (!slotElement || !rail) return;
+    const tipOf = (event: Event) => (event.target instanceof Element ? event.target.closest<HTMLElement>("[data-sidebar-tip]") : null);
+    const show = (event: Event) => { const element = tipOf(event); if (element && !element.closest(".app-sidebar-flyout")) showTip(element.dataset.sidebarTip ?? "", element); };
+    const hide = (event: Event) => { if (tipOf(event)) hideTip(); };
+    const events: Array<[string, (event: Event) => void]> = [["mouseover", show], ["mouseout", hide], ["focusin", show], ["focusout", hide]];
+    for (const [name, handler] of events) slotElement.addEventListener(name, handler);
+    return () => { for (const [name, handler] of events) slotElement.removeEventListener(name, handler); };
+  }, [slotElement, rail]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const element = flyoutRef.current;
+    if (!flyout || !element) return;
+    const row = element.parentElement;
+    const enter = () => cancelFlyoutClose();
+    const leave = (event: MouseEvent) => { if (!(event.relatedTarget instanceof Node && row?.contains(event.relatedTarget))) closeFlyoutSoon(); };
+    element.addEventListener("mouseenter", enter);
+    element.addEventListener("mouseleave", leave);
+    // A drag (a note or a file onto a folder) opened it on the app's row; it closes when the drag ends.
+    window.addEventListener("dragend", closeFlyoutSoon);
+    window.addEventListener("drop", closeFlyoutSoon);
+    return () => {
+      element.removeEventListener("mouseenter", enter);
+      element.removeEventListener("mouseleave", leave);
+      window.removeEventListener("dragend", closeFlyoutSoon);
+      window.removeEventListener("drop", closeFlyoutSoon);
+    };
+  }, [flyout]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // D1287: on a Settings page the list shows the Settings tree; "Back to apps" shows the apps again
+  // without leaving the page, and the footer's Settings row brings the tree back.
+  const settingsCurrent = tree.settings.current;
+  const [appsOverSettings, setAppsOverSettings] = useState(false);
+  useEffect(() => { setAppsOverSettings(false); }, [settingsCurrent]);
+  const settingsView = settingsCurrent && !appsOverSettings;
 
   // D1284: every app with sections has a disclosure chevron. The app on screen is open (its chevron
   // can close it until the next app opens); any other app the person opened stays open, kept in
@@ -218,8 +260,9 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
   /** An item with sections: expanded in place when on screen, a flyout in the rail. */
   const branch = (item: NavItem, onClick: () => void) => {
     const children = item.children ?? [];
-    if (children.length === 0) return link(item, onClick);
-    const childCurrent = children.some((child) => child.current);
+    if (children.length === 0 && !item.tree) return link(item, onClick);
+    // An app whose own tree is under it (D1287) marks its current folder itself.
+    const childCurrent = children.some((child) => child.current) || Boolean(item.tree);
     const Icon = item.icon;
     const badge = badgeFor(item);
     const label = badge > 0 ? `${item.label}, ${badge >= 100 ? "100 or more" : badge} ${item.kind === "inbox" ? "pending" : "unread"}` : undefined;
@@ -231,7 +274,9 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
     const rowOf = (element: HTMLElement) => element.querySelector<HTMLElement>(".app-sidebar-link") ?? element;
     const railHandlers = hoverable ? {
       onMouseEnter: (event: ReactMouseEvent<HTMLLIElement>) => { if (rail || finePointer()) openFlyoutSoon(item.id, rowOf(event.currentTarget)); },
-      onMouseLeave: closeFlyoutSoon,
+      // Moving onto the app's own tree (a portal inside the flyout) is not leaving.
+      onMouseLeave: (event: ReactMouseEvent<HTMLLIElement>) => { if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return; closeFlyoutSoon(); },
+      onDragEnter: (event: ReactDragEvent<HTMLLIElement>) => { if (item.current && !open) openFlyout(item.id, rowOf(event.currentTarget)); },
       onFocus: (event: ReactFocusEvent<HTMLLIElement>) => {
         if (quietFocusRef.current) return;
         const target = event.target as HTMLElement;
@@ -274,11 +319,11 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
             else if (event.key === "ArrowLeft" && expanded) { event.preventDefault(); toggleOpen(item, false); }
           }}><ChevronRight aria-hidden="true" /></button>}
       </div>
-      {expanded && <div id={sectionsId} className="app-sidebar-sections">{subLists(item, `app-sidebar-${item.id}`)}</div>}
+      {expanded && <div id={sectionsId} className="app-sidebar-sections">{subLists(item, `app-sidebar-${item.id}`)}{item.current && <div ref={slotRef} className="app-sidebar-slot" />}</div>}
       {open && flyout && <div ref={flyoutRef} id={flyoutId} className="app-sidebar-flyout" role="group" data-anchor={rail ? "rail" : "expanded"} aria-label={`${item.label} sections`}
         style={{ top: flyout.top, left: flyout.left }} onMouseEnter={cancelFlyoutClose}>
         <div className="app-sidebar-flyout-body"><p className="app-sidebar-flyout-title" aria-hidden="true">{item.label}</p>
-        {subLists(item, flyoutId)}</div>
+        {subLists(item, flyoutId)}{item.current && <div ref={slotRef} className="app-sidebar-slot" />}</div>
       </div>}
     </li>;
   };
@@ -299,20 +344,30 @@ export function AppSidebar({ tree, mode, displayName, avatarUrl, inboxCount, unr
         </button>}
     </div>
     <div ref={scrollRef} className="app-sidebar-scroll" onScroll={() => { hideTip(); closeFlyout(); scrollingUntil.current = Date.now() + 200; }}>
-      <ul className="app-sidebar-list">
-        {tree.search && link(tree.search, onSearch)}
-        {tree.primary.map((item) => branch(item, () => onNavigate(item)))}
-      </ul>
-      {tree.apps.length > 0 && <>
-        <p className="app-sidebar-heading" id="app-sidebar-apps">Apps</p>
-        <ul className="app-sidebar-list" aria-labelledby="app-sidebar-apps">
-          {tree.apps.map((item) => branch(item, () => onNavigate(item)))}
+      {settingsView ? <>
+        <ul className="app-sidebar-list">
+          <li><button type="button" className="app-sidebar-link app-sidebar-back" onClick={() => { hideTip(); setAppsOverSettings(true); }} {...tipHandlers("Back to apps")}>
+            <ChevronLeft aria-hidden="true" /><span className="app-sidebar-label">Back to apps</span>
+          </button></li>
         </ul>
+        <p className="app-sidebar-heading app-sidebar-settings-heading">Settings</p>
+        <div ref={slotRef} className="app-sidebar-slot app-sidebar-settings-slot" />
+      </> : <>
+        <ul className="app-sidebar-list">
+          {tree.search && link(tree.search, onSearch)}
+          {tree.primary.map((item) => branch(item, () => onNavigate(item)))}
+        </ul>
+        {tree.apps.length > 0 && <>
+          <p className="app-sidebar-heading" id="app-sidebar-apps">Apps</p>
+          <ul className="app-sidebar-list" aria-labelledby="app-sidebar-apps">
+            {tree.apps.map((item) => branch(item, () => onNavigate(item)))}
+          </ul>
+        </>}
       </>}
     </div>
     <div className="app-sidebar-foot">
       <div className="app-sidebar-timer"><TopBarItems /></div>
-      <ul className="app-sidebar-list">{link(tree.settings, () => onNavigate(tree.settings))}</ul>
+      <ul className="app-sidebar-list">{link(tree.settings, () => { if (settingsCurrent) setAppsOverSettings(false); onNavigate(tree.settings); })}</ul>
       <AccountMenu displayName={displayName} avatarUrl={avatarUrl} rail={rail} onAccount={onAccount} onSignOut={onSignOut} tipHandlers={tipHandlers(displayName)} />
     </div>
     {tip && <span className="app-sidebar-tip" role="tooltip" aria-hidden="true" style={{ top: tip.top, left: tip.left }}>{tip.label}</span>}

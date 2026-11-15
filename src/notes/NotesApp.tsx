@@ -16,7 +16,11 @@ import type { useNoteSearch } from "../search/useNoteSearch";
 import { WhiteboardSearchResults, type useWhiteboardSearch } from "../search/WhiteboardSearchResults";
 import { FileSearchResults, type useFileSearch } from "../search/FileSearchResults";
 import { mcpDraftBadge } from "../noteFinalization";
-import { ShellMenuButton } from "../shell/shellContext";
+import { ShellMenuButton, ShellSidebarPortal } from "../shell/shellContext";
+import { SidebarFolderTree } from "../shell/SidebarFolderTree";
+import { countByFolder } from "../shell/folderTree";
+import { formatRoute } from "../router";
+import { notesRoute } from "../notesRoute";
 import { ReadOnlyBanner } from "../team/roleAccess";
 import type { Folder, NoteDetail, NoteSummary, Version } from "../types";
 import { IntegrationBadge } from "../ui/IntegrationBadge";
@@ -207,10 +211,52 @@ export type NotesAppProps = {
   visibleNotes: NoteSummary[];
 };
 
+/**
+ * Notes' folders in the global sidebar (phase 3, D1288): All notes, Shared with me, then the folders
+ * as a tree, with the same counts, note drops, Share buttons, and New folder as the pane had. A click
+ * goes through `selectFolder`, which saves or publishes the open note first, as the pane did.
+ */
+function NotesSidebarTree({ notes, folders, selectedFolder, selectFolder, canWrite, openNewFolder, draggingNoteId, dropFolderId, setDropFolderId, moveNote, setSharingFolder }: Pick<NotesAppProps, "notes" | "folders" | "selectedFolder" | "selectFolder" | "canWrite" | "openNewFolder" | "draggingNoteId" | "dropFolderId" | "setDropFolderId" | "moveNote" | "setSharingFolder">) {
+  const counts = useMemo(() => countByFolder(notes), [notes]);
+  const groups = useMemo(() => [{ id: "folders", heading: "Folders", folders, onNew: canWrite ? openNewFolder : undefined, newLabel: "New folder", empty: "Create a folder to organize your notes." }], [folders, canWrite, openNewFolder]);
+  return <SidebarFolderTree
+    app="notes"
+    label="Note folders"
+    entries={[
+      { id: "all", label: "All notes", icon: Archive, href: formatRoute(notesRoute("all", null)), count: notes.length, current: selectedFolder === "all", onSelect: () => { void selectFolder("all"); } },
+      { id: "shared", label: "Shared with me", icon: Users, href: formatRoute(notesRoute("shared", null)), count: notes.filter((item) => item.is_owner === 0).length, current: selectedFolder === "shared", onSelect: () => { void selectFolder("shared"); } }
+    ]}
+    groups={groups}
+    current={selectedFolder === "all" || selectedFolder === "shared" ? null : selectedFolder}
+    hrefFor={(folder) => formatRoute(notesRoute(folder.id, null))}
+    onSelect={(folder) => { void selectFolder(folder.id); }}
+    name={(folder) => folder.name}
+    sub={(folder) => folder.is_owner !== 1 ? folder.owner_name : null}
+    count={(folder) => counts.get(folder.id) ?? 0}
+    drop={(folder) => ({
+      className: dropFolderId === folder.id ? "drop-target" : undefined,
+      handlers: {
+        onDragEnter: (event) => { if (draggingNoteId && folder.is_owner === 1 && canWrite) { event.preventDefault(); setDropFolderId(folder.id); } },
+        onDragOver: (event) => { if (draggingNoteId && folder.is_owner === 1 && canWrite) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } },
+        onDragLeave: (event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropFolderId((current) => current === folder.id ? null : current); },
+        onDrop: (event) => {
+          event.preventDefault();
+          if (folder.is_owner !== 1) return;
+          const noteId = event.dataTransfer.getData("application/x-mynotes-note") || draggingNoteId;
+          if (noteId) moveNote(noteId, folder).catch((reason) => notify.error(errorText(reason, "Could not move note")));
+        }
+      }
+    })}
+    action={(folder) => folder.is_owner === 1 && canWrite ? <button type="button" className="app-sidebar-tree-action" onClick={() => setSharingFolder(folder)} aria-label={`Share ${folder.name}`} title={`Share ${folder.name}`}><Share2 aria-hidden="true" /></button> : null}
+  />;
+}
+
 export function NotesApp(props: NotesAppProps) {
   const { activeSearchHit, activeSearchIndex, askDeleteNote, binnedFiles, boardFacetAvailable, boardSearch, boardsFacet, canWrite, clearSearch, closeMoveNote, closeNewFolder, confirmedFilesRef, createFolder, createNote, deleteNote, deletingNote, discard, downloadPdf, draftBadge, draggingNoteId, dropFolderId, editorLocked, fileFacetAvailable, fileSearch, filesFacet, focusAfterDeleteConfirm, folders, hasPublishableDelta, loadNavigation, loadNote, markdown, mobileActions, mobileBack, mobilePanel, moveNote, movingNote, newFolderOpen, note, noteSort, noteUploadControl, notes, onSearchKeyDown, openContentPath, openFileHit, openMoveNote, openNewFolder, openSearchHit, panel, publish, query, saveState, search, searchAll, searchEnabled, searchInputRef, selectFolder, selectNote, selectedFolder, selectedNoteId, sessionEditedRef, setActiveSearchIndex, setBinnedFiles, setDeletingNote, setDraggingNoteId, setDropFolderId, setMarkdown, setMobileActions, setNoteSort, setNoteUploads, setPanel, setQuery, setSearchAll, setSearchKind, setSharingFolder, setSortOpen, sharingFolder, showMobilePanel, showingBoards, showingFacet, showingFiles, showingSearchResults, sortOpen, toastStatus, visibleNotes } = props;
   return (
     <main className="workspace" data-mobile-panel={mobilePanel}>
+      {/* Phase 3 (D1288): on a computer the folders live in the global sidebar; the pane below is the phone's Folders panel. */}
+      <ShellSidebarPortal><NotesSidebarTree {...props} /></ShellSidebarPortal>
       <aside className="folder-pane" id="note-folders">
         {/* D1276: the global sidebar has Home, the apps, and the account (and collapses, D1279), so Notes' own pane keeps only its folders. */}
         <header className="sidebar-header">

@@ -8,7 +8,9 @@ import { dialogPopDirection, popStateClosedDialog, registerHistoryDialogGuard, u
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { useConfirm } from "../ui/useConfirm";
 import { NotificationBell } from "../notifications/NotificationBell";
-import { ShellMenuButton, useShellLeaveGuard } from "../shell/shellContext";
+import { ShellMenuButton, ShellSidebarPortal, useShellLeaveGuard } from "../shell/shellContext";
+import { SidebarFolderTree, type TreeGroup } from "../shell/SidebarFolderTree";
+import { countByFolder } from "../shell/folderTree";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
 import { FileSearchResults, matchedText, useFileSearch, type FileSearchHit } from "../search/FileSearchResults";
 import { closedPreviewTarget, documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute, type FilesRoute } from "../filesRoute";
@@ -268,6 +270,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const documents = data?.documents ?? [];
   const { owned, shared } = useMemo(() => orderFolders(folders), [folders]);
   const ownedTree = useMemo(() => nestFolders(owned), [owned]);
+  const folderCounts = useMemo(() => countByFolder(documents), [documents]);
+  const treeGroups = useMemo<Array<TreeGroup<Folder>>>(() => [
+    { id: "folders", heading: "Folders", folders: owned, onNew: canWrite ? (trigger: HTMLElement) => openNewFolder(trigger) : undefined, newLabel: "New folder" },
+    ...(shared.length ? [{ id: "shared", heading: "Shared folders", folders: shared }] : [])
+  ], [owned, shared, canWrite]); // eslint-disable-line react-hooks/exhaustive-deps
   const defaultFolder = owned.find((item) => item.is_default === 1 || item.name === "Default") ?? owned[0] ?? null;
   const currentFolder = folders.find((item) => item.id === folder) ?? null;
   // Nothing is uploaded into the Attachments folder directly (T342): uploads there come from attaching.
@@ -853,6 +860,33 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const uploadDestination = folder === "all" ? defaultFolder?.name ?? "Default" : currentFolder?.name ?? "";
 
   return <main className={`workspace files-workspace${selected ? " preview-open" : ""}`} data-mobile-panel={panel === "files" ? "notes" : panel === "preview" ? "editor" : "folders"}>
+    {/* Phase 3 (D1288): on a computer the folders live in the global sidebar; the pane below is the phone's Folders panel. */}
+    <ShellSidebarPortal><SidebarFolderTree
+      app="files"
+      label="File folders"
+      entries={[
+        { id: "all", label: "All files", icon: Files, href: formatRoute(filesRoute("all", null)), count: documents.length, current: folder === "all", onSelect: () => selectFolder("all") },
+        { id: "shared", label: "Shared with me", icon: Users, href: formatRoute(filesRoute("shared", null)), count: documents.filter((item) => item.is_owner === 0).length, current: folder === "shared", onSelect: () => selectFolder("shared") }
+      ]}
+      groups={treeGroups}
+      current={folder === "all" || folder === "shared" ? null : folder}
+      hrefFor={(item) => formatRoute(filesRoute(item.id, null))}
+      onSelect={(item) => selectFolder(item.id)}
+      name={(item) => item.name}
+      sub={(item) => item.is_owner !== 1 ? item.owner_name : null}
+      icon={(item) => isSystemFolder(item) ? Paperclip : FolderIcon}
+      badge={(item) => isSystemFolder(item) ? <Lock className="folder-system-badge" role="img" aria-label="Managed by Nook: files you attach live here" /> : null}
+      count={(item) => folderCounts.get(item.id) ?? 0}
+      drop={(item) => item.is_owner !== 1 ? null : {
+        className: `${draggingId && canDropOnFolder(item, findDocument(draggingId)) ? "drop-candidate" : ""}${dropFolderId === item.id ? " drop-target" : ""}`.trim() || undefined,
+        handlers: {
+          onDragEnter: (event) => folderDragOver(event, item),
+          onDragOver: (event) => folderDragOver(event, item),
+          onDragLeave: (event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropFolderId((current) => current === item.id ? null : current); },
+          onDrop: (event) => folderDrop(event, item)
+        }
+      }}
+    /></ShellSidebarPortal>
     <aside className="folder-pane" id="file-folders">
       {/* D1276: Home, the apps, Inbox, and the account are in the global sidebar; this pane keeps the folders. */}
       <header className="sidebar-header">

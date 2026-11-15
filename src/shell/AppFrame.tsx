@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useInboxCount } from "../AppShell";
 import { focusIntoDialog, trapTabKey } from "../files/Dialog";
 import { useReturnFocus } from "../calendar/hooks";
@@ -61,11 +61,35 @@ export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onSearch, o
     if (app) app(page); else page();
   }, [closeDrawer]);
 
-  const shell = useMemo<ShellValue>(() => ({ mode, drawerOpen, openDrawer, attention, leaveGuardRef, holdRail }), [mode, drawerOpen, openDrawer, attention, holdRail]);
+  // D1287: the slot the app on screen draws its own tree into (under its row, or in its flyout).
+  const [sidebarSlot, setSidebarSlot] = useState<HTMLElement | null>(null);
+  const shell = useMemo<ShellValue>(() => ({ mode, drawerOpen, openDrawer, closeDrawer, attention, leaveGuardRef, holdRail, sidebarSlot }), [mode, drawerOpen, openDrawer, closeDrawer, attention, holdRail, sidebarSlot]);
 
   const drawerRef = useRef<HTMLDivElement>(null);
   useReturnFocus(drawerOpen, ".shell-menu-button");
   useEffect(() => { if (drawerOpen) focusIntoDialog(drawerRef.current?.querySelector(".app-sidebar") as HTMLElement | null); }, [drawerOpen]);
+  // The drawer's keys and clicks are native listeners: the app's tree in the slot is a portal, whose
+  // React events bubble through the app, not through the drawer. Escape closes; Tab stays inside; a
+  // link or action in the app's tree closes the drawer as any sidebar move does (a disclosure or a ⋯
+  // menu's own button keeps it open).
+  useEffect(() => {
+    const element = drawerRef.current;
+    if (!drawerOpen || !element) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); closeDrawer(); return; }
+      trapTabKey(event as unknown as ReactKeyboardEvent<HTMLElement>);
+    };
+    const onClick = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const action = target?.closest(".app-sidebar-slot a[href], .app-sidebar-slot button, .app-sidebar-slot [role='menuitem']");
+      if (!action || action.closest("[data-keep-drawer]") || action.matches("[aria-haspopup='menu'], [aria-expanded]:not([role='menuitem'])")) return;
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      closeDrawer();
+    };
+    element.addEventListener("keydown", onKeyDown);
+    element.addEventListener("click", onClick);
+    return () => { element.removeEventListener("keydown", onKeyDown); element.removeEventListener("click", onClick); };
+  }, [drawerOpen, closeDrawer]);
 
   const sidebarElement = (drawer: boolean) => <AppSidebar
     tree={tree}
@@ -81,6 +105,7 @@ export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onSearch, o
     onToggle={sidebar.toggle}
     railForced={railForced}
     onClose={drawer ? closeDrawer : undefined}
+    onSlot={setSidebarSlot}
   />;
 
   return <ShellContext.Provider value={shell}>
@@ -89,11 +114,7 @@ export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onSearch, o
       <div className="app-frame-page">{children}</div>
       {mode === "drawer" && drawerOpen && <div className="app-drawer-layer">
         <button type="button" className="app-drawer-scrim" tabIndex={-1} aria-label="Close menu" onClick={closeDrawer} />
-        <div ref={drawerRef} id="app-drawer" className="app-drawer" role="dialog" aria-modal="true" aria-label="Menu"
-          onKeyDown={(event) => {
-            if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); closeDrawer(); return; }
-            trapTabKey(event);
-          }}>
+        <div ref={drawerRef} id="app-drawer" className="app-drawer" role="dialog" aria-modal="true" aria-label="Menu">
           {sidebarElement(true)}
         </div>
       </div>}

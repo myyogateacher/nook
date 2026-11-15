@@ -110,7 +110,7 @@ export function BoardList({ onOpen, onOpenBoard, notify, header }: BoardListProp
     <div className="tasks-intro">
       <div>
         <span className="eyebrow">Task boards</span>
-        <h1 id="tasks-title">Tasks</h1>
+        <h1 id="tasks-title">Boards</h1>
         <p>Plan work on boards you share. Each person can view, comment, or edit cards, as the board's access says.</p>
       </div>
       <button className="primary-button tasks-new-button" onClick={() => setDialog({ kind: "new" })} aria-haspopup="dialog"><Plus />New board</button>

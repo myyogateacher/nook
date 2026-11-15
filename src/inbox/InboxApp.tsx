@@ -6,6 +6,7 @@ import { readHistoryDepth } from "../appShellNavigation";
 import { diffStats, lineDiff } from "../diff/lineDiff";
 import { relativeTime } from "../files/format";
 import { popStateClosedDialog } from "../historyDialogs";
+import { SHELL_ROUTE_EVENT } from "../shell/locationSignal";
 import { parseRoute, type Route } from "../router";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
@@ -149,8 +150,14 @@ export function InboxApp({ displayName, navigate, flash, onHome, onSettings, onS
       const next = parseRoute(window.location.pathname);
       if (next.app === "inbox") setRoute(next);
     };
+    // The sidebar moved the Inbox to Pending, History, or Routines (D1282).
+    const onShellRoute = () => {
+      const next = parseRoute(window.location.pathname);
+      if (next.app === "inbox") setRoute(next);
+    };
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    window.addEventListener(SHELL_ROUTE_EVENT, onShellRoute);
+    return () => { window.removeEventListener("popstate", onPopState); window.removeEventListener(SHELL_ROUTE_EVENT, onShellRoute); };
   }, []);
 
   const loadDetail = useCallback(async (proposalId: string) => {
@@ -320,13 +327,13 @@ export function InboxApp({ displayName, navigate, flash, onHome, onSettings, onS
   const pendingTotal = status === "pending" ? items.length : 0;
 
   return <main className={`app-page inbox-app${route.proposalId ? " inbox-detail-open" : ""}`}>
-    <PageHeader title="Inbox" />
+    {/* D1283: one title, the header's h1 (the list pane is still labelled by it). */}
+    <PageHeader title={<h1 id="inbox-title">Inbox</h1>} />
     <ReadOnlyBanner />
 
     <div className={`inbox-layout${routinesView ? " inbox-layout-single" : " split-layout"}`}>
       <section className={`inbox-list-pane${routinesView ? "" : " split-pane"}`} aria-labelledby="inbox-title">
         <div className="inbox-intro">
-          <h1 id="inbox-title">Inbox</h1>
           <p>Changes your MCP keys suggested. Nothing changes until you approve it{canWrite ? "" : ", and your team role can only reject"}.</p>
         </div>
         <div className="inbox-segments" role="group" aria-label="Show">

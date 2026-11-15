@@ -146,7 +146,7 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
     <div className="collections-intro">
       <div>
         <span className="eyebrow">Typed tables</span>
-        <h1 id="collections-title">Collections</h1>
+        <h1 id="collections-title">All collections</h1>
         <p>Track anything in typed tables: inventories, subscriptions, recipes, contacts. Share them view-only or let people edit rows.</p>
       </div>
       {canWrite && <button className="primary-button collections-new-button" onClick={() => setDialog({ kind: "new" })} aria-haspopup="dialog"><Plus />New collection</button>}

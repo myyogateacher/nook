@@ -102,7 +102,8 @@ export default function GoalPage({ segment, navigate, onOpenPath, userId, displa
   ];
 
   return <main className="app-page">
-    <PageHeader back={{ label: "Goals", onClick: back }} title={goal.title} />
+    {/* D1283: the goal's title is its page's h1 beside its ring; the header holds Back alone. */}
+    <PageHeader back={{ label: "Goals", onClick: back }} />
     <ReadOnlyBanner />
     <div className="goals-page">
       <div className="goals-head">

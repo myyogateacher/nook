@@ -27,6 +27,10 @@
 .ui-module-icon svg { width: 18px; height: 18px; }
 .ui-module-title { min-width: 0; flex: 1; margin: 0; overflow: hidden; color: #f4f4f5; font-size: 1.1rem; font-weight: 750; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
 .ui-module-actions { display: flex; flex: none; align-items: center; gap: 6px; }
+/* D1280–D1281: a module's sections are in the sidebar on a computer; on a phone they are one strip
+   that scrolls sideways (never two rows), and the header names the section ("Contacts · Deals"). */
+.ui-module-crumb { display: none; }
+@media (min-width: 761px) { .ui-module-sections { display: none; } }
 .ui-module-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; border-bottom: 1px solid #232327; list-style: none; }
 .ui-module-tab { position: relative; min-height: 40px; display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 8px 8px 0 0; padding: 0 12px; background: transparent; color: #a1a1a8; font: inherit; font-size: .86rem; font-weight: 600; cursor: pointer; }
 .ui-module-tab:hover { color: #f2f2f3; background: #18181b; }
@@ -57,6 +61,12 @@
   .ui-module-actions .action-button { min-height: 44px; padding: 0 14px; }
   .ui-module-actions .icon-button { width: 44px; height: 44px; }
   .ui-module-tab { min-height: 44px; padding: 0 10px; }
+  .ui-module-header .ui-module-title { flex: 0 1 auto; }
+  .ui-module-crumb { min-width: 0; flex: 0 1 auto; display: block; overflow: hidden; color: #a1a1a8; font-size: .95rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .ui-module-section-strip { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; margin-inline: -16px; padding-inline: 12px; }
+  .ui-module-section-strip::-webkit-scrollbar { display: none; }
+  .ui-module-section-strip > li { flex: none; }
+  .ui-module-section-strip .ui-module-tab { white-space: nowrap; }
   .ui-module-filters > .ui-module-search { flex: 1 1 100%; margin-left: 0; order: 10; }
   .ui-module-search input { min-height: 44px; font-size: 1rem; }
   .ui-module-search kbd { display: none; }

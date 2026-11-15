@@ -5,6 +5,7 @@ import { useRole } from "../team/roleAccess";
 import { shortIdOfSegment } from "../../shared/friendlyUrls";
 import type { WorkspaceAppProps } from "../workspaceModules/types";
 import { TimerTab } from "./TimerTab";
+import type { TimeSection } from "./sections";
 import { TimesheetTab } from "./TimesheetTab";
 import { ReportsTab } from "./ReportsTab";
 import { ProjectPage, ProjectSheet, ProjectsTab } from "./ProjectsTab";
@@ -18,8 +19,7 @@ import "./time.css";
  * "New project" on the Projects tab; Reminders sit in the ⋯ menu.
  */
 
-type Tab = "timer" | "timesheet" | "reports" | "projects";
-const TABS: Array<{ id: Tab; label: string }> = [{ id: "timer", label: "Timer" }, { id: "timesheet", label: "Timesheet" }, { id: "reports", label: "Reports" }, { id: "projects", label: "Projects" }];
+type Tab = TimeSection;
 
 export default function TimeApp({ route, navigate, onOpenPath, displayName, onHome, onSettings, onSignOut, flash, userId }: WorkspaceAppProps) {
   const { readOnly, isGuest, role } = useRole();
@@ -40,7 +40,7 @@ export default function TimeApp({ route, navigate, onOpenPath, displayName, onHo
     : writer ? { label: "Log time", icon: Plus, onClick: () => setLogging(true) } : undefined;
 
   return <ModuleHome icon={Timer} title="Time" displayName={displayName} onHome={onHome} onSettings={onSettings} onSignOut={onSignOut}
-    primary={primary} tabs={TABS} activeTab={tab} onTab={(id) => go(id === "timer" ? [] : [id])}
+    primary={primary} sections={{ module: "time", role, active: tab, onSelect: (id) => go(id === "timer" ? [] : [id]) }}
     menu={writer ? [{ id: "reminders", label: "Reminders", icon: Bell, onSelect: () => setReminders(true) }] : undefined}
     className="time-home">
     {tab === "timer" && <TimerTab onOpen={onOpenPath} readOnly={!writer} focusEntry={params.get("entry")} />}

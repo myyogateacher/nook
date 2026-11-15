@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { TOWNHALL_SECTIONS } from "./sections";
 import { MessageCircleQuestion, Plus, Presentation } from "lucide-react";
 import { WORKSPACE_MODULE_LABELS } from "../../shared/workspaceModules";
 import type { WorkspaceClientModule } from "../workspaceModules/types";
@@ -34,6 +35,7 @@ export const module: WorkspaceClientModule = {
   description: WORKSPACE_MODULE_LABELS.townhall.description,
   ready: true,
   launcher: true,
+  sections: TOWNHALL_SECTIONS,
   app: lazy(() => import("./TownhallApp")),
   parseRoute: (segments, search) => {
     const [first, second] = segments.map((segment) => segment.toLowerCase());

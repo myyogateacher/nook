@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { GOALS_SECTIONS, goalsSectionOf } from "./sections";
 import { Target, TrendingUp } from "lucide-react";
 import { WORKSPACE_MODULE_LABELS } from "../../shared/workspaceModules";
 import { shortIdOfSegment } from "../../shared/friendlyUrls";
@@ -36,6 +37,8 @@ export const module: WorkspaceClientModule = {
   ready: true,
   app: lazy(() => import("./GoalsApp")),
   launcher: true,
+  sections: GOALS_SECTIONS,
+  sectionOf: goalsSectionOf,
   parseRoute: (segments, search) => {
     const [first] = segments;
     if (first && shortIdOfSegment(first.toLowerCase())) return { path: [first.toLowerCase()] };

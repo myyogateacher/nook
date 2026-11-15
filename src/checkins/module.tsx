@@ -1,4 +1,5 @@
 import { lazy } from "react";
+import { STANDUPS_SECTIONS, standupsSectionOf } from "./sections";
 import { MessageCircle, Sunrise } from "lucide-react";
 import { WORKSPACE_MODULE_LABELS } from "../../shared/workspaceModules";
 import type { WorkspaceClientModule } from "../workspaceModules/types";
@@ -21,6 +22,8 @@ export const module: WorkspaceClientModule = {
   ready: true,
   app: lazy(() => import("./StandupsApp")),
   launcher: true,
+  sections: STANDUPS_SECTIONS,
+  sectionOf: standupsSectionOf,
   todaySections: {
     checkinsDue: {
       title: "Standups due", group: "today", app: "Standups", empty: "nothing to answer",

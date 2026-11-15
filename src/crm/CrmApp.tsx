@@ -22,6 +22,7 @@ import { SettingsView } from "./SettingsView";
 import { ImportSheet } from "./ImportSheet";
 import { LogInteractionSheet, NewDealSheet, NewListSheet, NewRecordSheet } from "./Sheets";
 import { dateTime, isPast, relative } from "./format";
+import { CRM_SECTIONS, crmSectionOf, type CrmSection } from "./sections";
 import "./crm.css";
 import "./crmPanels.css";
 
@@ -31,12 +32,9 @@ import "./crmPanels.css";
  * picks the contact book (people and companies may show every book); records open as pages.
  */
 
-const TABS = [
-  { id: "contacts", label: "People" }, { id: "companies", label: "Companies" }, { id: "deals", label: "Deals" }, { id: "lists", label: "Lists" },
-  { id: "followups", label: "Follow-ups" }, { id: "insights", label: "Insights" }, { id: "settings", label: "Settings" }
-] as const;
-type Tab = typeof TABS[number]["id"] | "duplicates";
-const TAB_IDS = new Set<string>([...TABS.map((tab) => tab.id), "duplicates"]);
+// The tabs are the module's sections (D1280), one list with the sidebar's.
+type Tab = CrmSection | "duplicates";
+const TAB_IDS = new Set<string>([...CRM_SECTIONS.map((tab) => tab.id), "duplicates"]);
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const refOf = (segment: string) => UUID.exec(segment)?.[0]?.toLowerCase() ?? shortIdOfSegment(segment) ?? segment;
 
@@ -145,7 +143,7 @@ export default function CrmApp({ route, navigate, onOpenPath, role, displayName,
   else content = <DuplicatesView book={book} onOpen={openHref} />;
 
   return <ModuleHome icon={Contact} title="Contacts" heading={view.record ? undefined : undefined} displayName={displayName} onHome={onHome} onSettings={onSettings} onSignOut={onSignOut}
-    primary={primary} menu={menu} tabs={TABS} activeTab={view.tab === "duplicates" ? "contacts" : view.tab} onTab={tabRoute} filters={filters}
+    primary={primary} menu={menu} sections={{ module: "crm", role, active: crmSectionOf(route), onSelect: tabRoute }} filters={filters}
     search={searchable ? { value: q, onChange: setQ, placeholder: view.tab === "deals" ? "Search deals" : view.tab === "companies" ? "Search companies" : view.tab === "lists" ? "Search lists" : "Search people, emails, companies", label: "Search" } : undefined}
     className="crm-home">
     {content}

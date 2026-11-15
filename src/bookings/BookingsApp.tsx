@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { FieldSelect, zoneOptions } from "./FieldSelect";
 import { CalendarCheck2, CalendarClock, Check, Clock, Copy, Link2, MapPin, Phone, PencilLine, CircleHelp, Plus, Trash2, Users, Video, X, ExternalLink, Eye, EyeOff, KeyRound } from "lucide-react";
 import { ModuleHome } from "../ui/ModuleHome";
+import { BOOKINGS_SECTIONS, type BookingsSection } from "./sections";
 import { EmptyState } from "../ui/EmptyState";
 import { MoreMenu } from "../ui/MoreMenu";
 import { KpiRow, KpiTile, InsightChart } from "../ui/insights/Insights";
@@ -24,11 +25,9 @@ import "./bookings.css";
  * /bookings/b/<id>; a type's editor at /bookings/types/<slug-id>.
  */
 
-const TABS = [
-  { id: "upcoming", label: "Upcoming" }, { id: "past", label: "Past" }, { id: "cancelled", label: "Cancelled" },
-  { id: "types", label: "Booking types" }, { id: "availability", label: "Availability" }, { id: "insights", label: "Insights" }, { id: "profile", label: "Profile" }
-] as const;
-type TabId = typeof TABS[number]["id"];
+// The tabs are the module's sections (D1280), one list with the sidebar's.
+const TABS = BOOKINGS_SECTIONS;
+type TabId = BookingsSection;
 
 export const LOCATION_ICONS: Record<LocationKind, typeof Video> = { video_link: Video, phone: Phone, in_person: MapPin, custom: PencilLine, ask: CircleHelp };
 
@@ -67,7 +66,7 @@ export default function BookingsApp(props: WorkspaceAppProps) {
   const home = (content: React.ReactNode, active: TabId | null = tab, search = true) => <ModuleHome icon={CalendarClock} title="Bookings" displayName={props.displayName}
     onHome={props.onHome} onSettings={props.onSettings} onSignOut={props.onSignOut}
     primary={readOnly ? undefined : { label: "New booking type", icon: Plus, onClick: () => void createType(), disabled: creating }}
-    tabs={TABS} activeTab={active ?? undefined} onTab={(id) => go(id === "upcoming" ? [] : [id])}
+    sections={{ module: "bookings", role, active, onSelect: (id) => go(id === "upcoming" ? [] : [id]) }}
     search={search && ["upcoming", "past", "cancelled", "types"].includes(tab) ? { value: query, onChange: setQuery, placeholder: tab === "types" ? "Search booking types" : "Search by name or type", label: "Search bookings" } : undefined}>
     {content}
   </ModuleHome>;

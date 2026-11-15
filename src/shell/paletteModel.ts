@@ -15,6 +15,10 @@ import type { NavItem, NavRecent, NavTree } from "./navModel";
 export type PaletteGroupId = "apps" | "recent" | "actions" | "commands" | "search";
 export const PALETTE_GROUP_LABELS: Record<PaletteGroupId, string> = { apps: "Apps", recent: "Recent", actions: "Quick actions", commands: "Commands", search: "Search" };
 const GROUP_ORDER: readonly PaletteGroupId[] = ["apps", "recent", "actions", "commands", "search"];
+/** The order before anything is typed (D1293, review): Recent, Quick actions, Apps, Commands. */
+const BROWSE_ORDER: readonly PaletteGroupId[] = ["recent", "actions", "apps", "commands"];
+/** Recent items listed before anything is typed (all of them match a query). */
+export const PALETTE_BROWSE_RECENT = 6;
 
 export type PaletteCommand = "shortcuts" | "customize" | "toggleSidebar";
 
@@ -137,8 +141,9 @@ export type PaletteGroup = { id: PaletteGroupId; label: string; entries: Palette
 export const PALETTE_LIMIT = 60;
 
 /**
- * The groups to show for a query, in the fixed order Apps, Recent, Quick actions, Commands, Search;
- * inside a group the best matches first. "Search notes for …" ends the list whenever something is
+ * The groups to show. Nothing typed: Recent (at most six), Quick actions, Apps, Commands. A query:
+ * Apps, Recent, Quick actions, Commands, Search, led by the best match's group; inside a group the
+ * best matches first. "Search notes for …" ends the list whenever something is
  * typed and Notes' search is on.
  */
 export function filterPalette(entries: readonly PaletteEntry[], query: string, searchNotes: boolean): PaletteGroup[] {
@@ -151,7 +156,12 @@ export function filterPalette(entries: readonly PaletteEntry[], query: string, s
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .slice(0, PALETTE_LIMIT);
-  const groups: PaletteGroup[] = GROUP_ORDER.map((id) => ({ id, label: PALETTE_GROUP_LABELS[id], entries: scored.filter((item) => item.entry.group === id).map((item) => item.entry) }));
+  // Nothing typed: what is likely next comes first (a few recent items, the quick actions), then the
+  // apps, then the commands; a query keeps the fixed order, led by the best match's group.
+  const groups: PaletteGroup[] = (trimmed ? GROUP_ORDER : BROWSE_ORDER).map((id) => {
+    const found = scored.filter((item) => item.entry.group === id).map((item) => item.entry);
+    return { id, label: PALETTE_GROUP_LABELS[id], entries: !trimmed && id === "recent" ? found.slice(0, PALETTE_BROWSE_RECENT) : found };
+  });
   if (trimmed && searchNotes) groups.find((group) => group.id === "search")!.entries.push({ id: "search:notes", group: "search", label: `Search notes for “${trimmed}”`, icon: Search, browse: false, action: { kind: "searchNotes", query: trimmed } });
   // With a query, the group holding the best match leads, so Enter opens what ranks first.
   if (trimmed) {

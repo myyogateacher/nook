@@ -209,17 +209,24 @@ const entriesFor = (role: Role, disabled: string[] = [], extra: Partial<Paramete
 };
 const labelOf = (entry: PaletteEntry) => [entry.context, entry.label].filter(Boolean).join(" › ");
 
-test("nothing typed: apps, recent items, quick actions, and commands; sections wait for a query", () => {
-  const { entries } = entriesFor("member", [], { recentNotes: [{ id: "n1", name: "Launch plan", href: "/notes/n1" }] });
+test("nothing typed: recent items (six at most), quick actions, apps, then commands; sections wait for a query", () => {
+  const boards = Array.from({ length: 5 }, (_, index) => ({ id: `b${index}`, name: `Board ${index}`, href: `/tasks/b${index}` }));
+  const tree = buildNavTree({ disabledModules: [], features, role: "member", active: "home", recents: { tasks: boards } });
+  const entries = paletteEntries({ tree, searchNotes: true, quickActions: visibleQuickActions([], "member"), recentNotes: [{ id: "n1", name: "Launch plan", href: "/notes/n1" }, { id: "n2", name: "Hiring", href: "/notes/n2" }], canCustomize: true });
   const groups = filterPalette(entries, "", true);
-  expect(groups.map((group) => group.label)).toEqual(["Apps", "Recent", "Quick actions", "Commands"]);
-  const apps = groups[0]!.entries.map((entry) => entry.label);
+  expect(groups.map((group) => group.label)).toEqual(["Recent", "Quick actions", "Apps", "Commands"]);
+  expect(groups[0]!.entries.map(labelOf)).toEqual(["Tasks › Board 0", "Tasks › Board 1", "Tasks › Board 2", "Tasks › Board 3", "Tasks › Board 4", "Notes › Launch plan"]);
+  expect(groups[1]!.entries.map((entry) => entry.label)).toContain("Start timer");
+  const apps = groups[2]!.entries.map((entry) => entry.label);
   expect(apps.slice(0, 3)).toEqual(["Home", "Inbox", "Notifications"]);
   expect(apps).toContain("Contacts");
   expect(apps).not.toContain("Insights");
-  expect(groups[1]!.entries.map(labelOf)).toEqual(["Notes › Launch plan"]);
-  expect(groups[2]!.entries.map((entry) => entry.label)).toContain("Start timer");
   expect(groups[3]!.entries.map((entry) => entry.label)).toEqual(["Keyboard shortcuts", "Customize sidebar"]);
+  // Enter with nothing typed opens the newest recent item; a query finds the seventh one too.
+  expect(flatPalette(groups)[0]!.id).toBe("nav:tasks:recent:b0");
+  expect(flatPalette(filterPalette(entries, "hiring", true)).map(labelOf)).toContain("Notes › Hiring");
+  // A query keeps relevance order: apps lead when an app ranks first.
+  expect(filterPalette(entries, "ins", true)[0]!.label).toBe("Apps");
 });
 
 test("\"ins\" finds the Insights sections first, by app; 'Search notes for' ends the list", () => {

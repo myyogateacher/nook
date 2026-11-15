@@ -71,7 +71,7 @@ export const MODULES: readonly ModuleDef[] = [
     todaySections: Object.keys(module.todaySections ?? {}),
     ...(module.ready ? {} : { planned: true })
   })),
-  { id: "search", label: "Search", description: "The search box in Notes, Ctrl+K, and the text filter on boards. The Notes list and the other board filters stay.", icon: Search, routeApps: [], todaySections: [], headerItem: "search" },
+  { id: "search", label: "Search", description: "The search box in Notes, Search notes in the Ctrl+K palette, and the text filter on boards. The Notes list, the palette, and the other board filters stay.", icon: Search, routeApps: [], todaySections: [], headerItem: "search" },
   { id: "bin", label: "Bin", description: "Hides Settings → Bin and Leaving the Bin soon. Deleting still moves items to the Bin, and they are still deleted forever after 30 days.", icon: Trash2, routeApps: ["bin"], todaySections: ["binSoon"], headerItem: "bin" },
   { id: "notifications", label: "Notifications", description: "Hides the bell and the Notifications page. Reminders and push notifications still arrive.", icon: Bell, routeApps: ["notifications"], todaySections: [], headerItem: "bell" },
   { id: "team", label: "Team", description: "Settings → Team and the people in this workspace. Roles and blocking still apply.", icon: Users, routeApps: ["team"], todaySections: [] },

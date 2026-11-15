@@ -29,6 +29,13 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 - In Settings, the sidebar lists Settings' own sections (Account, Workspace with the Bin, Team) in place of the apps; **Back to apps** at its top shows the apps again. Each section is 264 px wider.
 - An open standup lists Rounds, Insights, and Settings under its name in the sidebar, and a form's header reads **Forms › Team feedback** instead of repeating the title on a second line.
 
+**Jump anywhere with ⌘K, and a sidebar of your own**
+
+- Press ⌘K (Ctrl+K on Windows and Linux), or **Search** at the top of the sidebar, to jump anywhere: type a few letters of an app, a section ("ins" finds every Insights, "con ins" Contacts › Insights), a recent board, collection, or note, or a quick action such as Start timer. The last line searches your notes for what you typed. In Notes, ⌘K now opens this palette too; `/` still jumps to the notes search box.
+- Press `?` to see every keyboard shortcut, including the ones of the app you are in. It is also in your account menu.
+- Drag apps in the sidebar to put them in the order you like, or drop them in **Pinned** to keep them at the top. **Customize sidebar** (the ⋯ beside Apps, or your account menu) does the same with buttons and lets you hide apps, which is the same as turning them off in Settings → Modules. Home's app tiles on a phone follow your order.
+- Your sidebar now follows you: the order, pinned apps, the narrow strip or wide sidebar, and the apps you opened are saved with your account and show up on your other devices after you sign in.
+
 **Fixes: final QA of the modules**
 
 - **Open** on a goal, form, or townhall card in a note, and **Open in Bookings** after booking a colleague, open the page in the app again (they did nothing). Leaving a note saves it first; a module that is off shows its hint on Home.

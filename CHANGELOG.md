@@ -4,6 +4,18 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 
 ## Unreleased
 
+**Comments on workspace items: notifications, reactions, files, and Undo**
+
+- A comment on a goal, deal, contact, booking, form response, standup answer, townhall question, or one of the new Activity panels now notifies the people the item belongs to (its owner, assignees, and contributors, and the owner of the form, standup, or project it is in), and a reply notifies the person you replied to. You never hear about your own comments, and someone you @mention gets one notification, the mention.
+- These come by email too, under **Comments on your cards and items** (Settings → Notifications → Email), grouped every 10 minutes. The email never contains the comment's text, and is skipped if you can no longer open the item or the comment was deleted.
+- React to item comments with the same emoji as task comments, and attach files to a comment (the paperclip). Files open for the people who can open the item, and only while they can.
+- Deleting a comment shows **Undo**, which brings it back with its reactions and files.
+
+**Sharing workspace items tells people**
+
+- When you share a form, time project, goal, standup, contact book, booking type, or townhall with someone by name, they get a notification and a "Shared with you" email, and it shows in their daily digest.
+- The daily digest description in Settings now lists the workspace sections it can include.
+
 **Activity on forms, standups, townhalls, booking types and time projects**
 
 - A form, a standup, a townhall session and a time project have a new **Activity** tab, and a booking type an **Activity** section at the end of its editor. It lists what changed, who did it and when (published, closed, renamed, rounds opened and closed, weeks submitted and approved, and more), and you can comment there.

@@ -17,10 +17,10 @@ import { DEFAULT_UNIT_PREFERENCES, DEFAULT_WORKSPACE_SETTINGS, type UnitPreferen
  * reads them (the app needs the currency and whether to offer public links).
  */
 
-const KEYS = { publicForms: "public_forms", publicBookingPages: "public_booking_pages", defaultCurrency: "default_currency" } as const satisfies Record<keyof WorkspaceSettings, string>;
+const KEYS = { publicForms: "public_forms", publicBookingPages: "public_booking_pages", publicTownhall: "public_townhall", defaultCurrency: "default_currency" } as const satisfies Record<keyof WorkspaceSettings, string>;
 
 export function readWorkspaceSettings(): WorkspaceSettings {
-  const rows = db.query("SELECT key, value_json FROM team_settings WHERE key IN ('public_forms','public_booking_pages','default_currency')").all() as Array<{ key: string; value_json: string }>;
+  const rows = db.query("SELECT key, value_json FROM team_settings WHERE key IN ('public_forms','public_booking_pages','public_townhall','default_currency')").all() as Array<{ key: string; value_json: string }>;
   const stored = new Map(rows.map((row) => [row.key, row.value_json]));
   const read = <T>(key: string, valid: (value: unknown) => value is T, fallback: T): T => {
     const json = stored.get(key);
@@ -36,16 +36,18 @@ export function readWorkspaceSettings(): WorkspaceSettings {
   return {
     publicForms: read(KEYS.publicForms, isBool, DEFAULT_WORKSPACE_SETTINGS.publicForms),
     publicBookingPages: read(KEYS.publicBookingPages, isBool, DEFAULT_WORKSPACE_SETTINGS.publicBookingPages),
+    publicTownhall: read(KEYS.publicTownhall, isBool, DEFAULT_WORKSPACE_SETTINGS.publicTownhall),
     defaultCurrency: read(KEYS.defaultCurrency, isCurrency, DEFAULT_WORKSPACE_SETTINGS.defaultCurrency)
   };
 }
 
-const revision = () => (db.query("SELECT COALESCE(SUM(revision), 0) AS revision FROM team_settings WHERE key IN ('public_forms','public_booking_pages','default_currency')").get() as { revision: number }).revision;
+const revision = () => (db.query("SELECT COALESCE(SUM(revision), 0) AS revision FROM team_settings WHERE key IN ('public_forms','public_booking_pages','public_townhall','default_currency')").get() as { revision: number }).revision;
 
 export const workspaceSettingsPutSchema = z.object({
   settings: z.object({
     publicForms: z.boolean().optional(),
     publicBookingPages: z.boolean().optional(),
+    publicTownhall: z.boolean().optional(),
     defaultCurrency: z.string().refine(isCurrency, "Use a three-letter currency code such as USD").optional()
   }).strict(),
   revision: z.number().int().min(0)

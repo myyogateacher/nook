@@ -117,7 +117,7 @@ describe("review: hostile Markdown", () => {
     const section = readFileSync(join(import.meta.dir, "..", "src", "bin", "BinSection.tsx"), "utf8");
     expect(section).toContain('{ value: "chat", label: "Chats" }');
     expect(section).toContain('{ value: "agent", label: "Agents" }');
-    expect(section).toContain("chats, agents, and knowledge bases stay here for 30 days");
+    expect(section).toContain("chats, agents, knowledge bases, and the items of your apps (forms, goals, contacts, standups, and more) stay here for 30 days");
   });
 
   test("code blocks keep their text verbatim and tables carry only the known alignments", () => {

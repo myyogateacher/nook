@@ -10,7 +10,6 @@ import { binDeal, createDeal, createPipeline, deletePipeline, getDeal, listDeals
 import { createFollowup, createTask, deleteInteraction, listFollowups, listInteractions, logInteraction, recordTimeline, updateFollowup, updateInteraction } from "./interactions";
 import { changeListMembers, createList, createView, deleteList, deleteView, listLists, listViews, readList, updateList, updateView } from "./lists";
 import { commitImport, contactVcard, exportCsv, previewImport, remapImport, undoImport } from "./importExport";
-import { searchCrm } from "./integrations";
 
 /**
  * Contacts HTTP (§D.5, all under `/api/crm`): JSON in and out, `{ error, code }` errors, NOT_FOUND for
@@ -109,7 +108,6 @@ export function registerCrmRoutes(router: ModuleRouter) {
   router.get("/api/crm/pipelines", wrap((c) => ({ pipelines: listPipelines(query(c, "book") ?? "", uid(c)) })));
   router.post("/api/crm/pipelines", wrap(async (c) => ({ pipeline: createPipeline(uid(c), await body(c) as never) }), 201));
   router.patch("/api/crm/pipelines/:id", wrap(async (c) => ({ pipeline: updatePipeline(param(c, "id"), uid(c), await body(c) as never) })));
-  router.put("/api/crm/pipelines/:id/stages", wrap(async (c) => { const input = await body(c); return { pipeline: updatePipeline(param(c, "id"), uid(c), { stages: input.stages, moveDealsTo: input.moveDealsTo as string | null }) }; }));
   router.delete("/api/crm/pipelines/:id", wrap((c) => deletePipeline(param(c, "id"), uid(c))));
   router.get("/api/crm/pipelines/:id/board", wrap((c) => ({ board: pipelineBoard(param(c, "id"), uid(c), { ownerId: query(c, "owner") ?? null, q: query(c, "q") }) })));
   router.get("/api/crm/deals", wrap((c) => listDeals(uid(c), {
@@ -160,5 +158,4 @@ export function registerCrmRoutes(router: ModuleRouter) {
     const file = exportCsv(uid(c), { bookId: book.id, entity, q: query(c, "q"), listId: query(c, "list") ?? null, filters: jsonQuery<CrmFilter[]>(c, "filter") });
     return new Response(file.csv, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${file.filename}"`, "Cache-Control": "no-store" } });
   }));
-  router.get("/api/crm/search", wrap((c) => ({ results: searchCrm(uid(c), query(c, "q") ?? "", null, 20) })));
 }

@@ -415,7 +415,7 @@ export function csvCell(value: unknown): string {
   return /[",\n\r]/.test(text) || text.startsWith("'") ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-function answerText(question: Question, value: AnswerValue | undefined): string {
+export function answerText(question: Question, value: AnswerValue | undefined): string {
   if (value === undefined) return "";
   const label = (id: string) => (question.type === "yes_no" ? YES_NO_OPTIONS.find((option) => option.id === id)?.label : question.options?.find((option) => option.id === id)?.label) ?? id;
   if (typeof value === "string") return ["single_choice", "dropdown", "yes_no"].includes(question.type) ? label(value) : value;

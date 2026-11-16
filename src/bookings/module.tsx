@@ -10,6 +10,7 @@ import { EmbedCard } from "../ui/embeds/EmbedCard";
 import { api } from "../api";
 import type { EmbedCardProps } from "../editor/moduleEmbedRegistry";
 import { bookTimeMemberAction } from "./TeamBookTime";
+import { resetHandleMemberAction } from "./ResetHandleAction";
 
 /**
  * Bookings (lane BOOK, docs/plan/WORKSPACE_MODULES.md §D.6): the client module. The app is its own
@@ -90,8 +91,8 @@ export const module: WorkspaceClientModule = {
       load: loadBookableTypes
     })
   }],
-  // "Book time with …" on the Team page (D1253).
-  memberActions: [bookTimeMemberAction],
+  // "Book time with …" on the Team page (D1253); admins reset a member's booking link name on their page (D1384, T579).
+  memberActions: [bookTimeMemberAction, resetHandleMemberAction],
   itemSections: [{ id: "bookings.record", kinds: ["contact", "company", "deal"], order: 30, component: RecordBookings }],
   searchRenderer: {
     scope: "bookings", label: "Bookings", icon: CalendarCheck2,

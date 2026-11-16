@@ -95,6 +95,7 @@ export function WorkspaceSettings({ role }: { role: string | undefined }) {
       <ul className="modules-list" style={{ marginTop: 16 }}>
         <PolicySwitch id={`${id}-forms`} title="Public forms and polls" help="Members can share forms and polls with people outside the workspace. Turning it off closes every public form link at once; the links come back if you turn it on again." checked={workspace.settings.publicForms} disabled={busy} onChange={(publicForms) => { void saveWorkspace({ publicForms }); }} />
         <PolicySwitch id={`${id}-booking`} title="Public booking pages" help="Members can publish booking pages people outside the workspace use to book time. Turning it off hides every booking page at once." checked={workspace.settings.publicBookingPages} disabled={busy} onChange={(publicBookingPages) => { void saveWorkspace({ publicBookingPages }); }} />
+        <PolicySwitch id={`${id}-townhall`} title="Public townhall links" help="Hosts can turn on an audience link so people without an account ask, upvote, and vote in a townhall session. Turning it off closes every audience link at once; they come back if you turn it on again." checked={workspace.settings.publicTownhall} disabled={busy} onChange={(publicTownhall) => { void saveWorkspace({ publicTownhall }); }} />
       </ul>
     </>}
   </section>;

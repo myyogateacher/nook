@@ -101,7 +101,7 @@ describe("contacts", () => {
     expect((await api(owner, "PATCH", `/crm/deals/${deal.id}`, { stageId: lost.id, lostReason: "Budget" })).status).toBe(200);
     const stages = pipeline.stages.filter((stage: Json) => stage.id !== lost.id).map((stage: Json) => ({ id: stage.id, name: stage.name, kind: stage.kind, probability: stage.probability }));
     stages.push({ name: "Lost again", kind: "lost", probability: 0 });
-    expect((await api(owner, "PUT", `/crm/pipelines/${pipeline.id}/stages`, { stages, moveDealsTo: won.id })).status).toBe(200);
+    expect((await api(owner, "PATCH", `/crm/pipelines/${pipeline.id}`, { stages, moveDealsTo: won.id })).status).toBe(200);
     const row = db.query("SELECT stage_id, status, closed_at, lost_reason FROM deals WHERE id = ?").get(deal.id) as Json;
     expect(row).toMatchObject({ stage_id: won.id, status: "won", lost_reason: null });
     expect(row.closed_at).not.toBeNull();

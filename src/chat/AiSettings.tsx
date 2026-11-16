@@ -12,6 +12,7 @@ import { AGENT_BOUNDS, AGENT_ROLE_OPTIONS, DEFAULT_BASE_URL, DEFAULT_COMPAT, DEF
 import { agentsStatus, createProvider, deleteProvider, listProviders, messageOf, probeProviderTools, readSettings, testProvider, updateProvider, writeSettings, errorCode, type AgentsStatus, type ProviderInput, type ProviderTest } from "./chatApi";
 import type { ToolCallingProbe } from "../../shared/reportsModel";
 import { ToolServersSection } from "./ToolServers";
+import { AiUsage } from "./AiUsage";
 import { policyDraft, policyFromDraft, policySummary, ProviderKnowledgeFields } from "./ProviderKnowledgePolicy";
 import { ProviderVisionFields, visionDraft, visionFromDraft, visionSummary } from "./ProviderVisionPolicy";
 import { HUB_TITLE_ID } from "../settings/hubModel";
@@ -31,7 +32,7 @@ export const SECRET_HONESTY = "Encrypted at rest; anyone with the server and its
 const ROLE_LABELS: Record<AgentRole, string> = { admin: "Admins", member: "Members", viewer: "Viewers" };
 
 /**
- * Tabs (each its own URL): Model providers, Tool servers, Chat policy. `tabs` are the ones the
+ * Tabs (each its own URL): Model providers, Tool servers, Chat policy, Usage (D1381). `tabs` are the ones the
  * role sees (hubModel's aiTabsFor) and `tab` the one on screen; `onSelectTab` navigates.
  */
 export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message: string) => void; tabs: readonly AiTab[]; tab: AiTab; onSelectTab: (tab: AiTab) => void }) {
@@ -44,6 +45,9 @@ export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message:
   const [editing, setEditing] = useState<ProviderSummary | "new" | null>(null);
   const [tests, setTests] = useState<Record<string, ProviderTest | "running">>({});
   const [probes, setProbes] = useState<Record<string, ToolCallingProbe | "running">>({});
+  // D1381: Usage loads the first time its tab is shown, then stays mounted like the others.
+  const [usageShown, setUsageShown] = useState(tab === "usage");
+  useEffect(() => { if (tab === "usage") setUsageShown(true); }, [tab]);
   const confirm = useConfirm();
   // One title per tab, as API keys' tabs (v0.31 follow-up): "Settings · AI · Model providers · Nook". The page loads lazily, after App set it.
   useEffect(() => { document.title = settingsDocumentTitle("ai", undefined, tab); }, [tab]);
@@ -174,6 +178,7 @@ export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message:
       <div className="settings-section-heading"><span className="settings-icon"><SlidersHorizontal /></span><div><h3 id="ai-policy-heading">Chat policy</h3><p>Who creates agents, who chats, daily token budgets, and the default provider.</p></div></div>
       {settings && <PolicyForm settings={settings} providers={providers ?? []} flash={flash} onSaved={(next) => setSettings(next)} />}
     </div>}
+    {tabs.includes("usage") && <div {...panel("usage")}>{usageShown && <AiUsage />}</div>}
     {editing && <ProviderDialog provider={editing === "new" ? null : editing} local={local} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} />}
     {confirm.confirmElement}
   </section>;

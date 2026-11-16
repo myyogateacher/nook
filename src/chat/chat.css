@@ -493,3 +493,15 @@
 .ai-advanced { display: grid; gap: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 0 12px; }
 .ai-advanced[open] { padding-bottom: 12px; }
 .ai-advanced summary { min-height: 44px; display: flex; align-items: center; color: #e1e1e3; font-weight: 600; cursor: pointer; }
+
+/* Settings → AI → Usage (D1381). */
+.ai-usage { display: grid; gap: 14px; }
+.ai-usage-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 220px)) auto; align-items: center; gap: 10px; }
+.ai-usage-span { font-size: .8rem; font-variant-numeric: tabular-nums; }
+.ai-usage-error { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ai-usage-table-wrap { overflow-x: auto; border: 1px solid #29292d; border-radius: 12px; background: #111113; padding: 6px 8px; }
+.ai-usage-table th[scope="row"] { font-weight: 600; color: #ececee; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-usage-table .number { text-align: right; }
+@media (max-width: 640px) {
+  .ai-usage-controls { grid-template-columns: minmax(0, 1fr); }
+}

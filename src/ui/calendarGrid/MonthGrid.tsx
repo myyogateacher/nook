@@ -1,6 +1,7 @@
 import { useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { monthGridDays, monthOf, weekdayLabels } from "../../calendarRoute";
+import { monthGridDays, monthOf, weekdayLabelsFrom, type WeekStart } from "../../calendarRoute";
+import { useUnitPreferences } from "../units";
 import { dayHeading, eventDayLabel, monthHeading } from "../../calendar/calendarFormat";
 
 export type MonthGridProps = {
@@ -36,6 +37,8 @@ export type MonthGridProps = {
   onDayCreate?: (day: string) => void;
   /** After the grid: the selected day's list. */
   children?: ReactNode;
+  /** The first day of each row (D1383); the viewer's "Week starts on" when omitted. A caller that loads by the grid's dates passes the same value it loaded with. */
+  weekStart?: WeekStart;
 };
 
 /** A click inside a full cell creates only on its empty area: chips, links, and the day number keep their own actions. */
@@ -45,13 +48,15 @@ export function clickCreates(target: Pick<Element, "closest"> | null) {
 
 /**
  * The presentational month grid shared by Calendar and the board calendar view
- * (WAVE_13_TASK_CARD_UX.md §4.5a): six Monday-first weeks with a heading and prev/next/Today.
+ * (WAVE_13_TASK_CARD_UX.md §4.5a): six weeks from the viewer's week start (D1383) with a heading and prev/next/Today.
  * It fetches nothing; each caller renders its own items into the cells.
  */
 export function MonthGrid(props: MonthGridProps) {
   const { month, today, selectedDay, compact, countFor, renderDay, renderDots, onSelectDay, onShiftMonth, onToday, status, busy = false, titleId = "calendar-month-title", drop, onDayCreate, children } = props;
   const [dropDay, setDropDay] = useState<string | null>(null);
-  const days = monthGridDays(month);
+  const prefs = useUnitPreferences();
+  const weekStart = props.weekStart ?? prefs.weekStart;
+  const days = monthGridDays(month, weekStart);
 
   const dropHandlers = (cell: string) => drop ? {
     onDragOver: (event: ReactDragEvent<HTMLElement>) => {
@@ -83,7 +88,7 @@ export function MonthGrid(props: MonthGridProps) {
 
     {!status && <div className={`calendar-grid${busy ? " loading" : ""}`} role="grid" aria-label={monthHeading(month)} aria-busy={busy || undefined}>
       <div className="calendar-grid-row calendar-weekdays" role="row">
-        {weekdayLabels.map((label) => <span key={label} role="columnheader">{compact ? label.slice(0, 1) : label}</span>)}
+        {weekdayLabelsFrom(weekStart).map((label) => <span key={label} role="columnheader">{compact ? label.slice(0, 1) : label}</span>)}
       </div>
       {Array.from({ length: 6 }, (_, week) => <div key={week} className="calendar-grid-row" role="row">
         {days.slice(week * 7, week * 7 + 7).map((cell) => {

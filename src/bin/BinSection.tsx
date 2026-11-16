@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArchiveRestore, BookOpen, Bot, CalendarClock, CalendarDays, ChartColumn, Ellipsis, File as FileIcon, Folder as FolderIcon, KanbanSquare, KeyRound, KeySquare, Layers, ListOrdered as ListIcon, MessagesSquare, NotebookText, Package, PenTool, RotateCcw, Rows3, SquareCheck, Table2, Trash2, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { ArchiveRestore, BookOpen, BookUser, Bot, Building2, CalendarClock, CalendarPlus, ClipboardList, Contact, Handshake, Presentation, Sunrise, Target, Timer, CalendarDays, ChartColumn, Ellipsis, File as FileIcon, Folder as FolderIcon, KanbanSquare, KeyRound, KeySquare, Layers, ListOrdered as ListIcon, MessagesSquare, NotebookText, Package, PenTool, RotateCcw, Rows3, SquareCheck, Table2, Trash2, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { ApiError } from "../api";
 import { formatBytes } from "../files/filesApi";
 import { useConfirm } from "../ui/useConfirm";
@@ -10,12 +10,15 @@ import { claimBinCount, deleteBinItem, emptyBin, listBin, reportBinCount, restor
 import {
   binFolderLabel,
   binItemLabel,
+  binItemModule,
   binKindLabel,
   attachmentLabel,
   deleteForeverConfirm,
   emptiedMessage,
   emptyBinConfirm,
   filterBinItems,
+  moduleFilterLabel,
+  moduleFilters,
   purgeCountdownLabel,
   restoreResultMessage,
   subitemLabel,
@@ -47,7 +50,9 @@ const filters: Array<{ value: BinFilter; label: string }> = [
   { value: "report", label: "Reports" }
 ];
 
-const itemIcons: Partial<Record<BinItem["type"], LucideIcon>> = { note: NotebookText, document: FileIcon, card: SquareCheck, board: KanbanSquare, collection: Table2, collection_row: Rows3, calendar: CalendarDays, event: CalendarClock, vault: KeyRound, vault_environment: Layers, vault_secret: KeySquare, chat: MessagesSquare, agent: Bot, knowledge_base: BookOpen, report: ChartColumn, report_folder: FolderIcon, report_list: ListIcon };
+const itemIcons: Partial<Record<BinItem["type"], LucideIcon>> = { note: NotebookText, document: FileIcon, card: SquareCheck, board: KanbanSquare, collection: Table2, collection_row: Rows3, calendar: CalendarDays, event: CalendarClock, vault: KeyRound, vault_environment: Layers, vault_secret: KeySquare, chat: MessagesSquare, agent: Bot, knowledge_base: BookOpen, report: ChartColumn, report_folder: FolderIcon, report_list: ListIcon,
+  // Workspace modules (D1380): each kind's own icon, as its module's nav and link chips draw it.
+  form: ClipboardList, goal: Target, checkin: Sunrise, contact_book: BookUser, contact: Contact, company: Building2, deal: Handshake, time_project: Timer, booking_type: CalendarPlus, townhall_session: Presentation };
 /** The icon of a Bin row; a kind this build does not know (a newer server) gets a generic one instead of crashing the page (Wave 40 QA Q1). */
 export const binItemIcon = (item: Pick<BinItem, "type"> & Partial<Pick<BinItem, "kind">>): LucideIcon => item.type === "document" && item.kind === "whiteboard" ? PenTool : itemIcons[item.type] ?? Package;
 
@@ -133,7 +138,9 @@ export function BinSection({ flash, onRestored }: BinSectionProps) {
       const result = await restoreBinItem(item);
       removeItem(item);
       // v0.35.0 QA: a success toast, like every other restore.
-      notify.success(restoreResultMessage(item, result));
+      // D1380: a module item's toast offers Open, through the app's guarded in-app open (nook:open-path).
+      const href = item.href;
+      notify.success(restoreResultMessage(item, result), href ? { action: { label: "Open", onClick: () => window.dispatchEvent(new CustomEvent("nook:open-path", { detail: { path: href } })) } } : undefined);
       onRestored?.(item);
       // Restoring a board brings its binned cards' board back too; refresh so their rows update.
       if (item.type === "board") void load();
@@ -210,7 +217,8 @@ export function BinSection({ flash, onRestored }: BinSectionProps) {
     setSheetKey(itemKey(item));
   }
 
-  const emptyCopy = filter === "note" ? "No notes in the Bin." : filter === "document" ? "No files in the Bin." : filter === "tasks" ? "No cards or boards in the Bin." : filter === "collections" ? "No collections or rows in the Bin." : filter === "calendar" ? "No calendars or events in the Bin." : filter === "vault" ? "No vaults, environments, or secrets in the Bin." : filter === "chat" ? "No chats in the Bin." : filter === "agent" ? "No agents in the Bin." : filter === "knowledge_base" ? "No knowledge bases in the Bin." : filter === "report" ? "No reports in the Bin." : "Nothing in the Bin.";
+  const emptyCopy = filter === "note" ? "No notes in the Bin." : filter === "document" ? "No files in the Bin." : filter === "tasks" ? "No cards or boards in the Bin." : filter === "collections" ? "No collections or rows in the Bin." : filter === "calendar" ? "No calendars or events in the Bin." : filter === "vault" ? "No vaults, environments, or secrets in the Bin." : filter === "chat" ? "No chats in the Bin." : filter === "agent" ? "No agents in the Bin." : filter === "knowledge_base" ? "No knowledge bases in the Bin." : filter === "report" ? "No reports in the Bin." : filter.startsWith("module:") ? `Nothing from ${moduleFilterLabel(filter.slice(7) as Parameters<typeof moduleFilterLabel>[0])} in the Bin.` : "Nothing in the Bin.";
+  const modulesShown = moduleFilters(all, filter);
 
   // The hub's header is the section's title ("Bin"); the retention line and Empty Bin stay here.
   return <section className="settings-content bin-section" aria-labelledby="settings-hub-title">
@@ -218,7 +226,7 @@ export function BinSection({ flash, onRestored }: BinSectionProps) {
     <div className="bin-content">
       <div className="bin-intro">
         <div>
-          <p>Deleted notes, files, cards, boards, collections, rows, calendars, events, chats, agents, and knowledge bases stay here for 30 days, then they are deleted forever. Restoring brings back their sharing.</p>
+          <p>Deleted notes, files, cards, boards, collections, rows, calendars, events, chats, agents, knowledge bases, and the items of your apps (forms, goals, contacts, standups, and more) stay here for 30 days, then they are deleted forever. Restoring brings back their sharing.</p>
         </div>
         {canWrite && <button className="bin-empty-button" onClick={() => { void emptyAll(); }} disabled={!all.length || busy}><Trash2 />{emptying ? "Emptying…" : "Empty Bin"}</button>}
       </div>
@@ -231,6 +239,15 @@ export function BinSection({ flash, onRestored }: BinSectionProps) {
           </button>;
         })}
       </div>
+      {modulesShown.length > 0 && <div className="bin-filters bin-filters-modules" role="group" aria-label="Show apps">
+        <span className="bin-filters-label" aria-hidden="true">Apps</span>
+        {modulesShown.map((module) => {
+          const value = `module:${module}` as BinFilter;
+          return <button key={value} className={`bin-chip${filter === value ? " active" : ""}`} aria-pressed={filter === value} onClick={() => setFilter(value)}>
+            {moduleFilterLabel(module)}<b>{filterBinItems(all, value).length}</b>
+          </button>;
+        })}
+      </div>}
 
       {loadError && <div className="bin-state bin-error" role="alert">
         <span className="bin-state-icon"><TriangleAlert /></span>
@@ -260,7 +277,7 @@ export function BinSection({ flash, onRestored }: BinSectionProps) {
             <span className="bin-row-copy">
               <span className="bin-row-title" title={label}><span className="sr-only">{binKindLabel(item)}: </span>{label}</span>
               <span className="bin-row-meta">
-                <span>{item.type === "card" ? `On ${binFolderLabel(item)}` : item.type === "board" ? "Board" : item.type === "event" || item.type === "vault_environment" || item.type === "vault_secret" ? `In ${binFolderLabel(item)}` : item.attachment ? attachmentLabel(item) : binFolderLabel(item)}</span>
+                <span>{binItemModule(item) ? `${binKindLabel(item)} · ${binFolderLabel(item)}` : item.type === "card" ? `On ${binFolderLabel(item)}` : item.type === "board" ? "Board" : item.type === "event" || item.type === "vault_environment" || item.type === "vault_secret" ? `In ${binFolderLabel(item)}` : item.attachment ? attachmentLabel(item) : binFolderLabel(item)}</span>
                 {item.type === "card" && Boolean(item.descendant_count) && <span>{subitemLabel(item.descendant_count!)}</span>}
                 <time dateTime={item.deleted_at}>Deleted {relativeTime(item.deleted_at)}</time>
                 {item.purging || action === "delete"

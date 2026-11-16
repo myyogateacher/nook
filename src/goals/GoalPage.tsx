@@ -17,6 +17,7 @@ import { HEALTH_LABEL, HEALTH_TONE } from "../ui/tone";
 import { relativeTime } from "../files/format";
 import { binGoal, deleteKeyResult, getGoal, goalHistory, goalWork, listCheckins, reopenGoal, undo, type Checkin, type GoalDetail, type GoalHistory, type GoalSummary, type KeyResult } from "./goalsApi";
 import { CheckInSheet, CloseSheet, GoalEditor, KrEditor } from "./sheets";
+import { KrSparkline } from "./KrSparkline";
 import { goalActivityRenderers } from "./activity";
 import { goalsRoute } from "./GoalsApp";
 import { CADENCE_LABEL, formatKrValue, GOAL_STATE_LABEL, KR_DIRECTION_LABEL } from "../../shared/goals";
@@ -146,7 +147,7 @@ export default function GoalPage({ segment, navigate, onOpenPath, userId, displa
             <header><h2 id="goal-krs"><ListChecks aria-hidden="true" />Key results</h2>{goal.canEdit && <button type="button" className="secondary-button ui-small-button" onClick={() => setSheet({ kind: "kr" })} aria-keyshortcuts="k"><Plus aria-hidden="true" />Add key result</button>}</header>
             {goal.keyResults.length === 0
               ? <EmptyState compact as="h3" icon={ListChecks} title="No key results yet" action={goal.canEdit ? { label: "Add key result", icon: Plus, onClick: () => setSheet({ kind: "kr" }) } : undefined}>Key results say how you'll know it's done; they can update themselves from Tasks.</EmptyState>
-              : <ul className="goals-kr-list">{goal.keyResults.map((kr) => <KrRow key={kr.id} kr={kr} canEdit={goal.canEdit} onEdit={() => setSheet({ kind: "kr", kr })} onRemove={() => { void removeKr(kr); }} />)}</ul>}
+              : <ul className="goals-kr-list">{goal.keyResults.map((kr) => <KrRow key={kr.id} kr={kr} points={history?.keyResults.find((item) => item.id === kr.id)?.points} canEdit={goal.canEdit} onEdit={() => setSheet({ kind: "kr", kr })} onRemove={() => { void removeKr(kr); }} />)}</ul>}
           </section>
           {history && <ProgressChart goal={goal} history={history} />}
           <section className="goals-panel" aria-labelledby="goal-children">
@@ -206,7 +207,7 @@ function ChildRow({ goal, onOpen }: { goal: GoalSummary; onOpen: (href: string) 
   </div>;
 }
 
-function KrRow({ kr, canEdit, onEdit, onRemove }: { kr: KeyResult; canEdit: boolean; onEdit: () => void; onRemove: () => void }) {
+function KrRow({ kr, points, canEdit, onEdit, onRemove }: { kr: KeyResult; points?: GoalHistory["keyResults"][number]["points"]; canEdit: boolean; onEdit: () => void; onRemove: () => void }) {
   const auto = kr.source.kind !== "manual";
   const values = kr.metric === "milestones"
     ? <><strong>{kr.milestones.filter((item) => item.done).length}</strong> of {kr.milestones.length} milestones</>
@@ -219,6 +220,7 @@ function KrRow({ kr, canEdit, onEdit, onRemove }: { kr: KeyResult; canEdit: bool
     {kr.metric === "milestones" && kr.milestones.length > 0 && <ul className="goals-milestones">{kr.milestones.map((milestone) => <li key={milestone.id} data-done={milestone.done}>{milestone.done ? <CheckSquare aria-hidden="true" /> : <Square aria-hidden="true" />}<span>{milestone.title}{milestone.done ? <span className="ui-visually-hidden"> (done)</span> : null}</span></li>)}</ul>}
     <div className="goals-kr-foot">
       <span className="goals-pct" style={{ textAlign: "left" }}>{percent(kr.progress)}</span>
+      <KrSparkline points={points} />
       <span className="goals-source" data-error={kr.source.error ? true : undefined} title={kr.source.error ?? kr.source.description}>{auto ? <Zap aria-hidden="true" /> : <TrendingUp aria-hidden="true" />}{auto ? `Auto · ${kr.source.label}: ${kr.source.description}` : "Manual"}</span>
       {kr.source.error && <span className="ui-field-error">{kr.source.error}</span>}
       {kr.metric !== "boolean" && kr.metric !== "milestones" && kr.direction !== "increase" && <span>{KR_DIRECTION_LABEL[kr.direction]}</span>}

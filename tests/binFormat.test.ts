@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { attachmentLabel, binFolderLabel, binItemLabel, binKindLabel, daysUntilPurge, deleteForeverConfirm, emptiedMessage, emptyBinConfirm, filterBinItems, purgeCountdownLabel, restoredMessage, restoreResultMessage, subitemLabel } from "../src/bin/binFormat";
+import { attachmentLabel, binFolderLabel, binItemLabel, binItemModule, binKindLabel, moduleFilters, daysUntilPurge, deleteForeverConfirm, emptiedMessage, emptyBinConfirm, filterBinItems, purgeCountdownLabel, restoredMessage, restoreResultMessage, subitemLabel } from "../src/bin/binFormat";
 import type { BinItem } from "../src/types";
 
 const DAY = 86_400_000;
@@ -114,4 +114,31 @@ test("row attachments name their row and only mention Default once nothing links
   expect(attachmentLabel({ attachment_of: null, attachment_kind: null, folder_name: "Work" })).toBe("Attachment · restores to Work");
   expect(binKindLabel({ type: "document", attachment: true, attachment_kind: "row" })).toBe("Row attachment");
   expect(restoreResultMessage({ type: "document", attachment: true, attachment_kind: "row" }, { ok: true, folderId: null, folderName: null })).toBe("Restored to its row");
+});
+
+describe("workspace-module items in the Bin (D1380)", () => {
+  const item = (type: BinItem["type"], extra: Partial<BinItem> = {}) => ({ type, title: "", folder_name: null, ...extra }) as BinItem;
+
+  test("each module kind reads its own name, never Item", () => {
+    const kinds: Array<[BinItem["type"], string]> = [["form", "Form"], ["goal", "Goal"], ["checkin", "Standup"], ["contact_book", "Contact book"], ["contact", "Contact"], ["company", "Company"], ["deal", "Deal"], ["time_project", "Time project"], ["booking_type", "Booking type"], ["townhall_session", "Townhall session"]];
+    for (const [type, label] of kinds) expect(binKindLabel(item(type))).toBe(label);
+    expect(binItemLabel(item("deal"))).toBe("Untitled deal");
+  });
+
+  test("a module item restores to its module, and a record to its contact book", () => {
+    expect(binFolderLabel(item("form", { folder_name: "Forms" }))).toBe("Forms");
+    expect(binFolderLabel(item("contact_book"))).toBe("Contacts");
+    expect(binFolderLabel(item("deal", { folder_name: "Sales" }))).toBe("Sales");
+    expect(binFolderLabel(item("townhall_session"))).toBe("Townhall");
+    expect(binFolderLabel(item("checkin"))).toBe("Standups");
+  });
+
+  test("module filters show only modules with items (plus the active one), in Settings order", () => {
+    const items = [item("deal"), item("note"), item("form"), item("contact")];
+    expect(binItemModule(item("note"))).toBeNull();
+    expect(moduleFilters(items, "all")).toEqual(["forms", "crm"]);
+    expect(moduleFilters(items, "module:townhall")).toEqual(["forms", "crm", "townhall"]);
+    expect(filterBinItems(items, "module:crm").map((entry) => entry.type)).toEqual(["deal", "contact"]);
+    expect(filterBinItems(items, "module:goals")).toEqual([]);
+  });
 });

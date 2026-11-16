@@ -21,7 +21,8 @@ export function SlotPicker({ load, tz, onTz, onPick, picked, weekStart = 1, labe
   onTz: (tz: string) => void;
   onPick: (start: string) => void;
   picked?: string | null;
-  weekStart?: 0 | 1;
+  /** D1383: the in-app pickers pass the viewer's "Week starts on"; public pages keep Monday. */
+  weekStart?: 0 | 1 | 6;
   label?: string;
 }) {
   const today = todayIn(tz);

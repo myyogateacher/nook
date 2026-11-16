@@ -11,6 +11,8 @@ import { answerRound, closeRound, nudgeRound, skipRound, startRoundNow, unblockC
 import { detailOf, dueRounds, feed, listCheckins, prefill, roundByDate, roundSummary, roundsPage, roundView, stats } from "./views";
 import { LEVEL_RANK } from "../access/levels";
 import { canWriteContent } from "../team/userRole";
+import { csvFileName, csvResponse } from "../csvExport";
+import { checkinCsv } from "./export";
 
 /**
  * Standups over HTTP (docs/plan/WORKSPACE_MODULES.md §D.4 HTTP, docs/plan/API_CONTRACTS.md
@@ -100,6 +102,8 @@ export function checkinRoutes(router: ModuleRouter) {
     return c.json({ checkin: detailOf(row.id, user(c)) }, 201);
   }));
   router.get("/api/checkins/:id", handle((c) => c.json({ checkin: detailOf(param(c, "id"), user(c)) })));
+  // D1387: the rounds' answers the viewer can read, as CSV.
+  router.get("/api/checkins/:id/export.csv", handle((c) => { const file = checkinCsv(param(c, "id"), user(c)); return csvResponse(file.text, csvFileName(file.name, "standup")); }));
   router.patch("/api/checkins/:id", handle(async (c) => {
     const body = await parseJson(c.req.raw, patchSchema);
     const row = updateCheckin(user(c), param(c, "id"), body as never);

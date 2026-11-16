@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FieldSelect, zoneOptions } from "./FieldSelect";
-import { CalendarCheck2, CalendarClock, Check, Clock, Copy, Link2, MapPin, Phone, PencilLine, CircleHelp, Plus, Trash2, Users, Video, X, ExternalLink, Eye, EyeOff, KeyRound } from "lucide-react";
+import { CalendarCheck2, CalendarClock, Check, Clock, Copy, Download, Link2, MapPin, Phone, PencilLine, CircleHelp, Plus, Trash2, Users, Video, X, ExternalLink, Eye, EyeOff, KeyRound } from "lucide-react";
 import { ModuleHome } from "../ui/ModuleHome";
 import { BOOKINGS_SECTIONS, type BookingsSection } from "./sections";
 import { EmptyState } from "../ui/EmptyState";
@@ -66,6 +66,8 @@ export default function BookingsApp(props: WorkspaceAppProps) {
   const home = (content: React.ReactNode, active: TabId | null = tab, search = true) => <ModuleHome icon={CalendarClock} title="Bookings" displayName={props.displayName}
     onHome={props.onHome} onSettings={props.onSettings} onSignOut={props.onSignOut}
     primary={readOnly ? undefined : { label: "New booking type", icon: Plus, onClick: () => void createType(), disabled: creating }}
+    // D1387: the list on screen (Upcoming, Past, or Cancelled), as CSV.
+    menu={tab === "upcoming" || tab === "past" || tab === "cancelled" ? [{ id: "export", label: `Export ${tab} bookings (CSV)`, icon: Download, onSelect: () => { window.location.href = `/api/bookings/export.csv?view=${tab}`; } }] : undefined}
     sections={{ module: "bookings", role, active, onSelect: (id) => go(id === "upcoming" ? [] : [id]) }}
     search={search && ["upcoming", "past", "cancelled", "types"].includes(tab) ? { value: query, onChange: setQuery, placeholder: tab === "types" ? "Search booking types" : "Search by name or type", label: "Search bookings" } : undefined}>
     {content}

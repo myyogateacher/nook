@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertOctagon, BellRing, ChevronLeft, ChevronRight, Lock, Play, Square, Sunrise, PenLine } from "lucide-react";
+import { AlertOctagon, BellRing, ChevronLeft, ChevronRight, Download, Lock, Play, Square, Sunrise, PenLine } from "lucide-react";
 import { ModuleHome } from "../ui/ModuleHome";
 import { formatWorkspaceRoute } from "../workspaceModules/registry";
 import { EmptyState } from "../ui/EmptyState";
@@ -84,7 +84,9 @@ export function StandupPage(props: PageProps) {
     ...(canEdit && round?.round.status === "open" ? [
       { id: "nudge", label: "Nudge people who haven't answered", icon: BellRing, onSelect: () => { nudgeRound(round.round.id).then((result) => flash(result.nudged ? `Nudged ${result.nudged} ${result.nudged === 1 ? "person" : "people"}` : "Everyone has answered or was nudged in the last hour")).catch((reason) => flash(errorText(reason, "Could not nudge"))); } },
       { id: "close", label: "Close this round", icon: Square, onSelect: () => { closeRound(round.round.id).then(() => { flash("Round closed; the summary went out"); refresh(); }).catch((reason) => flash(errorText(reason, "Could not close the round"))); } }
-    ] : [])
+    ] : []),
+    // D1387: every round's answers you can read, as CSV.
+    { id: "export", label: "Export answers (CSV)", icon: Download, onSelect: () => { window.location.href = `/api/checkins/${encodeURIComponent(detail.id)}/export.csv`; } }
   ];
 
   return <ModuleHome icon={Sunrise} title="Standups" heading={detail.name} displayName={props.displayName} onHome={props.onHome} onSettings={props.onSettings} onSignOut={props.onSignOut}

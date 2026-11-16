@@ -29,9 +29,14 @@ const toLink = (row: Row): PublicLink => ({
 
 export const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
-/** The admin policy a kind falls under (§G.1 Q2: on by default). */
+/**
+ * The admin policy a kind falls under (§G.1 Q2: on by default): booking pages and their manage pages,
+ * townhall audience links (D1382: their own switch since 160), and everything else (forms, polls,
+ * a time poll's guest link) under public forms.
+ */
 export function publicPolicyAllows(kind: PublicLinkKind) {
   const settings = readWorkspaceSettings();
+  if (kind === "townhall_session") return settings.publicTownhall;
   return kind === "booking_type" || kind === "booking_manage" ? settings.publicBookingPages : settings.publicForms;
 }
 

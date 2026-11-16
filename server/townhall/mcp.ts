@@ -1,10 +1,11 @@
 import * as z from "zod/v4";
 import { config } from "../config";
-import { defineTool, McpToolError, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, restoreResult, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { restoreItem } from "../bin";
 import { keyContainerIds } from "../keyResources";
 import { MODERATION_ACTIONS, POLL_KINDS, TOWNHALL_LIMITS, TOWNHALL_STATES } from "../../shared/townhall";
 import {
-  askQuestion, closePoll, createPoll, createSession, launchPoll, listSessions, moderateQuestion, readQuestion, readSession, recap, recapCsv, recapMarkdown,
+  askQuestion, binSession, closePoll, createPoll, createSession, launchPoll, listSessions, moderateQuestion, readQuestion, readSession, recap, recapCsv, recapMarkdown,
   stateFor, TownhallError, voteQuestion
 } from "./service";
 
@@ -80,6 +81,22 @@ export const townhallMcpTools: McpToolSpec[] = [
       const session = createSession(key.userId, { title: args.title, description: args.description, startsAt: args.startsAt ?? null, allowAnonymous: args.allowAnonymous, moderation: args.moderation });
       return { session: { ...session, url: url(session.href) } };
     })
+  }),
+  defineTool({
+    name: "bin_townhall_session", title: "Move a townhall session to the Bin",
+    description: `Moves a session you own or manage to the Bin, with its questions, polls, and recap; its audience link stops working. ${BIN_DESCRIPTION} Restore it with restore_townhall_session.`,
+    scopes: ["townhall:write"], alsoRequires: ["bin:write"], buckets: BIN_BUCKETS, access: { mode: "items", items: [{ arg: "sessionId", kind: "townhall_session" }] }, write: true, annotations: { destructiveHint: true },
+    inputSchema: z.object({ sessionId }).strict(),
+    // D1385: the REST DELETE /api/townhall/sessions/:id, over MCP.
+    handler: ({ sessionId: ref }, key) => run(() => binSession(ref, key.userId))
+  }),
+  defineTool({
+    name: "restore_townhall_session", title: "Restore a townhall session from the Bin",
+    description: "Restores a session you own from the Bin, with its questions, polls, and recap.",
+    scopes: ["townhall:write"], alsoRequires: ["bin:write"], access: { mode: "items", items: [{ arg: "sessionId", kind: "townhall_session" }] }, write: true,
+    inputSchema: z.object({ sessionId: z.string().uuid().describe("The session's id") }).strict(),
+    // D1385: the restore every bin_* tool's description promises, through the module's Bin provider.
+    handler: async ({ sessionId }, key) => restoreResult(await restoreItem("townhall_session", sessionId.toLowerCase(), key.userId), "Session")
   }),
   defineTool({
     name: "ask_townhall_question",

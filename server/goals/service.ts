@@ -10,6 +10,7 @@ import { computeProgress, progressSource, ProgressError, registeredProgressSourc
 import { createLink } from "../links/service";
 import { setItemMember } from "../access/workspaceItems";
 import { atLeast, goalLevel, goalRow, readableGoalIds, readableGoalSql, type GoalRow } from "./access";
+import { readableBoardPredicate } from "../tasks/access";
 import { slugSegment } from "../../shared/friendlyUrls";
 import { isValidTimeZone } from "../../shared/calendarRecurrence";
 import {
@@ -1134,11 +1135,43 @@ export function goalsOfItem(userId: string, kind: string, id: string): GoalSumma
   return summarize(rows, userId);
 }
 
+/** The most cards one card-face read asks about (D1386). */
+export const MAX_BADGE_CARDS = 200;
+
+export type CardGoalBadge = { id: string; title: string; href: string; progress: number; health: string };
+
+/**
+ * The goals each card contributes to, for the card face's goal badge (D1386; the TODO's batched
+ * read): one query for up to 200 cards, only cards on boards the viewer can read and goals they can
+ * open, at most 5 goals per card. Cards with none are left out.
+ */
+export function goalsOfCards(userId: string, cardIds: readonly string[]): Record<string, CardGoalBadge[]> {
+  const ids = [...new Set(cardIds)].slice(0, MAX_BADGE_CARDS);
+  if (!ids.length) return {};
+  const params: Record<string, string> = { userId };
+  ids.forEach((id, index) => { params[`c${index}`] = id; });
+  const rows = db.query(`SELECT l.a_id AS card_id, g.* FROM work_links l
+      JOIN cards k ON k.id = l.a_id AND k.deleted_at IS NULL JOIN boards b ON b.id = k.board_id
+      JOIN goals g ON g.id = l.b_id
+    WHERE l.a_kind = 'card' AND l.a_id IN (${ids.map((_, index) => `$c${index}`).join(",")}) AND l.b_kind = 'goal' AND l.relation = 'contributes'
+      AND ${readableBoardPredicate} AND ${readableGoalSql("g")}
+    ORDER BY l.created_at`).all(params) as Array<GoalRow & { card_id: string }>;
+  const summaries = new Map(summarize([...new Map(rows.map((row) => [row.id, row])).values()], userId).map((goal) => [goal.id, goal]));
+  const out: Record<string, CardGoalBadge[]> = {};
+  for (const row of rows) {
+    const goal = summaries.get(row.id);
+    if (!goal) continue;
+    const list = out[row.card_id] ??= [];
+    if (list.length < 5 && !list.some((item) => item.id === goal.id)) list.push({ id: goal.id, title: goal.title, href: goal.href, progress: goal.progress, health: goal.health });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Bin (§B.13): the owner restores and purges; purge detaches children (parent SET NULL).
 
 export function goalsInBin(userId: string) {
-  return db.query("SELECT id, title, deleted_at, purge_after, purge_started_at FROM goals WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 500").all(userId) as Array<{ id: string; title: string; deleted_at: string; purge_after: string; purge_started_at: string | null }>;
+  return db.query("SELECT id, title, short_id, deleted_at, purge_after, purge_started_at FROM goals WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 500").all(userId) as Array<{ id: string; title: string; short_id: string; deleted_at: string; purge_after: string; purge_started_at: string | null }>;
 }
 
 export function restoreGoal(userId: string, id: string) {

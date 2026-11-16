@@ -317,6 +317,11 @@ export type BinItem = {
    * more (it restores to Default) and for an item whose folder is gone.
    */
   restore_folder_name?: string;
+  /**
+   * Workspace-module items (D1380): the in-app path the item opens at once restored (its module's
+   * friendly path), so the Bin's restore toast can offer Open. Core types omit it.
+   */
+  href?: string;
 };
 
 export const BIN_LIST_LIMIT = 500;

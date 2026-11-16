@@ -49,7 +49,7 @@ export const dealWorkKind: WorkKindAdapter = {
 
 const DAY = 86_400_000;
 const providedDefaults = { board_id: null, board_name: null, attachment: false, attachment_of: null, attachment_kind: null } as const;
-type Binned = Pick<BinItem, "type" | "id" | "title" | "folder_id" | "folder_name" | "size_bytes" | "deleted_at" | "purge_after"> & { purging: number; can_purge: number };
+type Binned = Pick<BinItem, "type" | "id" | "title" | "folder_id" | "folder_name" | "size_bytes" | "deleted_at" | "purge_after"> & { purging: number; can_purge: number; short_id?: string };
 
 /** A Bin provider for one of the book's record tables: listed for the book's owner and whoever binned it while they can still edit; the owner purges. */
 function recordBin(type: "contact" | "company" | "deal", table: string, titleColumn: string): BinProvider {
@@ -63,12 +63,13 @@ function recordBin(type: "contact" | "company" | "deal", table: string, titleCol
   })();
   return {
     list(userId) {
-      const rows = db.query(`SELECT '${type}' AS type, r.id, r.${titleColumn} AS title, b.id AS folder_id, b.name AS folder_name, NULL AS size_bytes, r.deleted_at, r.purge_after,
+      const rows = db.query(`SELECT '${type}' AS type, r.id, r.${titleColumn} AS title, r.short_id, b.id AS folder_id, b.name AS folder_name, NULL AS size_bytes, r.deleted_at, r.purge_after,
           r.purge_started_at IS NOT NULL AS purging, b.owner_id = $userId AS can_purge
         FROM ${table} r JOIN contact_books b ON b.id = r.book_id
         WHERE r.deleted_at IS NOT NULL AND b.deleted_at IS NULL AND (b.owner_id = $userId OR (r.deleted_by = $userId AND ${readableContainerSql("contact_book", "b", { minLevel: "edit" })}))
         ORDER BY r.deleted_at DESC LIMIT 500`).all({ userId }) as Binned[];
-      return rows.map((row): BinItem => ({ ...row, purging: row.purging === 1, can_purge: row.can_purge === 1, ...providedDefaults }));
+      const path = type === "contact" ? crmContactPath : type === "company" ? crmCompanyPath : crmDealPath;
+      return rows.map(({ short_id, ...row }): BinItem => ({ ...row, purging: row.purging === 1, can_purge: row.can_purge === 1, ...providedDefaults, ...(short_id ? { href: path(row.title, short_id) } : {}) }));
     },
     restore(id, userId) {
       return withResourceLock(lock(id), async (): Promise<RestoreOutcome> => {
@@ -123,18 +124,18 @@ const bookBin: BinProvider = (() => {
   })();
   return {
     list(userId) {
-      const rows = db.query(`SELECT 'contact_book' AS type, id, name AS title, NULL AS folder_id, NULL AS folder_name, NULL AS size_bytes, deleted_at, purge_after, purge_started_at IS NOT NULL AS purging, 1 AS can_purge
+      const rows = db.query(`SELECT 'contact_book' AS type, id, name AS title, short_id, NULL AS folder_id, 'Contacts' AS folder_name, NULL AS size_bytes, deleted_at, purge_after, purge_started_at IS NOT NULL AS purging, 1 AS can_purge
         FROM contact_books WHERE owner_id = ? AND deleted_at IS NOT NULL AND system_kind IS NULL ORDER BY deleted_at DESC LIMIT 200`).all(userId) as Binned[];
-      return rows.map((row): BinItem => ({ ...row, purging: row.purging === 1, can_purge: true, ...providedDefaults }));
+      return rows.map(({ short_id, ...row }): BinItem => ({ ...row, purging: row.purging === 1, can_purge: true, ...providedDefaults, ...(short_id ? { href: `/contacts?book=${short_id}` } : {}) }));
     },
     restore(id, userId) {
       return withResourceLock(lock(id), async (): Promise<RestoreOutcome> => {
         const row = db.query("SELECT deleted_at FROM contact_books WHERE id = ? AND owner_id = ? AND system_kind IS NULL").get(id, userId) as { deleted_at: string | null } | null;
         if (!row) return { status: "not_found" };
-        if (row.deleted_at === null) return { status: "already_restored", folderId: null, folderName: null };
+        if (row.deleted_at === null) return { status: "already_restored", folderId: null, folderName: "Contacts" };
         db.query("UPDATE contact_books SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL, updated_at = ? WHERE id = ?").run(now(), id);
         audit(userId, null, "crm.book_restore", { bookId: id });
-        return { status: "restored", folderId: null, folderName: null, visibility: "private" };
+        return { status: "restored", folderId: null, folderName: "Contacts", visibility: "private" };
       });
     },
     purge(id, userId) {

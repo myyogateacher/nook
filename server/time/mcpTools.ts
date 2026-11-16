@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
-import { defineTool, McpToolError, notFound, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, notFound, restoreResult, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { restoreItem } from "../bin";
 import { anchorsOf, keyFilter, keyReach, reachCovers } from "../keyResources";
 import { LinkError } from "../links/service";
 import { ROUNDING_MINUTES, type RoundingMinutes } from "../../shared/duration";
@@ -7,7 +8,7 @@ import { SUMMARY_GROUPS, type SummaryGroup } from "../../shared/time";
 import {
   bulkEntries, createEntry, deleteEntry, entryRow, listEntries, parseSeconds, runningEntry, runningView, startTimer, stopTimer, TimeError, updateEntry, type Actor
 } from "./service";
-import { createProject, listProjects, projectView, updateProject } from "./projects";
+import { binProject, createProject, listProjects, projectView, updateProject } from "./projects";
 import { suggestions, summarize, timeForTarget } from "./reports";
 
 /**
@@ -217,6 +218,22 @@ export const timeTools: McpToolSpec[] = [
       settings: z.object({ privateEntries: z.boolean().optional(), requireDescription: z.boolean().optional() }).optional(), archived: z.boolean().optional(), expectedRevision: z.number().int().optional()
     }),
     handler: ({ projectId, ...input }, key) => run(() => ({ project: updateProject(key.userId, projectId, input) }))
+  }),
+  defineTool({
+    name: "bin_time_project", title: "Move a time project to the Bin",
+    description: `Moves a project you own to the Bin; its entries stay but cannot be logged to it. ${BIN_DESCRIPTION} Restore it with restore_time_project.`,
+    scopes: ["time:write"], alsoRequires: ["bin:write"], buckets: BIN_BUCKETS, access: { mode: "items", items: [{ arg: "projectId", kind: "time_project" }] }, write: true, annotations: { destructiveHint: true },
+    inputSchema: z.object({ projectId: z.string().max(64) }).strict(),
+    // D1385: the REST DELETE /api/time/projects/:id, over MCP.
+    handler: ({ projectId }, key) => run(() => binProject(key.userId, projectId))
+  }),
+  defineTool({
+    name: "restore_time_project", title: "Restore a time project from the Bin",
+    description: "Restores a project you own from the Bin; logging to it works again.",
+    scopes: ["time:write"], alsoRequires: ["bin:write"], access: { mode: "items", items: [{ arg: "projectId", kind: "time_project" }] }, write: true,
+    inputSchema: z.object({ projectId: z.string().uuid() }).strict(),
+    // D1385: the restore every bin_* tool's description promises, through the module's Bin provider.
+    handler: async ({ projectId }, key) => restoreResult(await restoreItem("time_project", projectId.toLowerCase(), key.userId), "Project")
   }),
   defineTool({
     name: "get_time_for_item", title: "Get time on a work item",

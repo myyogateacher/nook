@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { MentionTextarea } from "../ui/mentions/MentionTextarea";
 import { CheckSquare, Plus, Square, Trash2 } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { Select, type Option } from "../ui/Select";
@@ -383,7 +384,7 @@ export function CheckInSheet({ goal, onClose, onSaved }: { goal: GoalDetail; onC
     </div>
     <div className="ui-field">
       <label htmlFor="checkin-note">Note</label>
-      <textarea id="checkin-note" value={note} onChange={(event) => setNote(event.target.value)} maxLength={10000} placeholder="What moved, what's in the way, what's next" />
+      <MentionTextarea id="checkin-note" value={note} onValueChange={setNote} target={{ kind: "goal", id: goal.id }} noun="goal" maxLength={10000} placeholder="What moved, what's in the way, what's next. @ to mention someone" />
     </div>
   </Sheet>;
 }

@@ -411,7 +411,7 @@ export function NotesApp(props: NotesAppProps) {
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : note.canEdit ? `Shared by ${note.owner_name} · you can edit` : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
             <NoteEditor key={note.id} markdown={markdown} editable={(note.isOwner || note.canEdit === true) && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} attachHost="note" onNotice={notify}
               onFileConfirmed={(documentId) => { const files = confirmedFilesRef.current.get(note.id) ?? new Set<string>(); files.add(documentId); confirmedFilesRef.current.set(note.id, files); }}
-              onUploadsChange={setNoteUploads} uploadControl={noteUploadControl} />
+              onUploadsChange={setNoteUploads} uploadControl={noteUploadControl} mentionTarget={{ kind: "note", id: note.id }} mentionNoun="note" />
           </article>
         </>}
       </section>

@@ -1,4 +1,5 @@
 import { audit, db, now } from "../db";
+import { notifyMentions } from "../activity/mentions";
 import { cancelSchedules, upsertSchedule } from "../schedules/service";
 import { notify } from "../notify";
 import { recordItemActivity } from "../activity/service";
@@ -449,9 +450,13 @@ export function answerRound(userId: string, roundId: string, input: AnswerInput)
     if (!row.anonymous) {
       const set = setVersion(host, response.setVersion)!;
       const text = answerText(set, response.answers);
+      // The answer's text before this edit (the search row holds it), so only new @mentions notify.
+      const before = (db.query("SELECT body FROM checkins_fts WHERE response_id = ?").get(response.id) as { body: string } | null)?.body ?? null;
       db.query("DELETE FROM checkins_fts WHERE response_id = ?").run(response.id);
       if (text.trim()) db.query("INSERT INTO checkins_fts (response_id, body) VALUES (?, ?)").run(response.id, text.slice(0, 50_000));
       syncMentions({ kind: "checkin_round", id: response.id }, text, userId);
+      // @mentions (docs/plan/MENTIONS.md, phase B): readers of the round hear about it. Anonymous answers never notify (the title names the author).
+      notifyMentions({ kind: "checkin_round", itemId: round.id, authorId: userId, text, before, where: "in a standup answer" });
       blockers = syncBlockers(row, round, response, set, userId, nowMs);
       runGoalUpdaters({ userId, checkinId: row.id, checkinName: row.name, roundId: round.id, responseId: response.id, set, answers: response.answers, goalUpdates: input.goalUpdates ?? [] });
       recordItemActivity({ itemKind: "checkin_round", itemId: round.id, container: { kind: "checkin", id: row.id }, actorId: userId, kind: existing ? "answer_edited" : "answered", payload: { item: { id: response.id, label: "Answer" } } });

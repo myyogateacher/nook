@@ -1,4 +1,5 @@
 import { Fragment, useRef, useState, type ReactNode } from "react";
+import { MentionText } from "../ui/mentions/Mentions";
 import { Clock3, MessageSquare, SmilePlus } from "lucide-react";
 import { Avatar } from "../ui/Avatar";
 import { WorkRefChip } from "../ui/links/WorkLinks";
@@ -55,12 +56,13 @@ export function StateBadge({ state, closed = false }: { state: ParticipationStat
 /** Answer text with its refs (card keys, links) as chips; line breaks kept. */
 export function RefText({ text, refs, onOpen }: { text: string; refs: AnswerView["refs"]; onOpen: (href: string) => void }) {
   const known = refs.filter((ref) => text.includes(ref.text)).sort((a, b) => b.text.length - a.text.length);
-  if (!known.length) return <span className="standup-text">{text}</span>;
+  // @mentions show as chips (docs/plan/MENTIONS.md, phase B).
+  if (!known.length) return <span className="standup-text"><MentionText text={text} /></span>;
   const pattern = new RegExp(`(${known.map((ref) => ref.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "g");
   const parts = text.split(pattern);
   return <span className="standup-text">{parts.map((part, index) => {
     const ref = known.find((item) => item.text === part);
-    return ref ? <WorkRefChip key={index} summary={ref.summary} onOpen={onOpen} /> : <Fragment key={index}>{part}</Fragment>;
+    return ref ? <WorkRefChip key={index} summary={ref.summary} onOpen={onOpen} /> : <Fragment key={index}><MentionText text={part} /></Fragment>;
   })}</span>;
 }
 

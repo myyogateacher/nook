@@ -1,4 +1,5 @@
 import { audit, auditVia, db, now } from "../db";
+import { notifyMentions } from "../activity/mentions";
 import { purgeAfterFrom } from "../bin";
 import { canWriteContent, userRole } from "../team/userRole";
 import { recordItemActivity, recordItemChange } from "../activity/service";
@@ -889,6 +890,9 @@ export function checkIn(userId: string, ref: string, input: CheckinInput, nowMs 
     // no second row, no second activity entry or notification (a real health change still says so).
     const earlier = input.sourceRef ? db.query("SELECT id FROM goal_checkins WHERE goal_id = ? AND source_ref = ?").get(goal.id, input.sourceRef) as { id: string } | null : null;
     if (earlier) {
+      // @mentions in the note (docs/plan/MENTIONS.md, phase B): only the ones this edit adds.
+      const before = (db.query("SELECT note_md FROM goal_checkins WHERE id = ?").get(earlier.id) as { note_md: string } | null)?.note_md ?? null;
+      notifyMentions({ kind: "goal", itemId: goal.id, authorId: userId, text: (input.note ?? "").trim(), before, where: "in a goal check-in" });
       db.query("UPDATE goal_checkins SET health = ?, confidence = ?, note_md = ?, values_json = ?, progress = ? WHERE id = ?")
         .run(input.health, input.confidence ?? null, (input.note ?? "").trim(), JSON.stringify(typed), fresh.progress, earlier.id);
       if (input.health !== goal.health) healthChanged(goal, input.health, userId);
@@ -902,6 +906,7 @@ export function checkIn(userId: string, ref: string, input: CheckinInput, nowMs 
       .run(id, goal.id, userId, input.health, input.confidence ?? null, (input.note ?? "").trim(), JSON.stringify(typed), fresh.progress, viaNow(), timestamp, input.sourceRef ?? null);
     if (input.health !== goal.health) healthChanged(goal, input.health, userId);
     db.query("UPDATE goals SET health = ?, last_checkin_at = ?, updated_at = ?, revision = revision + 1 WHERE id = ?").run(input.health, timestamp, timestamp, goal.id);
+    notifyMentions({ kind: "goal", itemId: goal.id, authorId: userId, text: (input.note ?? "").trim(), where: "in a goal check-in" });
     recordItemActivity({ itemKind: "goal", itemId: goal.id, actorId: userId, kind: "checked_in", payload: { extra: { health: input.health, confidence: input.confidence ?? null, progress: Math.round(fresh.progress * 100) } } });
     audit(userId, null, "goals.checkin", { goalId: goal.id, checkinId: id, krs: Object.keys(typed).length });
     const row = db.query("SELECT * FROM goal_checkins WHERE id = ?").get(id) as CheckinRow;

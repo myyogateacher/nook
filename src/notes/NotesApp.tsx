@@ -273,7 +273,7 @@ export function NotesApp(props: NotesAppProps) {
           <button className={selectedFolder === "all" ? "active" : ""} onClick={() => { void selectFolder("all"); }}><Archive /><span>All notes</span><b>{notes.length}</b></button>
           <button className={selectedFolder === "shared" ? "active" : ""} onClick={() => { void selectFolder("shared"); }}><Users /><span>Shared with me</span><b>{notes.filter((item) => item.is_owner === 0).length}</b></button>
           <div className="nav-label"><span>Folders</span>{canWrite && <button onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button>}</div>
-          {folders.map((folder) => <div className={`folder-entry${canRenameFolder(folder, canWrite) ? " has-menu" : ""}`} key={folder.id}>
+          {folders.map((folder) => <div className={`folder-entry${folder.is_owner === 1 && canWrite ? " has-menu" : ""}`} key={folder.id}>
             {/* D1302: the phone's Folders panel renames in place too (⋯ → Rename). */}
             {renamingFolderId === folder.id && canRenameFolder(folder, canWrite) ? <div className="folder-link folder-link-renaming"><FolderIcon />
               <InlineRenameField name={folder.name} onCancel={() => setRenamingFolderId(null)} onSave={(name) => { setRenamingFolderId(null); renameFolder(folder, name); }} /></div> : <button
@@ -296,6 +296,8 @@ export function NotesApp(props: NotesAppProps) {
             {renamingFolderId !== folder.id && folder.is_owner === 1 && canWrite && <button className="folder-share-button" onClick={() => setSharingFolder(folder)} aria-label={`Share ${folder.name}`}><Share2 /></button>}
             {renamingFolderId !== folder.id && canRenameFolder(folder, canWrite) && <ReportOverflowMenu compact className="folder-pane-menu" label={`${folder.name} folder actions`}
               items={[{ id: "rename", label: "Rename", icon: <Pencil aria-hidden="true" />, onSelect: () => setRenamingFolderId(folder.id) }]} />}
+            {/* Default keeps its name: an empty slot keeps its count and Share in line with the rows that have a ⋯. */}
+            {folder.is_owner === 1 && canWrite && !canRenameFolder(folder, canWrite) && <span className="folder-pane-menu-spacer" aria-hidden="true" />}
           </div>)}
           {!folders.length && <p className="nav-empty">Create a folder to organize your notes.</p>}
         </nav>

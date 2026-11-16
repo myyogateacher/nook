@@ -923,7 +923,9 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         {ownedTree.map(({ folder: item, depth }) => {
           const depthStyle = depth ? { "--folder-depth": Math.min(depth, 4) } as CSSProperties : undefined;
           // D1302: the phone's Folders panel renames in place too (⋯ → Rename); Default and Attachments have no ⋯.
-          if (!canRenameFolder(item, canWrite)) return folderButton(item, depth, depthStyle);
+          if (!canWrite) return folderButton(item, depth, depthStyle);
+          // Default and Attachments keep their names: an empty slot keeps their counts in line.
+          if (!canRenameFolder(item, canWrite)) return <div key={item.id} className="folder-entry has-menu">{folderButton(item, depth, depthStyle)}<span className="folder-pane-menu-spacer" aria-hidden="true" /></div>;
           return <div key={item.id} className="folder-entry has-menu">
             {renamingFolderId === item.id
               ? <div className="folder-link folder-link-renaming" data-depth={depth || undefined} style={depthStyle}><FolderIcon />

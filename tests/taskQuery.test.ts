@@ -31,7 +31,7 @@ describe("shared/taskQuery (unit)", () => {
   const cards = [
     card({ id: "d", column_id: "c2", position: 1, title: "Zeta", due_on: "2026-10-02", updated_at: "2026-01-03T00:00:00.000Z" }),
     card({ id: "b", column_id: "c1", position: 2, title: "émile", due_on: null }),
-    card({ id: "a", column_id: "c1", position: 1, title: "Alpha", due_on: "2026-10-02", assignees: [{ id: "u1" }], tag_ids: ["t1"], flags: ["urgent"] }),
+    card({ id: "a", column_id: "c1", position: 1, title: "Alpha", due_on: "2026-10-02", assignees: [{ id: "u1" }], tag_ids: ["t1"], flags: [], priority: "urgent" }),
     card({ id: "c", column_id: "c1", position: 2, title: "beta", due_on: "2026-09-30", description_excerpt: "Crème brûlée" })
   ];
   const ids = (list: QueryCard[]) => list.map((item) => item.id);
@@ -55,7 +55,10 @@ describe("shared/taskQuery (unit)", () => {
     expect(run({ assignees: ["none"] })).toEqual(["b", "c", "d"]);
     expect(run({ assignees: ["me", "none"] })).toEqual(["a", "b", "c", "d"]);
     expect(run({ tags: ["T1"], flags: ["urgent"] })).toEqual(["a"]);
-    expect(run({ tags: ["t1"], flags: ["none"] })).toEqual([]);
+    // Urgent is a priority now (D1310): the card has no flags, and the legacy urgent flag filter reads its priority (D1313).
+    expect(run({ tags: ["t1"], flags: ["none"] })).toEqual(["a"]);
+    expect(run({ priorities: ["urgent"] })).toEqual(["a"]);
+    expect(run({ priorities: ["none"] })).not.toContain("a");
     expect(run({ due: { before: "2026-10-02" } })).toEqual(["c"]);
     expect(run({ due: { after: "2026-09-30" } })).toEqual(["a", "d"]);
     expect(run({ due: { none: true } })).toEqual(["b"]);
@@ -124,7 +127,7 @@ describe("parity: client pipeline, server SQL, and MCP list_cards (D113)", () =>
       { name: "an id no card has", filter: { tags: [crypto.randomUUID()] }, args: null as never, expected: 0 },
       { name: "urgent", filter: { flags: ["urgent"] }, args: { flags: ["urgent"] }, expected: 1 },
       { name: "blocked or on hold", filter: { flags: ["blocked", "on_hold"] }, args: { flags: ["blocked", "on_hold"] }, expected: 2 },
-      { name: "unflagged", filter: { flags: ["none"] }, args: { flags: ["none"] }, expected: 3 },
+      { name: "unflagged", filter: { flags: ["none"] }, args: { flags: ["none"] }, expected: 4 }, // The Urgent card is a priority now, not a flag (D1310).
       { name: "due before", filter: { due: { before: "2026-10-01" } }, args: { dueBefore: "2026-10-01" }, expected: 1 },
       { name: "due after", filter: { due: { after: "2026-10-01" } }, args: { dueAfter: "2026-10-01" }, expected: 2 },
       { name: "due range", filter: { due: { after: "2026-09-30", before: "2026-10-15" } }, args: { dueAfter: "2026-09-30", dueBefore: "2026-10-15" }, expected: 3 },

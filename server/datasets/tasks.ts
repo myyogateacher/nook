@@ -11,7 +11,7 @@ registerDataset({
   id: "tasks.cards",
   module: "tasks",
   label: "Cards",
-  description: "Cards on boards you can read: board, column, done, dates, and estimate.",
+  description: "Cards on boards you can read: board, column, done, dates, estimate, and priority.",
   readScope: "tasks:read",
   roles: ["admin", "member", "viewer", "guest"],
   from: "cards k JOIN boards b ON b.id = k.board_id LEFT JOIN board_columns col ON col.id = k.column_id",
@@ -26,7 +26,8 @@ registerDataset({
     { name: "created_at", sql: "k.created_at", type: "datetime", label: "Created", dimension: true, measures: ["min", "max"] },
     { name: "due_on", sql: "k.due_on", type: "date", label: "Due", dimension: true, measures: ["min", "max"] },
     { name: "done_at", sql: "k.done_at", type: "datetime", label: "Done at", dimension: true, measures: ["min", "max"] },
-    { name: "estimate", sql: "k.estimate", type: "number", label: "Estimate", measures: ["sum", "avg", "min", "max"] }
+    { name: "estimate", sql: "k.estimate", type: "number", label: "Estimate", measures: ["sum", "avg", "min", "max"] },
+    { name: "priority", sql: "k.priority", type: "string", label: "Priority", dimension: true }
   ]
 });
 

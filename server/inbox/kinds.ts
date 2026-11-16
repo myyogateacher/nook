@@ -159,7 +159,7 @@ const userNames = (ids: readonly string[], boardId: string) => {
 const cardTitleFor = (cardId: unknown, viewerId: string) => typeof cardId === "string" ? readableCard(cardId.toLowerCase(), viewerId)?.card.title ?? "A card you cannot open" : null;
 
 const CARD_FIELDS: Array<[string, string]> = [["title", "Title"], ["description", "Description"], ["dueOn", "Due date"], ["dueTime", "Due time"], ["dueTz", "Time zone"],
-  ["assigneeIds", "Assignees"], ["tags", "Tags"], ["flags", "Flags"], ["parentId", "Parent"], ["level", "Level"], ["sprintId", "Sprint"]];
+  ["assigneeIds", "Assignees"], ["tags", "Tags"], ["flags", "Flags"], ["priority", "Priority"], ["parentId", "Parent"], ["level", "Level"], ["sprintId", "Sprint"]];
 
 function cardValue(field: string, value: unknown, boardId: string, viewerId: string): string | null {
   if (value === null || value === undefined) return null;
@@ -237,7 +237,7 @@ const tasksKinds = {
       const tags = new Map(listBoardTags(card.board_id).map((tag) => [tag.id, tag.name]));
       const before: Record<string, unknown> = {
         title: card.title, dueOn: card.due_on, dueTime: card.due_time, dueTz: card.due_tz, assigneeIds: card.assignees.map((assignee) => assignee.id),
-        tags: card.tag_ids.map((id) => tags.get(id) ?? id), flags: card.flags, parentId: card.parent_card_id, level: card.level, sprintId: card.sprint_id
+        tags: card.tag_ids.map((id) => tags.get(id) ?? id), flags: card.flags, priority: card.priority, parentId: card.parent_card_id, level: card.level, sprintId: card.sprint_id
       };
       return {
         fields: CARD_FIELDS.filter(([field]) => proposal.payload[field] !== undefined).map(([field, name]) => ({

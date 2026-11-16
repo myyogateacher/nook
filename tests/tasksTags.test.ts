@@ -159,17 +159,17 @@ describe("board tags (D109, T101)", () => {
 describe("card flags (D110)", () => {
   test("flags accept only the fixed set, once each, and come back in the fixed order", async () => {
     const { owner, member, boardId, columns, card } = await setup("Flags");
-    let patched = await call(member, "PATCH", `/cards/${card.id}`, { flags: ["on_hold", "urgent"], revision: 1 });
+    let patched = await call(member, "PATCH", `/cards/${card.id}`, { flags: ["on_hold", "needs_review"], revision: 1 });
     expect(patched.status).toBe(200);
-    expect(patched.body.card).toMatchObject({ flags: ["urgent", "on_hold"], revision: 2 });
-    expect(lastAudit(member.userId, "task.card_update")).toMatchObject({ flags: ["on_hold", "urgent"] });
-    for (const flags of [["urgent", "urgent"], ["important"], "urgent", ["urgent", "blocked", "needs_review", "on_hold", "urgent"]]) {
+    expect(patched.body.card).toMatchObject({ flags: ["needs_review", "on_hold"], revision: 2 });
+    expect(lastAudit(member.userId, "task.card_update")).toMatchObject({ flags: ["on_hold", "needs_review"] });
+    for (const flags of [["blocked", "blocked"], ["important"], "blocked", ["urgent", "blocked", "needs_review", "on_hold", "blocked"]]) {
       expect((await call(member, "PATCH", `/cards/${card.id}`, { flags, revision: 2 })).status).toBe(400);
     }
-    patched = await call(owner, "PATCH", `/cards/${card.id}`, { flags: ["needs_review", "blocked", "urgent"], revision: 2 });
-    expect(patched.body.card.flags).toEqual(["urgent", "blocked", "needs_review"]);
+    patched = await call(owner, "PATCH", `/cards/${card.id}`, { flags: ["on_hold", "needs_review", "blocked"], revision: 2 });
+    expect(patched.body.card.flags).toEqual(["blocked", "needs_review", "on_hold"]);
     const board = (await call(owner, "GET", `/boards/${boardId}`)).body;
-    expect(board.cards[0].flags).toEqual(["urgent", "blocked", "needs_review"]);
+    expect(board.cards[0].flags).toEqual(["blocked", "needs_review", "on_hold"]);
     patched = await call(owner, "PATCH", `/cards/${card.id}`, { flags: [], revision: 3 });
     expect(patched.body.card).toMatchObject({ flags: [], revision: 4 });
 
@@ -181,10 +181,10 @@ describe("card flags (D110)", () => {
   test("one patch of tags, flags, and title raises the revision by exactly 1; binned cards keep both", async () => {
     const { member, boardId, card } = await setup("Flags multi");
     const tag = (await call(member, "POST", `/boards/${boardId}/tags`, { name: "Mixed" })).body.tag.id as string;
-    const patched = await call(member, "PATCH", `/cards/${card.id}`, { title: "Plan it", tagIds: [tag], flags: ["urgent"], revision: 1 });
-    expect(patched.body.card).toMatchObject({ title: "Plan it", tag_ids: [tag], flags: ["urgent"], revision: 2 });
+    const patched = await call(member, "PATCH", `/cards/${card.id}`, { title: "Plan it", tagIds: [tag], flags: ["on_hold"], priority: "high", revision: 1 });
+    expect(patched.body.card).toMatchObject({ title: "Plan it", tag_ids: [tag], flags: ["on_hold"], priority: "high", revision: 2 });
     expect((await call(member, "DELETE", `/cards/${card.id}`)).status).toBe(200);
     expect((await request(`/bin/card/${card.id}/restore`, { method: "POST", body: "{}" }, member)).status).toBe(200);
-    expect((await call(member, "GET", `/cards/${card.id}`)).body.card).toMatchObject({ tag_ids: [tag], flags: ["urgent"] });
+    expect((await call(member, "GET", `/cards/${card.id}`)).body.card).toMatchObject({ tag_ids: [tag], flags: ["on_hold"], priority: "high" });
   });
 });

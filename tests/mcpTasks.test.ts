@@ -415,8 +415,8 @@ describe("MCP tags, flags, excerpts, and list_cards filters (Wave 13C, D113, §5
     expect((await api(s.owner, "PATCH", `/cards/${s.cardId}`, { tagIds: [backend.id], flags: ["blocked", "urgent"], revision: 1 })).status).toBe(200);
     const listed = await callTool(key, "list_cards", { boardId: s.boardId });
     expect(listed.value.tags).toEqual([{ id: backend.id, name: "Backend", color: "blue" }]);
-    expect(listed.value.cards[0]).toMatchObject({ tags: ["Backend"], flags: ["urgent", "blocked"], description_excerpt: "Read the spec" });
-    expect((await callTool(key, "get_card", { cardId: s.cardId })).value.card).toMatchObject({ tags: ["Backend"], flags: ["urgent", "blocked"], description_excerpt: "Read the spec" });
+    expect(listed.value.cards[0]).toMatchObject({ tags: ["Backend"], flags: ["blocked"], priority: "urgent", description_excerpt: "Read the spec" });
+    expect((await callTool(key, "get_card", { cardId: s.cardId })).value.card).toMatchObject({ tags: ["Backend"], flags: ["blocked"], priority: "urgent", description_excerpt: "Read the spec" });
   });
 
   test("create_card and update_card take tags by name or id and flags; unknown tags are INVALID and write nothing", async () => {
@@ -442,8 +442,8 @@ describe("MCP tags, flags, excerpts, and list_cards filters (Wave 13C, D113, §5
 
     const cardId = created.value.card.id as string;
     const updated = await callTool(key, "update_card", { cardId, baseRevision: 1, tags: ["UI"], flags: ["on_hold", "urgent"] });
-    expect(updated.value.card).toMatchObject({ tags: ["UI"], flags: ["urgent", "on_hold"], revision: 2 });
-    expect(auditRows(s.member.userId, "task.card_update").at(-1)).toMatchObject({ cardId, via: "mcp", keyId: key.id, tagsAdded: 0, tagsRemoved: 1, flags: ["on_hold", "urgent"] });
+    expect(updated.value.card).toMatchObject({ tags: ["UI"], flags: ["on_hold"], priority: "urgent", revision: 2 });
+    expect(auditRows(s.member.userId, "task.card_update").at(-1)).toMatchObject({ cardId, via: "mcp", keyId: key.id, tagsAdded: 0, tagsRemoved: 1, flags: ["on_hold"], priority: "urgent" });
     expect((await callTool(key, "update_card", { cardId, baseRevision: 2, tags: ["Backend", "Gone"] })).value).toMatchObject({ code: "INVALID", reason: "UNKNOWN_TAG" });
     expect((await callTool(key, "update_card", { cardId, baseRevision: 1, tags: [] })).value).toMatchObject({ code: "CARD_CHANGED", currentRevision: 2 });
     const cleared = await callTool(key, "update_card", { cardId, baseRevision: 2, tags: [], flags: [] });
@@ -460,7 +460,7 @@ describe("MCP tags, flags, excerpts, and list_cards filters (Wave 13C, D113, §5
     const key = makeKey(s.member, ["tasks:read"]);
     const tag = (await api(s.owner, "POST", `/boards/${s.boardId}/tags`, { name: "Café" })).body.tag as { id: string };
     const mine = (await api(s.owner, "POST", `/boards/${s.boardId}/cards`, {
-      columnId: s.doing, title: "Mine", description: "Résumé draft", assigneeIds: [s.member.userId], tagIds: [tag.id], flags: ["urgent"], dueOn: "2026-10-05"
+      columnId: s.doing, title: "Mine", description: "Résumé draft", assigneeIds: [s.member.userId], tagIds: [tag.id], flags: ["blocked"], priority: "urgent", dueOn: "2026-10-05"
     })).body.card.id as string;
     const ids = async (args: Record<string, unknown>) => {
       const result = await callTool(key, "list_cards", { boardId: s.boardId, ...args });
@@ -474,6 +474,11 @@ describe("MCP tags, flags, excerpts, and list_cards filters (Wave 13C, D113, §5
     expect(await ids({ tags: ["none"] })).toEqual([s.cardId]);
     expect(await ids({ flags: ["urgent", "blocked"] })).toEqual([mine]);
     expect(await ids({ flags: ["none"] })).toEqual([s.cardId]);
+    // D1315: priorities, and the deprecated urgent flag reads as the Urgent priority (D1313).
+    expect(await ids({ priorities: ["urgent"] })).toEqual([mine]);
+    expect(await ids({ priorities: ["none"] })).toEqual([s.cardId]);
+    expect(await ids({ priorities: ["low", "high"] })).toEqual([]);
+    expect(await ids({ flags: ["urgent"] })).toEqual([mine]);
     expect(await ids({ dueBefore: "2026-10-05" })).toEqual([]);
     expect(await ids({ dueBefore: "2026-10-06", dueAfter: "2026-10-04" })).toEqual([mine]);
     expect(await ids({ dueNone: true })).toEqual([s.cardId]);
@@ -484,7 +489,7 @@ describe("MCP tags, flags, excerpts, and list_cards filters (Wave 13C, D113, §5
     expect(await ids({ columnId: s.todo, flags: ["urgent"] })).toEqual([]);
 
     expect((await callTool(key, "list_cards", { boardId: s.boardId, tags: ["Unknown"] })).value).toMatchObject({ code: "INVALID", reason: "UNKNOWN_TAG", known: ["Café"] });
-    for (const args of [{ dueBefore: "2026-02-30" }, { text: "" }, { text: "x".repeat(101) }, { flags: ["soon"] }, { assigneeIds: ["someone"] }]) {
+    for (const args of [{ dueBefore: "2026-02-30" }, { text: "" }, { text: "x".repeat(101) }, { flags: ["soon"] }, { priorities: ["soon"] }, { assigneeIds: ["someone"] }]) {
       const refused = await callTool(key, "list_cards", { boardId: s.boardId, ...args });
       expect(refused.isError).toBe(true);
       expect(JSON.stringify(refused.value)).toMatch(/INVALID|Invalid arguments/);

@@ -21,7 +21,7 @@ import { dateInZone, validTimeZone } from "../today/registry";
 import { mailShared, shareMembers } from "../mail/triggers";
 import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
 import { groupGrantExists } from "../access/groups";
-import { foldText } from "../../shared/taskQuery";
+import { foldText, LEGACY_URGENT_FLAG, type TaskPriority } from "../../shared/taskQuery";
 import { boardCodeMessage, normalizeBoardCode } from "../../shared/boardKeys";
 import { boardCodeTaken, freeBoardCode, keyOfCard, writeBoardCode } from "./keys";
 import { visibleEstimateSql } from "./estimateSql";
@@ -191,8 +191,10 @@ export type CardSummary = {
   assignee_name: string | null;
   /** Tag ids of this board, at most 10, in tagging order; resolve against the board's `tags` (D109). */
   tag_ids: string[];
-  /** Flags from the fixed set, in its order (D110). */
+  /** Flags from the fixed set, in its order (D110); Urgent is a priority now (D1310). */
   flags: CardFlag[];
+  /** urgent, high, medium, or low; null without one (migration 123, D1310). */
+  priority: TaskPriority | null;
   comment_count: number;
   attachment_count: number;
   /** The parent card on the same board, one level up, or null (migration 019, D121). */
@@ -224,7 +226,7 @@ const cardSelect = (extraColumns = "") => `
   SELECT k.id, k.board_id, k.column_id, k.position, k.title,
          CASE WHEN k.description <> '' THEN 1 ELSE 0 END AS has_description,
          k.description_excerpt, k.revision, k.created_by, cu.display_name AS creator_name, CASE WHEN cu.kind = 'service' THEN 1 ELSE 0 END AS creator_is_integration,
-         k.due_on, k.due_time, k.due_tz, k.start_on, k.start_time, k.start_tz,
+         k.due_on, k.due_time, k.due_tz, k.start_on, k.start_time, k.start_tz, k.priority,
          (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = k.id) AS comment_count,
          (SELECT COUNT(*) FROM card_attachments ca WHERE ca.card_id = k.id) AS attachment_count,
          k.parent_card_id, k.level, ${EFFECTIVE_SPRINT_SQL} AS sprint_id,
@@ -756,6 +758,23 @@ export function requireReadableCard(cardId: string, userId: string) {
   return found;
 }
 
+/** A flag a write may send: the fixed set, or the deprecated `urgent` (D1312). */
+export type WriteFlag = CardFlag | typeof LEGACY_URGENT_FLAG;
+
+/**
+ * The flags and priority a write means (D1312). The deprecated Urgent flag is the Urgent priority:
+ * `flags: ["urgent", "blocked"]` stores Blocked and sets the priority to Urgent, unless the same
+ * write names a `priority`, which wins. Sending flags without `urgent` never clears a priority, since
+ * a client that predates priorities never sees Urgent among the flags it reads back.
+ */
+function legacyFlagWrite(input: { flags?: readonly WriteFlag[]; priority?: TaskPriority | null }) {
+  const legacyUrgent = input.flags?.includes(LEGACY_URGENT_FLAG) ?? false;
+  return {
+    flags: input.flags?.filter((flag): flag is CardFlag => flag !== LEGACY_URGENT_FLAG),
+    priority: input.priority !== undefined ? input.priority : legacyUrgent ? "urgent" as const : undefined
+  };
+}
+
 export type CardCreateInput = {
   columnId: string; title: string; description?: string; dueOn?: string | null; afterCardId?: string | null;
   dueTime?: string | null; dueTz?: string | null;
@@ -764,8 +783,10 @@ export type CardCreateInput = {
   assigneeIds?: string[];
   /** Tags of this board (D109), at most 10 after deduplication. */
   tagIds?: string[];
-  /** Unique flags from the fixed set (D110). */
-  flags?: CardFlag[];
+  /** Unique flags from the fixed set (D110); the deprecated `urgent` sets the Urgent priority (D1312). */
+  flags?: WriteFlag[];
+  /** urgent, high, medium, low, or null for none (D1310). */
+  priority?: TaskPriority | null;
   /** Relations from the new card toward readable cards, as POST /cards/:k/relations creates them (D104–D107). */
   relations?: Array<{ targetCardId: string; type: RelationType }>;
   /**
@@ -874,6 +895,7 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
       ? defaultSprint(boardId, placement.structure, placement.level)
       : resolveSprint(boardId, placement.structure, placement.level, input.sprintId);
     const estimate = input.estimate === undefined ? null : requireEstimate(boardId, input.estimate);
+    const { flags, priority } = legacyFlagWrite(input);
     const plan = planInsert(liveCardsIn(input.columnId), input.afterCardId);
     if (!plan) throw stalePosition(input.columnId);
     const id = crypto.randomUUID();
@@ -888,9 +910,10 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
           placement.parentId, placement.level, sprintId, column.state === "done" ? timestamp : null, userId, timestamp, timestamp);
       // Its own statement, so the insert above stays as it was for the parallel lanes (D753).
       if (estimate !== null) db.query("UPDATE cards SET estimate = ? WHERE id = ?").run(estimate, id);
+      if (priority) db.query("UPDATE cards SET priority = ? WHERE id = ?").run(priority, id);
       if (assignees?.length) replaceAssignees(id, assignees, userId, timestamp);
       if (tagIds?.length) replaceCardTags(id, tagIds, timestamp);
-      if (input.flags?.length) replaceCardFlags(id, input.flags, timestamp);
+      if (flags?.length) replaceCardFlags(id, flags, timestamp);
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, boardId);
       // Card history (lane ACTIVITY): "created this card in <column>"; the fields it starts with are part of it.
       recordCardActivity({ cardId: id, boardId, actorId: userId, kind: "created", payload: { from: null, to: activityValue.column(input.columnId) }, at: timestamp });
@@ -898,7 +921,8 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
         boardId, cardId: id,
         ...(assignees?.length ? { assigneesAdded: assignees.length } : {}),
         ...(tagIds?.length ? { tagsAdded: tagIds.length } : {}),
-        ...(input.flags?.length ? { flags: input.flags } : {}),
+        ...(flags?.length ? { flags } : {}),
+        ...(priority ? { priority } : {}),
         ...(placement.parentId ? { parentId: placement.parentId } : {}),
         ...(placement.level !== 0 ? { level: placement.level } : {}),
         ...(sprintId ? { sprintId } : {}),
@@ -948,8 +972,10 @@ export type CardPatchInput = {
   assigneeIds?: string[];
   /** Replaces the whole tag set with tags of the card's board; `[]` clears it (D109). */
   tagIds?: string[];
-  /** Replaces the whole flag set; `[]` clears it (D110). */
-  flags?: CardFlag[];
+  /** Replaces the whole flag set; `[]` clears it (D110). The deprecated `urgent` sets the Urgent priority (D1312). */
+  flags?: WriteFlag[];
+  /** Sets the priority, or null to clear it (D1310). */
+  priority?: TaskPriority | null;
   /** Reparent (D128): a live card of this board one level up, or null to detach. The level stays unless `level` is sent. */
   parentId?: string | null;
   /** "Change level" (D128): refused with 409 HAS_CHILDREN while the card has live children. */
@@ -1079,6 +1105,7 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
       : releveled && current.sprint_id && finalLevel !== structure.workLevel ? { set: true, id: null } : { set: false, id: null };
     const sprintChanged = sprint.set && sprint.id !== current.sprint_id;
     const estimate = input.estimate === undefined ? undefined : requireEstimate(board.id, input.estimate);
+    const { flags, priority } = legacyFlagWrite(input);
     db.transaction(() => {
       const timestamp = now();
       const before = cardActivitySnapshot(cardId)!;
@@ -1098,6 +1125,7 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
           level = CASE WHEN $setPlacement THEN $level ELSE level END,
           sprint_id = CASE WHEN $setSprint THEN $sprintId ELSE sprint_id END,
           estimate = CASE WHEN $setEstimate THEN $estimate ELSE estimate END,
+          priority = CASE WHEN $setPriority THEN $priority ELSE priority END,
           revision = revision + 1, updated_at = $timestamp
         WHERE id = $cardId AND revision = $revision AND deleted_at IS NULL`).run({
         title: input.title ?? null,
@@ -1119,6 +1147,8 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
         sprintId: sprint.id,
         setEstimate: estimate === undefined ? 0 : 1,
         estimate: estimate ?? null,
+        setPriority: priority === undefined ? 0 : 1,
+        priority: priority ?? null,
         timestamp,
         cardId,
         revision: input.revision
@@ -1126,7 +1156,7 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
       if (updated.changes !== 1) throw new Error("Concurrent card update detected");
       const changed = assignees ? replaceAssignees(cardId, assignees, userId, timestamp) : null;
       const tagsChanged = tagIds ? replaceCardTags(cardId, tagIds, timestamp) : null;
-      const flagsChanged = input.flags ? replaceCardFlags(cardId, input.flags, timestamp) : null;
+      const flagsChanged = flags ? replaceCardFlags(cardId, flags, timestamp) : null;
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, board.id);
       // Card history (lane ACTIVITY): every field this patch changed, in the same transaction.
       recordSnapshotChanges(cardId, userId, before, cardActivitySnapshot(cardId)!, timestamp);
@@ -1143,7 +1173,8 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
         ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
         ...(changed ? { assigneesAdded: changed.added.length, assigneesRemoved: changed.removed.length } : {}),
         ...(tagsChanged ? { tagsAdded: tagsChanged.added.length, tagsRemoved: tagsChanged.removed.length } : {}),
-        ...(input.flags ? { flags: input.flags } : {}),
+        ...(flags ? { flags } : {}),
+        ...(priority !== undefined ? { priority } : {}),
         ...(sprintChanged ? { sprintId: sprint.id } : {}),
         ...(estimate !== undefined ? { estimate } : {})
       });

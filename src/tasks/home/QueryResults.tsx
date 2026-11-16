@@ -77,7 +77,7 @@ function ResultRow({ card, also, group, today, onOpenCard, onMoveCard }: { card:
   const names = people(card);
   return <li className={`task-group-row${card.is_done === 1 ? " done" : ""}`} data-card-id={card.id}>
     <button type="button" className="task-group-open" onClick={() => onOpenCard(card)} data-open-card={card.id}>
-      <span className="task-group-title"><FlagIcons flags={card.flags} /><span>{card.title}</span>{card.archived_at && <ArchivedChip at={card.archived_at} />}</span>
+      <span className="task-group-title"><FlagIcons flags={card.flags} priority={card.priority} /><span>{card.title}</span>{card.archived_at && <ArchivedChip at={card.archived_at} />}</span>
       <span className="task-group-meta">
         <span className="task-home-place">{group === "board" ? card.column_name : `${card.board_name} › ${card.column_name}`}</span>
         <Due card={card} today={today} />

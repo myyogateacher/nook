@@ -58,7 +58,7 @@ async function world(label: string) {
   await api(alice, "PUT", `/boards/${sharedBoard.body.board.id}/sharing`, { visibility: "selected", userIds: [bob.userId] });
   await api(alice, "POST", `/boards/${privateBoard.body.board.id}/cards`, { columnId: privateBoard.body.columns[0].id, title: "Private plan", assigneeIds: [alice.userId] });
   const shared = await api(alice, "POST", `/boards/${sharedBoard.body.board.id}/cards`, { columnId: sharedBoard.body.columns[1].id, title: "Shared plan", assigneeIds: [alice.userId, bob.userId], dueOn: "2026-10-01" });
-  db.query("INSERT INTO card_flags (card_id, flag, created_at) VALUES (?, 'urgent', ?)").run(shared.body.card.id, new Date().toISOString());
+  db.query("UPDATE cards SET priority = 'urgent' WHERE id = ?").run(shared.body.card.id);
   const view = await api(alice, "POST", "/views", { name: `${label} everything`, query: `board:${privateBoard.body.board.id},${sharedBoard.body.board.id}`, display: { sort: "title" } });
   return { alice, bob, privateBoardId: privateBoard.body.board.id as string, sharedBoardId: sharedBoard.body.board.id as string, viewId: view.body.view.id as string };
 }
@@ -90,7 +90,7 @@ describe("MCP list_views and query_cards", () => {
     const shared = (mine.value.cards as Array<Record<string, unknown>>).find((card) => card.title === "Shared plan")!;
     expect(shared).toMatchObject({
       board_name: "Agent Shared", column_name: "Doing", state: "doing", assignees: ["Agent Alice", "Agent Bob"], assignee_name: "Agent Alice",
-      tags: [], flags: ["urgent"], due_on: "2026-10-01", description_excerpt: ""
+      tags: [], flags: [], priority: "urgent", due_on: "2026-10-01", description_excerpt: ""
     });
     expect(shared.description).toBeUndefined();
     expect(mine.value.query).toBe("state:todo,doing assignee:me");

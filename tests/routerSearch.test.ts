@@ -14,7 +14,7 @@ test("a Tasks location keeps its query only when the search is passed", () => {
   const location = { pathname: `/tasks/${board}`, search: "?view=table&flag=urgent" };
   const route = routeFromLocation(location);
   expect(route).toEqual({ app: "tasks", boardId: board, cardId: null, query: parseBoardSearch(location.search) });
-  expect(formatRoute(route)).toBe(`/tasks/${board}?view=table&q=flag:urgent`);
+  expect(formatRoute(route)).toBe(`/tasks/${board}?view=table&q=priority:urgent`);
   // Without the search the view is lost: the regression the call-site check below prevents.
   expect(parseRoute(location.pathname)).toEqual({ app: "tasks", boardId: board, cardId: null });
   expect(sameRoute(route, parseRoute(location.pathname))).toBe(false);

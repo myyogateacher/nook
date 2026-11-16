@@ -41,7 +41,7 @@ test("the older per-key parameters still read, and are written back as one q", (
 test("invalid values and unknown keys are dropped, never thrown", () => {
   const query = parseBoardSearch("?view=kanban&group=owner&sort=title:up&cal=week&month=2026-13&assignee=bob&assignee=me&tag=%00x&flag=spicy&due=yesterday&column=none&rel=parent&evil=<script>&__proto__=1");
   expect({ ...query, filter: format(query.filter) }).toEqual({ ...DEFAULT_BOARD_QUERY, filter: "assignee:me" });
-  expect(format(parseBoardSearch("?q=nonsense:key flag:urgent due:2026-02-30").filter)).toBe("flag:urgent");
+  expect(format(parseBoardSearch("?q=nonsense:key flag:urgent due:2026-02-30").filter)).toBe("priority:urgent");
   expect(parseBoardSearch("?month=1899-12").month).toBeNull();
   expect(parseBoardSearch("?month=2026-07").month).toBe("2026-07");
   expect(parseBoardSearch("%%%&&=&view").view).toBe("board");
@@ -57,7 +57,7 @@ test("the grammar's limits bound what a URL can carry", () => {
   expect(parseBoardSearch(`?q=${encodeURIComponent(terms)}`).filter.terms).toHaveLength(TASK_QUERY_LIMITS.terms);
   // A text term over 100 characters is dropped, a control character drops its term.
   expect(parseBoardSearch(`?q=${"é".repeat(150)}`).filter.terms).toEqual([]);
-  expect(parseBoardSearch("?q=%22a%07b%22 flag:urgent").filter.terms.map((term) => term.key)).toEqual(["flag"]);
+  expect(parseBoardSearch("?q=%22a%07b%22 flag:urgent").filter.terms.map((term) => term.key)).toEqual(["priority"]);
 });
 
 test("hostile text stays text inside its parameter", () => {

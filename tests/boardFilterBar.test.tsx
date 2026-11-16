@@ -35,7 +35,7 @@ const render = (filter: TaskQuery, disabled: string[] = []) => renderToStaticMar
 test("chips read as sentences, including negated and grammar-only terms", () => {
   const [assignee, flag, due, has, text] = query(`assignee:me,${asha} -flag:urgent due:overdue,<2026-10-01 -has:relation "login"`).terms;
   expect(chipLabel(assignee!, board, context)).toBe("Assignee is Me, Asha");
-  expect(chipLabel(flag!, board, context)).toBe("Flag is not Urgent");
+  expect(chipLabel(flag!, board, context)).toBe("Priority is not Urgent");
   expect(chipLabel(due!, board, context)).toMatch(/^Overdue or Due before Oct 1, 2026$/);
   expect(chipLabel(has!, board, context)).toBe("No relations");
   expect(chipLabel(text!, board, context)).toBe("Text contains “login”");

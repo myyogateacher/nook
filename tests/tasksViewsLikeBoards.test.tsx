@@ -44,24 +44,24 @@ describe("board view URLs (D636)", () => {
     const emptied = route(`/tasks/${B}/views/${V}?q=`);
     expect(emptied.unsaved).toBe(true);
     expect(formatRoute(emptied)).toBe(`/tasks/${B}/views/${V}?q=`);
-    const changed = route(`/tasks/${B}/views/${V}?view=list&q=flag:urgent`);
+    const changed = route(`/tasks/${B}/views/${V}?view=list&q=flag:blocked`);
     expect(changed).toMatchObject({ unsaved: true, query: { view: "list" } });
-    expect(format(changed.query!.filter)).toBe("flag:urgent");
-    expect(formatRoute(changed)).toBe(`/tasks/${B}/views/${V}?view=list&q=flag:urgent`);
+    expect(format(changed.query!.filter)).toBe("flag:blocked");
+    expect(formatRoute(changed)).toBe(`/tasks/${B}/views/${V}?view=list&q=flag:blocked`);
     expect(hasFilterParam("?view=list")).toBe(false);
     expect(hasFilterParam("?assignee=me")).toBe(true);
     // A saved route never writes the filter, even if one is in its query object.
-    expect(formatBoardViewSearch(withBoardQuery(DEFAULT_BOARD_QUERY, { filter: parse("flag:urgent").ok ? (parse("flag:urgent") as { query: never }).query : { terms: [] } }), false)).toBe("");
+    expect(formatBoardViewSearch(withBoardQuery(DEFAULT_BOARD_QUERY, { filter: parse("flag:blocked").ok ? (parse("flag:blocked") as { query: never }).query : { terms: [] } }), false)).toBe("");
   });
 
   test("helpers keep the view: card, close, parent; a board view's parent is the views list", () => {
-    const view = route(`/tasks/${B}/views/${V}?q=flag:urgent`);
+    const view = route(`/tasks/${B}/views/${V}?q=flag:blocked`);
     expect(savedViewOf(view)).toEqual({ viewId: V, unsaved: true });
     const card = tasksRoute(B, K, false, view.query, savedViewOf(view));
-    expect(formatRoute(card)).toBe(`/tasks/${B}/views/${V}/card/${K}?q=flag:urgent`);
+    expect(formatRoute(card)).toBe(`/tasks/${B}/views/${V}/card/${K}?q=flag:blocked`);
     const closed = cardCloseAction(card, 0, { urlAt: () => undefined });
-    expect(closed.kind === "replace" && formatRoute(closed.route)).toBe(`/tasks/${B}/views/${V}?q=flag:urgent`);
-    expect(formatRoute(parentTasksRoute(card)!)).toBe(`/tasks/${B}/views/${V}?q=flag:urgent`);
+    expect(closed.kind === "replace" && formatRoute(closed.route)).toBe(`/tasks/${B}/views/${V}?q=flag:blocked`);
+    expect(formatRoute(parentTasksRoute(card)!)).toBe(`/tasks/${B}/views/${V}?q=flag:blocked`);
     expect(formatRoute(parentTasksRoute(route(`/tasks/${B}/views/${V}`))! as Route)).toBe("/tasks/views");
     expect(formatRoute(parentTasksRoute(route(`/tasks/${B}`))! as Route)).toBe("/tasks");
   });
@@ -76,8 +76,8 @@ describe("the board view's filter (D635, D637, D638)", () => {
     expect(format(savedBoardFilter({ query: format(query) }, B))).toBe("assignee:me -flag:blocked");
     // Another board's term is not this board's: it stays (and matches nothing in memory).
     expect(format(boardViewFilter(parsed(`board:${B2} state:todo`), B))).toBe(`board:${B2} state:todo`);
-    expect(boardViewQueryText(B, parsed("flag:urgent"))).toBe(`board:${B} flag:urgent`);
-    expect(boardViewQueryText(B, parsed(`board:${B} flag:urgent`))).toBe(`board:${B} flag:urgent`);
+    expect(boardViewQueryText(B, parsed("flag:blocked"))).toBe(`board:${B} flag:blocked`);
+    expect(boardViewQueryText(B, parsed(`board:${B} flag:blocked`))).toBe(`board:${B} flag:blocked`);
   });
 
   test("layouts map between the board and the saved display; the calendar keeps the saved one", () => {
@@ -101,11 +101,11 @@ describe("the board view's filter (D635, D637, D638)", () => {
       people: [{ id: U2, display_name: "Ben", can_read: 1 as const }],
       sprints: [{ id: "s1", state: "active" } as never]
     };
-    const start = composerStartFor(parsed("state:doing assignee:me tag:design flag:urgent sprint:current"), board);
-    expect(start).toEqual({ columnId: "c2", prefill: { assignees: [{ id: "u1", display_name: "Asha", can_read: 1 }], tagIds: ["t1"], flags: ["urgent"] }, sprintId: "s1" });
+    const start = composerStartFor(parsed("state:doing assignee:me tag:design flag:blocked sprint:current"), board);
+    expect(start).toEqual({ columnId: "c2", prefill: { assignees: [{ id: "u1", display_name: "Asha", can_read: 1 }], tagIds: ["t1"], flags: ["blocked"] }, sprintId: "s1" });
     expect(composerStartFor(parsed(`column:${C3} assignee:${U2}`), board)).toMatchObject({ columnId: C3, prefill: { assignees: [{ id: U2 }] } });
     // Several values, negations, unknown people: nothing to prefill.
-    expect(composerStartFor(parsed("state:todo,doing -flag:urgent assignee:none"), board)).toEqual({ columnId: null, prefill: {} });
+    expect(composerStartFor(parsed("state:todo,doing -flag:blocked assignee:none"), board)).toEqual({ columnId: null, prefill: {} });
     expect(composerStartFor(parsed("sprint:none"), board).sprintId).toBeNull();
 
     const draft = emptyDraft("c2", {}, start.prefill);

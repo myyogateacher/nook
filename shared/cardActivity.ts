@@ -55,8 +55,14 @@ export const CARD_ACTIVITY_KINDS = {
   board_move: { shape: "change", coalesce: false },
   tag_added: { shape: "item", coalesce: false },
   tag_removed: { shape: "item", coalesce: false },
+  /** Older entries may name `urgent`, from before it became a priority (D1310). */
   flag_set: { shape: "item", coalesce: false },
   flag_cleared: { shape: "item", coalesce: false },
+  /**
+   * The priority (D1314): `id` urgent, high, medium, or low, `label` its word; null is none. "set the
+   * priority to High", "changed the priority from High to Urgent", "cleared the priority".
+   */
+  priority: { shape: "change", coalesce: true },
   /** The parent card (same board). */
   parent: { shape: "change", coalesce: true },
   /** The card's level (Epic, Story, Subtask); `id` is the level number. */

@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { db } from "../db";
 import { dateInZone } from "../today/registry";
-import { addQueryDays, dueWindow, parse, format, SPRINT_VALUES, type FilterTerm, type QuerySort, type TaskQuery } from "../../shared/taskQuery";
+import { addQueryDays, dueWindow, parse, format, LEGACY_URGENT_FLAG, SPRINT_VALUES, TASK_FLAGS, type FilterTerm, type QuerySort, type TaskQuery } from "../../shared/taskQuery";
 import { EFFECTIVE_SPRINT_SQL } from "./sprintData";
 import { boardLevel, readableBoard, readableBoardPredicate } from "./access";
 import type { ItemLevel } from "../access/levels";
@@ -128,9 +128,17 @@ function termSql(term: FilterTerm, compiler: Compiler): string {
       break;
     }
     case "flag": {
-      const flags = ids(["none"]);
+      const flags = ids(["none", LEGACY_URGENT_FLAG]);
       if (flags.length) parts.push(`k.id IN (SELECT fl.card_id FROM card_flags fl WHERE fl.flag IN (${compiler.list(flags)}))`);
       if (values.includes("none")) parts.push("NOT EXISTS (SELECT 1 FROM card_flags fl WHERE fl.card_id = k.id)");
+      // The legacy Urgent flag is the Urgent priority (D1313).
+      if (values.includes(LEGACY_URGENT_FLAG)) parts.push("k.priority = 'urgent'");
+      break;
+    }
+    case "priority": {
+      const priorities = ids(["none"]);
+      if (priorities.length) parts.push(`k.priority IN (${compiler.list(priorities)})`);
+      if (values.includes("none")) parts.push("k.priority IS NULL");
       break;
     }
     case "due":
@@ -256,6 +264,9 @@ const SORT_PARTS: Record<QuerySort, KeyPart[]> = {
   updated: [{ sql: "k.updated_at", desc: true }],
   created: [{ sql: "k.created_at", desc: true }],
   title: [{ sql: "lower(k.title)", desc: false }],
+  // D1316: Urgent, High, Medium, Low, then no priority; within a priority by due date, as `due` orders.
+  priority: [{ sql: "CASE k.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END", desc: false },
+    { sql: "COALESCE(k.due_on, '9999-12-31')", desc: false }, { sql: "COALESCE(k.due_time, '99:99')", desc: false }],
   board: [{ sql: "lower(b.name)", desc: false }, { sql: "b.id", desc: false }, { sql: "col.position", desc: false }, { sql: "k.position", desc: false }]
 };
 
@@ -297,6 +308,8 @@ export type QueriedCard = {
   assignees: CardAssignee[];
   tags: Array<{ id: string; name: string; color: string }>;
   flags: string[];
+  /** urgent, high, medium, low, or null (D1310). */
+  priority: string | null;
   created_at: string;
   updated_at: string;
   /** Hierarchy (17A): the parent on the same board and its title (null when it has none or it is binned, D138). */
@@ -347,7 +360,7 @@ export type QueryInput = {
 export type QueryLanes = { lanes: LaneMode; lanesFallback?: true; columns: QueryLane[]; laneCounts: Record<string, number>; laneBoards: LaneBoard[] };
 export type QueryResult = { query: string; cards: QueriedCard[]; nextCursor: string | null; total?: number; refs?: QueryRefs } & Partial<QueryLanes>;
 
-const FLAG_ORDER = ["urgent", "blocked", "needs_review", "on_hold"];
+const FLAG_ORDER: readonly string[] = TASK_FLAGS;
 
 /** The wall time `HH:MM` in `tz` at `now`. */
 function timeInZone(now: Date, tz: string) {
@@ -452,7 +465,7 @@ export function runQuery(userId: string, query: TaskQuery, input: Omit<QueryInpu
     WHERE k.deleted_at IS NULL AND ${readableBoardPredicate} AND (${compiled.where}) AND ${boardScope}`;
   const rows = db.query(`SELECT k.id, k.board_id, b.name AS board_name, k.column_id, col.name AS column_name, ${COLUMN_STATE} AS column_state, col.is_done,
       k.position, k.title, k.description_excerpt, k.revision, k.created_by, cu.display_name AS creator_name,
-      k.due_on, k.due_time, k.due_tz, k.start_on, k.start_time, k.start_tz, k.archived_at, k.created_at, k.updated_at, k.parent_card_id, k.level,
+      k.due_on, k.due_time, k.due_tz, k.start_on, k.start_time, k.start_tz, k.priority, k.archived_at, k.created_at, k.updated_at, k.parent_card_id, k.level,
       CASE WHEN b.code IS NOT NULL AND k.number IS NOT NULL THEN b.code || '-' || k.number END AS "key",
       (SELECT p.title FROM cards p WHERE p.id = k.parent_card_id AND p.board_id = k.board_id AND p.deleted_at IS NULL) AS parent_title,
       ${EFFECTIVE_SPRINT_SQL} AS sprint_id,

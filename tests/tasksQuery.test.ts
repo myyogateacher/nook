@@ -170,7 +170,9 @@ describe("POST /api/tasks/query: filters", () => {
     addTag(w.work.id, "urgent-ISH", [w.cards.invoice.id]);
     addTag(w.secret.id, "Urgent-ish", [w.cards.secret.id]);
     addFlag(w.cards.review.id, "blocked");
-    addFlag(w.cards.review.id, "urgent");
+    // Urgent is a priority now (D1310); `flag:urgent` still finds it (D1313).
+    db.query("UPDATE cards SET priority = 'urgent' WHERE id = ?").run(w.cards.review.id);
+    db.query("UPDATE cards SET priority = 'low' WHERE id = ?").run(w.cards.paint.id);
     addFlag(w.cards.paint.id, "on_hold");
     expect(titles(await query(w.alice, { q: `tag:${homeTag}` }))).toEqual(["Groceries"]);
     expect(titles(await query(w.alice, { q: 'tag:"urgent-ish"' }))).toEqual(["Groceries", "Send invoice"]);
@@ -178,7 +180,13 @@ describe("POST /api/tasks/query: filters", () => {
     expect(titles(await query(w.alice, { q: "flag:blocked,on_hold" }))).toEqual(["Paint fence", "Review PR"]);
     expect(titles(await query(w.alice, { q: "-flag:none" }))).toEqual(["Paint fence", "Review PR"]);
     const review = mine(await query(w.alice, { q: "flag:urgent" }))[0]!;
-    expect(review.flags).toEqual(["urgent", "blocked"]);
+    expect([review.flags, review.priority]).toEqual([["blocked"], "urgent"]);
+    expect(titles(await query(w.alice, { q: "priority:urgent,low" }))).toEqual(["Paint fence", "Review PR"]);
+    expect(titles(await query(w.alice, { q: "-priority:none" }))).toEqual(["Paint fence", "Review PR"]);
+    expect(titles(await query(w.alice, { q: "flag:urgent,on_hold" }))).toEqual(["Paint fence", "Review PR"]);
+    // D1316: sort=priority puts Urgent first and cards without a priority last.
+    const byPriority = mine(await query(w.alice, { q: "", sort: "priority" })).map((card) => card.title);
+    expect(byPriority.slice(0, 2)).toEqual(["Review PR", "Paint fence"]);
     const groceries = (await query(w.alice, { q: `tag:${homeTag}` })).body;
     expect(groceries.cards[0].tags).toEqual([{ id: homeTag, name: "Urgent-ish", color: "gray" }]);
     expect(groceries.refs.tags).toEqual([{ id: homeTag, name: "Urgent-ish", color: "gray", board_id: w.home.id }]);

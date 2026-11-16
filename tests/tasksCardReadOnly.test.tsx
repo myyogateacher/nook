@@ -27,7 +27,7 @@ const epic = summary("e1", "Checkout epic", 0, null);
 const child = summary("s1", "Write the refund subtask", 2, "k1");
 const card: CardDetail = {
   ...summary("k1", "Refund flow", 1, "e1"), revision: 3, description: "Some **notes**",
-  due_on: "2999-01-01", assignees: [{ id: "u2", display_name: "Bo", can_read: 1 }], tag_ids: ["t1"], flags: ["urgent"], sprint_id: "sp1",
+  due_on: "2999-01-01", assignees: [{ id: "u2", display_name: "Bo", can_read: 1 }], tag_ids: ["t1"], priority: "urgent", flags: ["on_hold"], sprint_id: "sp1",
   comment_count: 1, attachment_count: 1
 };
 const tags: BoardTag[] = [{ id: "t1", board_id: "b1", name: "Payments", color: "blue", card_count: 1 } as BoardTag];
@@ -76,7 +76,7 @@ for (const role of ["viewer", "guest"] as const) {
       expect(markup).toContain('class="task-card-title-static"');
       expect(markup).toContain("Refund flow");
       // The values are still there, as text.
-      for (const value of ["2999-01-01", "Bo", "Payments", "Urgent", "Checkout epic", "Story", "Sprint 12", "Related card", "Write the refund subtask", "spec.pdf", "Looks good"]) {
+      for (const value of ["2999-01-01", "Bo", "Payments", "Urgent", "On hold", "Checkout epic", "Story", "Sprint 12", "Related card", "Write the refund subtask", "spec.pdf", "Looks good"]) {
         expect({ layout, value, found: markup.includes(value) }).toEqual({ layout, value, found: true });
       }
       // Reading stays: related cards and subtasks open, attachments download, the page expands and collapses.

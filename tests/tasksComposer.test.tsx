@@ -32,7 +32,7 @@ test("anything entered makes the draft dirty", () => {
   expect(composerDirty({ ...draft, title: "x" })).toBe(true);
   expect(composerDirty({ ...draft, description: "notes" })).toBe(true);
   expect(composerDirty({ ...draft, dueOn: "2026-10-01" })).toBe(true);
-  expect(composerDirty({ ...draft, flags: ["urgent"] })).toBe(true);
+  expect(composerDirty({ ...draft, flags: ["on_hold"] })).toBe(true);
   expect(composerDirty({ ...draft, attachments: [{ id: "f", name: "a.txt", mime_type: "text/plain", preview_kind: "text", size_bytes: 1 }] })).toBe(true);
   // Switching the column alone is not worth a prompt.
   expect(composerDirty({ ...draft, columnId: "doing" })).toBe(false);
@@ -55,14 +55,14 @@ test("assignees keep the names the picker passed; tags and flags replace the set
   expect(draft.assignees.map((person) => person.display_name)).toEqual(["Ann", "Bo"]);
   draft = applyFieldChange(draft, { assigneeIds: ["u2"] });
   expect(draft.assignees).toEqual([{ id: "u2", display_name: "Bo", can_read: 1 }]);
-  draft = applyFieldChange(draft, { tagIds: ["t1"], flags: ["urgent", "blocked"] });
-  expect([draft.tagIds, draft.flags]).toEqual([["t1"], ["urgent", "blocked"]]);
+  draft = applyFieldChange(draft, { tagIds: ["t1"], flags: ["on_hold", "blocked"] });
+  expect([draft.tagIds, draft.flags]).toEqual([["t1"], ["on_hold", "blocked"]]);
   expect(applyFieldChange(draft, { tagIds: [], flags: [] })).toMatchObject({ tagIds: [], flags: [] });
   // The card-shaped view that CardFields reads.
   const card = draftCard(draft, "b1");
   expect(card).toMatchObject({ board_id: "b1", column_id: "todo", assignees: [{ id: "u2", display_name: "Bo", can_read: 1 }], due_on: null });
   expect(card).not.toHaveProperty("assignee_id");
-  expect((card as unknown as { flags: string[] }).flags).toEqual(["urgent", "blocked"]);
+  expect((card as unknown as { flags: string[] }).flags).toEqual(["on_hold", "blocked"]);
 });
 
 test("the composer's due summary includes the time, as the card dialog's does", () => {
@@ -91,13 +91,13 @@ test("the create request carries only what was set", () => {
   expect(createBody(emptyDraft("todo"), "Pay rent")).toEqual({ columnId: "todo", title: "Pay rent" });
   const draft = {
     ...emptyDraft("doing"), description: "Call first", dueOn: "2026-10-01", dueTime: "09:30", dueTz: "Asia/Kolkata",
-    assignees: [{ id: "u1", display_name: "Ann", can_read: 1 as const }], tagIds: ["t1"], flags: ["urgent"],
+    assignees: [{ id: "u1", display_name: "Ann", can_read: 1 as const }], tagIds: ["t1"], flags: ["on_hold"],
     relations: [{ key: "depends_on:c9", type: "depends_on" as const, card: { id: "c9", board_id: "b2", board_name: "Ops", title: "Order", column_name: "To do", is_done: 0 as const } }],
     attachments: [{ id: "f1", name: "a.pdf", mime_type: "application/pdf", preview_kind: "pdf", size_bytes: 10 }]
   };
   expect(createBody(draft, "Pay rent")).toEqual({
     columnId: "doing", title: "Pay rent", description: "Call first", dueOn: "2026-10-01", dueTime: "09:30", dueTz: "Asia/Kolkata",
-    assigneeIds: ["u1"], tagIds: ["t1"], flags: ["urgent"], relations: [{ targetCardId: "c9", type: "depends_on" }], attachmentIds: ["f1"]
+    assigneeIds: ["u1"], tagIds: ["t1"], flags: ["on_hold"], relations: [{ targetCardId: "c9", type: "depends_on" }], attachmentIds: ["f1"]
   });
   // A time never goes without its zone, nor without a date.
   expect(createBody({ ...emptyDraft("todo"), dueTime: "09:30", dueTz: "UTC" }, "x")).toEqual({ columnId: "todo", title: "x" });

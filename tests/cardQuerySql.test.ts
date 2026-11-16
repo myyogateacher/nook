@@ -36,7 +36,7 @@ describe("compileTaskQuery", () => {
     const { where, params } = compile([
       "board:22222222-2222-4222-8222-222222222222 column:33333333-3333-4333-8333-333333333333",
       "state:todo,done -state:doing assignee:me,none,44444444-4444-4444-8444-444444444444 creator:me",
-      "tag:none,Backend,55555555-5555-4555-8555-555555555555 flag:urgent,none",
+      "tag:none,Backend,55555555-5555-4555-8555-555555555555 flag:urgent,blocked,none priority:high,none -priority:low",
       "due:overdue,today,week,next-week,none,2026-01-01,<2026-01-01,>2026-01-01 has:relation,blocked -has:blocked \"x\""
     ].join(" "));
     const sql = `SELECT k.id FROM cards k JOIN boards b ON b.id = k.board_id JOIN board_columns col ON col.id = k.column_id WHERE ${where}`;

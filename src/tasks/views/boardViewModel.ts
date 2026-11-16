@@ -1,7 +1,7 @@
 // A saved view on its board (lane VIEWS, docs/plan/TASK_VIEWS.md D635–D638). Pure: the view's filter
 // as the board engine runs it (without its board term), the stored text for a filter, the layout,
 // and what a new card starts with. No DOM access.
-import { format, parse, type FilterTerm, type TaskQuery } from "../../../shared/taskQuery";
+import { format, isTaskPriority, parse, type FilterTerm, type TaskQuery } from "../../../shared/taskQuery";
 import { columnState, type StatefulColumn, type TaskView } from "../home/homeApi";
 import type { BoardViewId } from "../boardUrl";
 import type { BoardTag, CardAssignee, SprintSummary } from "../tasksApi";
@@ -81,6 +81,8 @@ export function composerStartFor(filter: TaskQuery, board: {
   if (found) prefill.tagIds = [found.id];
   const flag = single(filter, "flag");
   if (flag && flag !== "none") prefill.flags = [flag];
+  const priority = single(filter, "priority");
+  if (isTaskPriority(priority)) prefill.priority = priority;
   const sprint = single(filter, "sprint");
   const open = board.sprints.filter((item) => item.state !== "completed");
   const sprintId = sprint === "none" ? null

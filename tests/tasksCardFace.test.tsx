@@ -18,7 +18,8 @@ const base: CardSummary = {
 const today = "2026-03-05";
 const full: CardSummary = {
   ...base,
-  flags: ["urgent", "needs_review"],
+  priority: "urgent",
+  flags: ["needs_review"],
   description_excerpt: "Users on Safari see a blank page after the redirect.",
   has_description: 1,
   due_on: "2026-03-06",
@@ -43,7 +44,7 @@ test("initials and avatar tones", () => {
 
 test("the accessible name reads flags, due, every tag, every assignee, and the counts in order", () => {
   expect(cardFaceLabel({ card: full, tags, done: false, today })).toBe(
-    "Fix login, urgent, needs review, due tomorrow, tags Bug, Backend, Design, Ops, and QA, assigned to Asha Rao, Ben, Chen Li, and Dee, 2 comments, 1 attachment, 3 related cards, blocked by 1 open card"
+    "Fix login, urgent priority, needs review, due tomorrow, tags Bug, Backend, Design, Ops, and QA, assigned to Asha Rao, Ben, Chen Li, and Dee, 2 comments, 1 attachment, 3 related cards, blocked by 1 open card"
   );
   expect(cardFaceLabel({ card: { ...base, tag_ids: ["t1"], assignees: [person("u1", "Asha"), person("u2", "Ben")] }, tags, done: false, today })).toBe("Fix login, tag Backend, assigned to Asha and Ben");
   // A done column shows no due date; a tag the board lost is not read.
@@ -54,8 +55,8 @@ test("the accessible name reads flags, due, every tag, every assignee, and the c
 test("the face shows flags, the excerpt, the tags that fit then +N, the counts, and three avatars then +N", () => {
   const markup = renderToStaticMarkup(<CardFace card={full} tags={tags} done={false} today={today} excerptId="ex" />);
   expect(markup.startsWith('<div class="task-card-face" aria-hidden="true">')).toBe(true);
-  expect(markup).toContain('title="Urgent"><svg');
-  expect(markup).toContain("task-flag-icon flag-urgent");
+  expect(markup).toContain('title="Urgent priority"><svg');
+  expect(markup).toContain("task-priority-icon priority-urgent");
   expect(markup).toContain("task-flag-icon flag-needs_review");
   expect(markup).not.toContain("flag-blocked");
   expect(markup).toContain('<span id="ex" class="task-card-excerpt">Users on Safari see a blank page after the redirect.</span>');
@@ -148,7 +149,7 @@ test("a bare card shows only its title; a description without an excerpt keeps t
 test("lane cards are named groups described by their excerpt, with the Move button outside the hidden face", () => {
   const markup = renderToStaticMarkup(<BoardColumnView column={column} cards={[{ ...full, due_on: "2999-01-01" }, { ...base, id: "k2", title: "Plain" }]} tags={tags} owner={false} isFirst isLast draggingId={null} dropIndex={null}
     onDragStart={noop} onDragEnd={noop} onDragOverIndex={noop} onDropAt={noop} onKeyMove={noop} onCardMenu={noop} onOpenCard={noop} onColumnMenu={noop} onMoveColumn={noop} onAddCard={async () => undefined} />);
-  expect(markup).toContain('role="group" aria-label="Fix login, urgent, needs review, due ');
+  expect(markup).toContain('role="group" aria-label="Fix login, urgent priority, needs review, due ');
   expect(markup).toContain('aria-describedby="task-card-excerpt-k1 task-card-keys"');
   expect(markup).toContain('id="task-card-excerpt-k1"');
   expect(markup).toContain('aria-label="Plain" aria-roledescription="Draggable card" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight" aria-describedby="task-card-keys"');

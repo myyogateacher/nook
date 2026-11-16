@@ -42,7 +42,7 @@ export function useHomeDirectory(): HomeDirectory {
 }
 
 export const GROUP_LABELS: Record<HomeGroup, string> = { none: "No grouping", board: "Board", state: "State", due: "Due date", assignee: "Assignee", tag: "Tag" };
-export const SORT_LABELS: Record<HomeSort, string> = { due: "Due date", updated: "Recently updated", created: "Recently created", title: "Title", board: "Board", start: "Start date" };
+export const SORT_LABELS: Record<HomeSort, string> = { due: "Due date", updated: "Recently updated", created: "Recently created", title: "Title", board: "Board", start: "Start date", priority: "Priority" };
 export const LANE_LABELS: Record<LaneMode, string> = { columns: "Columns", state: "State", assignee: "Assignee", tag: "Tag", sprint: "Sprint", due: "Due date", board: "Board" };
 
 /** The board layout asks for lanes (D643); the other layouts do not. */

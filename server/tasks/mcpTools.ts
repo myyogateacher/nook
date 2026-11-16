@@ -14,7 +14,7 @@ import { parseCardSearchQuery, relationCreateSchema } from "./relationRoutes";
 import { RELATION_TYPES, type RelationType } from "./relations";
 import { createComment, listComments } from "./comments";
 import { reactionGlyph } from "../../shared/reactions";
-import { QUERY_LIMITS, TASK_FLAGS, type CardFilter } from "../../shared/taskQuery";
+import { LEGACY_URGENT_FLAG, QUERY_LIMITS, TASK_FLAGS, TASK_PRIORITIES, type CardFilter } from "../../shared/taskQuery";
 import { filterBoardCardIds } from "./cardQuery";
 import { attachmentSchema, cardCreateSchema, cardMoveSchema, cardPatchSchema, columnPatchSchema, commentCreateSchema, isCalendarDate, tagCreateSchema, tagPatchSchema } from "./routes";
 import { archiveCard, unarchiveCard } from "./archive";
@@ -204,6 +204,8 @@ const cardFields = (card: CardSummary, tags: Map<string, string>, structure?: Bo
   assignee_name: card.assignee_name,
   tags: card.tag_ids.map((id) => tags.get(id)).filter((name): name is string => name !== undefined),
   flags: card.flags,
+  // D1310: urgent, high, medium, low, or null.
+  priority: card.priority,
   // Hierarchy (17A, D139): the parent on the same board, the level and its name, and live direct children.
   parent_id: card.parent_card_id,
   level: card.level,
@@ -281,7 +283,9 @@ const startTimeInput = z.string().describe("Start time as HH:MM (24-hour), in st
 const startTzInput = z.string().describe("IANA time zone of startTime, for example Europe/Berlin");
 const assigneeIdsInput = z.array(uuid).max(20).describe("User ids who can open the board (see the board's readers); replaces the whole set");
 const tagsInput = z.array(z.string().min(1).max(64)).max(10).describe("Existing tags of the board, by name (any case) or id; replaces the whole set. Unknown tags are INVALID; tags are created in the app");
-const flagsInput = z.array(z.enum(TASK_FLAGS)).max(TASK_FLAGS.length).describe("Flags from the fixed set; replaces the whole set");
+const flagsInput = z.array(z.enum([...TASK_FLAGS, LEGACY_URGENT_FLAG])).max(TASK_FLAGS.length + 1)
+  .describe("Flags from the fixed set (blocked, needs_review, on_hold); replaces the whole set. Deprecated: \"urgent\" is no longer a flag and sets priority urgent instead (use priority)");
+const priorityInput = z.enum(TASK_PRIORITIES).nullable().describe("The card's priority: urgent, high, medium, or low; null for none");
 const dateInput = z.string().refine(isCalendarDate, "Use a real date as YYYY-MM-DD");
 const estimateInput = z.number().nullable()
   .describe(`Points or hours, as the board's estimate_kind says (see list_cards' board.estimates): 0–${ESTIMATE_MAX}, at most two decimals; on a Fibonacci board one of ${FIBONACCI_POINTS.join(", ")}; null for none. Refused (reason ESTIMATES_OFF) while the board has estimates off`);
@@ -292,7 +296,10 @@ const listFilters = {
     .describe("Only cards assigned to any of these user ids; \"me\" is the key's user, \"none\" matches unassigned cards"),
   tags: z.array(z.string().min(1).max(64)).max(QUERY_LIMITS.values).optional()
     .describe("Only cards with any of these tags (names in any case, or ids); \"none\" matches untagged cards. Unknown tags are INVALID"),
-  flags: z.array(z.enum([...TASK_FLAGS, "none"])).max(TASK_FLAGS.length + 1).optional().describe("Only cards with any of these flags; \"none\" matches unflagged cards"),
+  flags: z.array(z.enum([...TASK_FLAGS, LEGACY_URGENT_FLAG, "none"])).max(TASK_FLAGS.length + 2).optional()
+    .describe("Only cards with any of these flags; \"none\" matches unflagged cards. Deprecated: \"urgent\" matches cards with priority urgent (use priorities)"),
+  priorities: z.array(z.enum([...TASK_PRIORITIES, "none"])).max(TASK_PRIORITIES.length + 1).optional()
+    .describe("Only cards with any of these priorities (urgent, high, medium, low); \"none\" matches cards without a priority"),
   dueBefore: dateInput.optional().describe("Only cards due strictly before this date (YYYY-MM-DD, the card's own calendar date)"),
   dueAfter: dateInput.optional().describe("Only cards due strictly after this date; with dueBefore, a range"),
   dueNone: z.boolean().optional().describe("true: also (or, alone, only) cards without a due date"),
@@ -318,7 +325,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "list_cards",
     title: "List cards on a board",
-    description: "List a board's columns, its tags, and its cards in order. Optional filters narrow the cards: columnId, assigneeIds, tags, flags, dueBefore/dueAfter/dueNone, text, sprint, and archived; values inside one filter are alternatives, and different filters must all match. Cards the board auto-archived (after auto_archive_days in a done column) are listed with archived: true unless archived is false. Descriptions are shortened plain text; attachments are file names only. Use get_card for a full card.",
+    description: "List a board's columns, its tags, and its cards in order. Optional filters narrow the cards: columnId, assigneeIds, tags, flags, priorities, dueBefore/dueAfter/dueNone, text, sprint, and archived; values inside one filter are alternatives, and different filters must all match. Cards the board auto-archived (after auto_archive_days in a done column) are listed with archived: true unless archived is false. Descriptions are shortened plain text; attachments are file names only. Use get_card for a full card.",
     scopes: ["tasks:read"],
     access: { mode: "items", items: [{ arg: "boardId", kind: "board" }], related: ["columnId", "assigneeIds", "sprint"] },
     write: false,
@@ -327,7 +334,7 @@ export const taskTools: McpToolSpec[] = [
       archivedBefore: z.string().max(80).optional()
         .describe(`Archived cards come ${ARCHIVED_PAGE} at a time, most recently archived first; pass archived_page.next from the last reply (with archived: true) for the next ${ARCHIVED_PAGE}`)
     }),
-    handler: async ({ boardId, columnId, assigneeIds, tags, flags, dueBefore, dueAfter, dueNone, text, sprint, archived, archivedBefore }, key) => service(key, () => {
+    handler: async ({ boardId, columnId, assigneeIds, tags, flags, priorities, dueBefore, dueAfter, dueNone, text, sprint, archived, archivedBefore }, key) => service(key, () => {
       const before = archivedBefore === undefined ? null : decodeArchivedCursor(archivedBefore);
       if (archivedBefore !== undefined && !before) throw new McpToolError("INVALID", "archivedBefore is not a cursor from archived_page.next");
       // At most one page of archived cards, newest archived first (D634); live cards are all listed.
@@ -339,6 +346,7 @@ export const taskTools: McpToolSpec[] = [
         assignees: assigneeIds,
         tags: tags ? resolveTags(boardTags, tags, true) : undefined,
         flags,
+        priorities,
         due: { before: dueBefore, after: dueAfter, none: dueNone },
         text
       };
@@ -491,7 +499,7 @@ export const taskTools: McpToolSpec[] = [
       startTz: startTzInput.optional(),
       assigneeIds: assigneeIdsInput.optional(),
       tags: tagsInput.optional(),
-      flags: flagsInput.optional(),
+      flags: flagsInput.optional(), priority: priorityInput.optional(),
       parentId: uuid.nullable().optional().describe("A card on the same board one level up to put this card under (see the board's levels in list_cards); its level then defaults to the parent's plus one"),
       level: z.number().int().min(0).max(2).optional().describe("0 is the top level; defaults to the parent's level plus one, else the board's work level"),
       sprintId: uuid.nullable().optional().describe("A planned or active sprint of the board (see list_sprints) to plan the card in, or null for the backlog; omitted, a work-level card joins the active sprint when there is one. Only for cards at the board's work level, since subtasks follow their parent"),
@@ -511,7 +519,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "update_card",
     title: "Update a card",
-    description: "Change a card's title, due date, due time, start date, start time, assignees, tags, flags, parent, level, sprint, or estimate on a board where the user can edit cards (READ_ONLY otherwise). The description cannot be changed here. baseRevision must be the revision from get_card or list_cards; if the card changed since, the call fails with CARD_CHANGED and the current revision. dueOn null clears the date and time; dueTime null clears only the time (startOn and startTime work the same way, and the start must be on or before the due date); assigneeIds, tags, and flags each replace the whole set ([] clears it). Tags must already exist on the board (by name or id).",
+    description: "Change a card's title, due date, due time, start date, start time, assignees, tags, flags, priority (null clears it), parent, level, sprint, or estimate on a board where the user can edit cards (READ_ONLY otherwise). The description cannot be changed here. baseRevision must be the revision from get_card or list_cards; if the card changed since, the call fails with CARD_CHANGED and the current revision. dueOn null clears the date and time; dueTime null clears only the time (startOn and startTime work the same way, and the start must be on or before the due date); assigneeIds, tags, and flags each replace the whole set ([] clears it). Tags must already exist on the board (by name or id).",
     scopes: ["tasks:write"],
     access: { mode: "items", items: [{ arg: "cardId", kind: "card" }], related: ["assigneeIds", "parentId", "sprintId"] },
     write: true,
@@ -528,7 +536,7 @@ export const taskTools: McpToolSpec[] = [
       startTz: startTzInput.nullable().optional(),
       assigneeIds: assigneeIdsInput.optional(),
       tags: tagsInput.optional(),
-      flags: flagsInput.optional(),
+      flags: flagsInput.optional(), priority: priorityInput.optional(),
       parentId: uuid.nullable().optional().describe("Move the card under a card on the same board one level up, or null to take it out of its parent; the level stays unless level is also sent"),
       level: z.number().int().min(0).max(2).optional().describe("Change the card's level; refused (reason HAS_CHILDREN) while it has children"),
       sprintId: uuid.nullable().optional().describe("Plan the card in a planned or active sprint of its board, or null for the backlog; only at the board's work level (reason SPRINT_LEVEL otherwise)"),

@@ -8,6 +8,7 @@ import { ArchivedChip } from "./CardFace";
 import { CardKeyButton } from "./cardLink";
 import { notifier } from "../ui/notify";
 import { EstimateBadge } from "./EstimateField";
+import { isPriority, PRIORITY_LABELS, PriorityIcon } from "./priority";
 
 type BoardTableProps = {
   board: BoardData;
@@ -27,6 +28,7 @@ const COLUMNS: Array<{ field: BoardSortField; label: string }> = [
   { field: "column", label: "Column" },
   { field: "assignees", label: "Assignees" },
   { field: "due", label: "Due" },
+  { field: "priority", label: "Priority" },
   { field: "tags", label: "Tags" },
   { field: "flags", label: "Flags" },
   { field: "created", label: "Created" },
@@ -102,6 +104,7 @@ export function BoardTable({ board, cards, sort, today, onSort, onOpenCard, onCa
             <td>{column?.name ?? ""}{card.archived_at && <> <ArchivedChip at={card.archived_at} /></>}</td>
             <td className="task-table-people" title={names.join(", ")}>{names.length ? <><Avatars card={card} /><span className="task-table-names">{names.join(", ")}</span></> : <span className="task-table-empty">—</span>}</td>
             <td><DueChip card={card} today={today} done={done} /></td>
+            <td className="task-table-priority-cell">{isPriority(card.priority) ? <span className="task-table-priority"><PriorityIcon priority={card.priority} />{PRIORITY_LABELS[card.priority]}</span> : <span className="task-table-empty">—</span>}</td>
             <td><TagChips tagIds={card.tag_ids} board={board} max={2} /></td>
             <td><FlagIcons flags={card.flags} /></td>
             <td className="task-table-date">{shortTimestamp(card.created_at)}</td>

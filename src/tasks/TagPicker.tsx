@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react";
-import { Ban, CirclePause, Eye, Flame, Plus, Trash2 } from "lucide-react";
+import { Ban, CirclePause, Eye, Plus, Trash2 } from "lucide-react";
 import { ApiError } from "../api";
 import { ModalDialog } from "../files/Dialog";
 import { Combobox, type ComboboxHandle } from "../ui/Combobox";
@@ -10,9 +10,9 @@ import { cardCountLabel, sameIds, validateTagName } from "./taskActions";
 import { CARD_FLAGS, createTag, deleteTag, TAG_COLORS, taskErrorCode, taskErrorMessage, updateTag, type BoardTag, type CardFlag, type TagColor } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
 
-const FLAG_ICONS = { urgent: Flame, blocked: Ban, needs_review: Eye, on_hold: CirclePause } as const;
+const FLAG_ICONS = { blocked: Ban, needs_review: Eye, on_hold: CirclePause } as const;
 
-/** A flag's icon, toned by the flag (urgent red, blocked amber, needs review blue, on hold grey). */
+/** A flag's icon, toned by the flag (blocked amber, needs review blue, on hold grey); Urgent is a priority now (priority.tsx). */
 export function FlagIcon({ flag }: { flag: CardFlag }) {
   const Icon = FLAG_ICONS[flag];
   return <Icon className={`task-flag-icon flag-${flag}`} aria-hidden="true" />;
@@ -187,7 +187,7 @@ type FlagPickerProps = {
   onCommit: (flags: CardFlag[], flag: CardFlag, on: boolean) => Promise<unknown>;
 };
 
-/** The four fixed flags (D110) as toggle chips; each press saves. */
+/** The three fixed flags (D110; Urgent became a priority, D1310) as toggle chips; each press saves. */
 export function FlagPicker({ labelId, flags, disabled, onCommit }: FlagPickerProps) {
   return <div className="task-flag-picker" role="group" aria-labelledby={labelId}>
     {CARD_FLAGS.map((flag) => {

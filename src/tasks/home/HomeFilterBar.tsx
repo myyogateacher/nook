@@ -4,7 +4,8 @@ import { format, parse, TASK_FLAGS, type FilterKey, type FilterTerm, type TaskQu
 import { useModuleEnabled } from "../../modules";
 import { Combobox } from "../../ui/Combobox";
 import { Select } from "../../ui/Select";
-import { dueValueLabel, FLAG_LABELS, HAS_LABELS } from "../boardQuery";
+import { dueValueLabel, FLAG_LABELS, flagLabel, HAS_LABELS } from "../boardQuery";
+import { priorityLabel, TASK_PRIORITIES } from "../priority";
 import { TEXT_DEBOUNCE_MS } from "../FilterBar";
 import { committableDueDate } from "../taskActions";
 import { STATE_LABELS, type RefNames } from "./homeResults";
@@ -14,9 +15,9 @@ import { STATE_LABELS, type RefNames } from "./homeResults";
  * `level:`, and `parent:` (17A, 17B) offer only their board-independent values (`current`, `next`,
  * `none`, `work`, level numbers); a sprint or parent id from a link or a saved view shows as a chip.
  */
-type HomeField = "board" | "state" | "assignee" | "tag" | "flag" | "due" | "sprint" | "parent" | "level" | "has";
-const FIELD_LABELS: Record<HomeField, string> = { board: "Board", state: "State", assignee: "Assignee", tag: "Tag", flag: "Flag", due: "Due", sprint: "Sprint", parent: "Parent", level: "Level", has: "Relations" };
-const FIELD_ORDER: HomeField[] = ["board", "state", "assignee", "tag", "flag", "due", "sprint", "parent", "level", "has"];
+type HomeField = "board" | "state" | "assignee" | "tag" | "priority" | "flag" | "due" | "sprint" | "parent" | "level" | "has";
+const FIELD_LABELS: Record<HomeField, string> = { board: "Board", state: "State", assignee: "Assignee", tag: "Tag", priority: "Priority", flag: "Flag", due: "Due", sprint: "Sprint", parent: "Parent", level: "Level", has: "Relations" };
+const FIELD_ORDER: HomeField[] = ["board", "state", "assignee", "tag", "priority", "flag", "due", "sprint", "parent", "level", "has"];
 const SPRINT_LABELS: Record<string, string> = { current: "Current sprint", next: "Next sprint", none: "Backlog" };
 const LEVEL_LABELS: Record<string, string> = { work: "Work level", 0: "Top level", 1: "Second level", 2: "Third level" };
 
@@ -52,7 +53,8 @@ export function homeValueLabel(key: string, value: string, names: RefNames) {
     case "state": return STATE_LABELS[value as keyof typeof STATE_LABELS] ?? value;
     case "assignee": case "creator": return names.user(value);
     case "tag": return names.tag(value);
-    case "flag": return value === "none" ? "No flag" : FLAG_LABELS[value as keyof typeof FLAG_LABELS] ?? value;
+    case "flag": return flagLabel(value);
+    case "priority": return priorityLabel(value);
     case "due": return dueValueLabel(value);
     case "has": return HAS_LABELS[value] ?? value;
     // Ids are never named across boards (T116): a sprint or parent id reads generically.
@@ -133,6 +135,7 @@ export function HomeFilterBar({ filter, onChange, names, options, lockedKeys = [
       case "state": return (["todo", "doing", "done"] as const).map((state) => ({ value: state, label: STATE_LABELS[state] }));
       case "assignee": return [{ value: "me", label: "Me" }, ...options.users.map((user) => ({ value: user.id, label: user.displayName })), { value: "none", label: "No assignee" }];
       case "tag": return [...[...new Set(options.tagNames)].sort().map((name) => ({ value: name, label: name })), { value: "none", label: "No tag" }];
+      case "priority": return [...TASK_PRIORITIES.map((priority) => ({ value: priority, label: priorityLabel(priority) })), { value: "none", label: "No priority" }];
       case "flag": return [...TASK_FLAGS.map((flag) => ({ value: flag, label: FLAG_LABELS[flag] })), { value: "none", label: "No flag" }];
       case "due": return [{ value: "overdue", label: "Overdue" }, { value: "today", label: "Today" }, { value: "week", label: "Next 7 days" }, { value: "next-week", label: "The 7 days after" }, { value: "none", label: "No date" }];
       case "sprint": return (["current", "next", "none"] as const).map((value) => ({ value, label: SPRINT_LABELS[value] }));

@@ -131,7 +131,7 @@ type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean }
 type SecurityForm = "setup" | "verify" | "view" | "regenerate" | "disable";
 // `preferences` comes with /api/auth/me only (not with sign-in); see usePreferences.
 // `notices` (Wave 35 review N2c) comes with /api/auth/me only.
-type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown; notices?: { googleReset?: GoogleResetNotice | null }; features?: { vault?: boolean; agents?: boolean; chatRoleOff?: boolean; reports?: boolean; time?: boolean; crm?: boolean; bookings?: boolean }; app?: { name?: string } };
+type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown; notices?: { googleReset?: GoogleResetNotice | null }; features?: { vault?: boolean; agents?: boolean; chatRoleOff?: boolean; chatAudit?: boolean; reports?: boolean; time?: boolean; crm?: boolean; bookings?: boolean }; app?: { name?: string } };
 type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void; role?: Role; unavailable?: readonly ModuleId[] };
 
 

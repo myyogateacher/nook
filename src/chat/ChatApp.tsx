@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Bot, Check, ChevronLeft, ChevronRight, Copy, CopyPlus, Ellipsis, Globe, ImagePlus, KeyRound, MessagesSquare, Paperclip, Pencil, Pin, Plus, RotateCcw, Search, Send, Share2, Square, Trash2, UsersRound, X } from "lucide-react";
 import { AccessSheet } from "../access/AccessSheet";
 import { PageHeader } from "../shell/PageHeader";
+import { SHELL_ROUTE_EVENT } from "../shell/locationSignal";
 import { appName } from "../appName";
 import { readHistoryDepth } from "../appShellNavigation";
 import { ApiError } from "../api";
@@ -136,8 +137,14 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
       const next = routeFromLocation(window.location);
       if (next.app === "chat") setRoute(next);
     };
+    // D1303: the sidebar moved Chat to one of its sections (New chat, Audit) while it was on screen.
+    const onShellRoute = () => {
+      const next = routeFromLocation(window.location);
+      if (next.app === "chat") setRoute(next);
+    };
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    window.addEventListener(SHELL_ROUTE_EVENT, onShellRoute);
+    return () => { window.removeEventListener("popstate", onPopState); window.removeEventListener(SHELL_ROUTE_EVENT, onShellRoute); };
   }, []);
 
   const loadStatus = useCallback(async () => {

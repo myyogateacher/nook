@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { cleanSidebarLayout, emptySidebarLayout, isSidebarAppId, sameSidebarLayout, SIDEBAR_APP_IDS, type SidebarAppId, type SidebarLayout } from "../../shared/sidebar";
+import { MODULES } from "../modules";
 import { announceSidebarPrefs, readExpandedApps, readSidebarPreference, SIDEBAR_EXPANDED_KEY, SIDEBAR_PREFS_EVENT, SIDEBAR_STORAGE_KEY, type SidebarPrefsChange } from "./useSidebarState";
 
 /**
@@ -81,10 +82,41 @@ export function arrangeIds<T extends string>(defaults: readonly T[], order: read
   return result;
 }
 
-/** Items split into the Pinned group and the rest, each in the person's order (D1294). */
+/**
+ * D1305: the default order of the apps is A–Z by the name people see ("Chat", not `agents`;
+ * "Contacts", not `crm`), case-insensitive and locale-aware. `MODULES` keeps its registry order
+ * (routes, Today's sections); only the lists of apps sort. A saved `order` still wins.
+ */
+const APP_LABELS = new Map<string, string>(MODULES.flatMap((module) => module.launcher ? [[module.launcher.section, module.label] as const] : []));
+export const appLabel = (id: string) => APP_LABELS.get(id) ?? id;
+export const compareLabels = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: "base" }) || a.localeCompare(b);
+/** Ids sorted A–Z by their app's name. */
+export const alphabeticalIds = <T extends string>(ids: readonly T[]): T[] => [...ids].sort((a, b) => compareLabels(appLabel(a), appLabel(b)));
+/** Every sidebar app, A–Z: the default order (D1305). */
+export const DEFAULT_APP_ORDER: readonly SidebarAppId[] = alphabeticalIds(SIDEBAR_APP_IDS);
+
+/**
+ * "Reset to A–Z" (D1305): the custom order goes; pinned apps stay pinned, in the order they had.
+ * With nothing pinned the saved order is simply cleared.
+ */
+export function alphabeticalLayout(layout: AppsLayout | null | undefined): Required<AppsLayout> {
+  const pins = new Set<string>(layout?.pinned ?? []);
+  if (!pins.size) return { order: [], pinned: [] };
+  const pinned = arrangeIds(DEFAULT_APP_ORDER, layout?.order).filter((id) => pins.has(id));
+  return { order: [...pinned, ...DEFAULT_APP_ORDER.filter((id) => !pins.has(id))], pinned };
+}
+
+/** Whether the unpinned apps already show A–Z (Reset to A–Z then has nothing to do). */
+export function isAlphabetical(layout: AppsLayout | null | undefined) {
+  const pins = new Set<string>(layout?.pinned ?? []);
+  const rest = arrangeIds(DEFAULT_APP_ORDER, layout?.order).filter((id) => !pins.has(id));
+  return rest.every((id, index) => id === DEFAULT_APP_ORDER.filter((entry) => !pins.has(entry))[index]);
+}
+
+/** Items split into the Pinned group and the rest, each in the person's order (D1294), A–Z by default (D1305). */
 export function arrangeApps<T>(items: readonly T[], layout: AppsLayout | null | undefined, idOf: (item: T) => string): { pinned: T[]; rest: T[] } {
   const byId = new Map(items.map((item) => [idOf(item), item]));
-  const ordered = arrangeIds(items.map(idOf), layout?.order).map((id) => byId.get(id)!);
+  const ordered = arrangeIds(alphabeticalIds(items.map(idOf)), layout?.order).map((id) => byId.get(id)!);
   const pinned = new Set<string>(layout?.pinned ?? []);
   return { pinned: ordered.filter((item) => pinned.has(idOf(item))), rest: ordered.filter((item) => !pinned.has(idOf(item))) };
 }
@@ -109,7 +141,7 @@ export function moveApp(layout: AppsLayout | null | undefined, shown: readonly s
   // Only the moved app changes place in the full order: right after the app now before it in its
   // group, else right before the app now after it. Everything else, shown or not, keeps its place;
   // alone in its group it keeps its own.
-  const full = arrangeIds<string>(SIDEBAR_APP_IDS, layout?.order);
+  const full = arrangeIds<string>(DEFAULT_APP_ORDER, layout?.order);
   const result = full.filter((entry) => entry !== id);
   const next = sequence[at + 1];
   const previous = sequence[at - 1];

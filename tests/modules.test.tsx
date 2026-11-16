@@ -95,6 +95,12 @@ describe("Settings → Modules", () => {
     expect(markup).not.toContain("Team stays available from Settings");
   });
 
+  test("D1305: the modules are listed A–Z by name, as the sidebar's apps", () => {
+    const names = [...render([], null, "admin").matchAll(/id="module-label-[^"]+">([^<]+)<\/strong>/g)].map((match) => match[1]!);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
+    expect(names.slice(0, 3)).toEqual(["Bin", "Bookings", "Calendar"]);
+  });
+
   test("guests get no Team row, and admins are told Team stays in Settings", () => {
     const guest = render([], null, "guest");
     expect(guest).not.toContain("module-label-team");
@@ -134,8 +140,8 @@ describe("gating (client only)", () => {
   test("the launcher is derived from the registry and drops modules that are off", () => {
     expect(TODAY_APPS.map((app) => app.section).filter(builtIn)).toEqual(["notes", "files", "tasks", "collections", "calendar", "whiteboards", "vault", "chat", "reports"]);
     expect(enabledTodayApps(["calendar", "search"]).map((app) => app.section).filter(builtIn)).toEqual(["notes", "files", "tasks", "collections", "whiteboards", "vault", "chat", "reports"]);
-    expect(launcher(home([])).filter(builtIn)).toEqual(["notes", "files", "tasks", "collections", "calendar", "whiteboards", "vault", "chat", "reports"]);
-    expect(launcher(home(["calendar", "tasks", "vault", "agents", "reports"])).filter(builtIn)).toEqual(["notes", "files", "collections", "whiteboards"]);
+    expect(launcher(home([])).filter(builtIn)).toEqual(["calendar", "chat", "collections", "files", "notes", "reports", "tasks", "vault", "whiteboards"]);
+    expect(launcher(home(["calendar", "tasks", "vault", "agents", "reports"])).filter(builtIn)).toEqual(["collections", "files", "notes", "whiteboards"]);
   });
 
   test("Wave 38: no header has a Bin or Team button, whatever the modules; Bin off removes Settings → Bin", () => {

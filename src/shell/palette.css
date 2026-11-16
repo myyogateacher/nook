@@ -67,4 +67,5 @@ body:has(.file-dialog.shell-sheet) .file-dialog-scrim { z-index: 110; background
 .customize-show input { width: 16px; height: 16px; accent-color: var(--yellow); }
 .customize-empty { margin: 0; color: #77777e; font-size: .84rem; }
 .customize-note { margin: 0; color: #8f8f96; font-size: .8rem; line-height: 1.45; }
-.customize-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.customize-foot { display: flex; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 10px; }
+.customize-foot > .primary-button { margin-left: auto; }

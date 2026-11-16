@@ -41,6 +41,7 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 - Notes and Files folders can be renamed: choose **Rename** in the folder's ⋯ menu in the sidebar (or press F2 on it), type the new name, and press Enter or click away; Esc keeps the old name. On a phone the ⋯ is on each folder in the Folders tab and in the ☰ menu. You can rename your own folders, but not Default or Attachments, and not a folder someone shared with you, even one you can edit.
 - Agents with a key that can write drafts or files can rename your folders too, with the new `rename_folder` tool.
 - Chat lists **New chat** in the sidebar, and **Audit** for the people who can open Chat's Audit log. Both are in ⌘K as well.
+- Apps are listed A–Z by name in the sidebar, in ⌘K, on Home's phone tiles, in Customize sidebar, and in Settings → Modules. An order you arranged yourself is kept; **Reset to A–Z** in Customize sidebar goes back to A–Z and keeps your pinned apps.
 
 **Fixes: final QA of the modules**
 

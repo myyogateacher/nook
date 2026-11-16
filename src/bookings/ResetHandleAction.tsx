@@ -51,7 +51,7 @@ export function ResetHandleAction({ member, data, variant }: MemberActionProps) 
   };
 
   return <div className="bk-reset-handle">
-    <button type="button" className="secondary-button bk-reset-handle-button" disabled={busy} onClick={() => { void reset(); }}>
+    <button type="button" className="action-button secondary bk-reset-handle-button" disabled={busy} onClick={() => { void reset(); }}>
       <RotateCcw aria-hidden="true" />{busy ? "Resetting…" : "Reset booking link name"}
     </button>
     <small className="bk-reset-handle-hint">Booking page: <code>/p/book/{handle}</code></small>

@@ -9,6 +9,7 @@ import { LOCATION_LABELS } from "../../shared/bookings";
 const SOURCE_LABEL: Record<Booking["source"], string> = { public: "Booked on your page", secret_link: "Booked with a private link", internal: "Booked by a member", mcp: "Booked through an API key" };
 import { bookingsApi, dayLabel, durationLabel, timeLabel, viewerZone, type Booking } from "./api";
 import { SlotPicker } from "./SlotPicker";
+import { useUnitPreferences } from "../ui/units";
 import { LOCATION_ICONS, StatusChip } from "./BookingsApp";
 
 /**
@@ -21,6 +22,7 @@ export function BookingDetail({ bookingRef, onBack, onOpenPath, flash, readOnly 
   const [booking, setBooking] = useState<Booking | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"view" | "reschedule" | "cancel" | "decline">("view");
+  const { weekStart } = useUnitPreferences();
   const [message, setMessage] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
   const [tz, setTz] = useState(viewerZone);
@@ -81,7 +83,7 @@ export function BookingDetail({ bookingRef, onBack, onOpenPath, flash, readOnly 
             <div className="bk-detail-actions"><button type="submit" className="danger-button ui-small-button" disabled={busy}>{mode === "cancel" ? "Cancel booking" : "Decline"}</button><button type="button" className="secondary-button ui-small-button" onClick={() => setMode("view")}>Keep it</button></div>
           </form>}
           {mode === "reschedule" && <div className="bk-inline-form">
-            <SlotPicker load={(from, to, zone) => bookingsApi.bookingSlots(booking.id, { from, to, tz: zone })} tz={tz} onTz={setTz} picked={picked} onPick={setPicked} label="Choose a new time" />
+            <SlotPicker load={(from, to, zone) => bookingsApi.bookingSlots(booking.id, { from, to, tz: zone })} tz={tz} onTz={setTz} weekStart={weekStart} picked={picked} onPick={setPicked} label="Choose a new time" />
             <label className="ui-field"><span>Message (optional)</span><textarea rows={2} maxLength={500} value={message} onChange={(event) => setMessage(event.target.value)} /></label>
             <div className="bk-detail-actions">
               <button type="button" className="action-button" disabled={!picked || busy} onClick={() => picked && void run(() => bookingsApi.reschedule(booking.id, picked, message), "Booking moved")}>{picked ? `Move to ${dayLabel(picked, tz)} ${timeLabel(picked, tz)}` : "Pick a time"}</button>

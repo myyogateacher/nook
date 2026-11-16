@@ -12,7 +12,8 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 - **Link work** now finds notes, cards, files, whiteboards, collections, rows, reports, and events by name, besides goals and contacts.
 - Fixed: a link to a shared note could show, in its address, the title of a draft its owner had not published yet. Links now use the published title.
 - API: `GET /api/search` has three new scopes, `cards`, `events`, and `chats`, and every built-in result now also carries `ref: { kind, id, title, href }`. See docs/plan/API_CONTRACTS.md.
-**Fixes and gaps: the Bin, AI usage, week start, exports** (lane bake3, D1380–D1387)
+
+**Fixes and gaps: the Bin, AI usage, week start, exports**
 
 - The Bin names the apps' items (Form, Goal, Standup, Contact, Company, Deal, Contact book, Time project, Booking type, Townhall session) with their own icons, instead of "Item". An **Apps** row of filters lists the apps that have something in the Bin. Restoring one offers **Open**.
 - Restoring a goal from the Bin works again (it always said the goal was no longer in the Bin).

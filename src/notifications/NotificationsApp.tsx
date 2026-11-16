@@ -3,7 +3,7 @@ import { ArrowLeft, CheckCheck, RotateCcw } from "lucide-react";
 import { PageHeader } from "../shell/PageHeader";
 import { readHistoryDepth } from "../appShellNavigation";
 import { announceNotificationsChanged, NotificationList } from "./NotificationBell";
-import { listNotifications, markAllRead, markRead, safeNotificationPath, type NotificationItem } from "./notificationsApi";
+import { listNotifications, markAllRead, markRead, MENTION_TOPIC, safeNotificationPath, type NotificationItem } from "./notificationsApi";
 import "./notifications.css";
 
 type NotificationsAppProps = {
@@ -20,17 +20,19 @@ export function NotificationsApp({ displayName, onHome, onSettings, onSignOut, o
   const [items, setItems] = useState<NotificationItem[] | null>(null);
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // All, or only @mentions of you (docs/plan/MENTIONS.md D1333).
+  const [view, setView] = useState<"all" | "mentions">("all");
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const result = await listNotifications({ limit: 50 });
+      const result = await listNotifications({ limit: 50, ...(view === "mentions" ? { topic: MENTION_TOPIC } : {}) });
       setItems(result.items);
       setUnread(result.unreadCount);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load notifications");
     }
-  }, []);
+  }, [view]);
   useEffect(() => { void load(); }, [load]);
 
   async function open(item: NotificationItem) {
@@ -58,7 +60,12 @@ export function NotificationsApp({ displayName, onHome, onSettings, onSignOut, o
         <h1 id="notifications-title">Notifications</h1>
         {unread > 0 && <button className="secondary-button notifications-read-all" onClick={() => { void readAll(); }}><CheckCheck />Mark all read</button>}
       </div>
-      {error ? <div className="notification-empty" role="alert"><p>{error}</p><button className="primary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button></div>
+      <div className="notifications-views" role="group" aria-label="Show">
+        {(["all", "mentions"] as const).map((option) => <button key={option} type="button" className={`notifications-view${view === option ? " is-active" : ""}`} aria-pressed={view === option}
+          onClick={() => { if (view !== option) { setItems(null); setView(option); } }}>{option === "all" ? "All" : "Mentions"}</button>)}
+      </div>
+      {view === "mentions" && items?.length === 0 && !error ? <div className="notification-empty"><p>No one has mentioned you yet. When someone types @ and your name in a comment or a description, it shows here.</p></div>
+        : error ? <div className="notification-empty" role="alert"><p>{error}</p><button className="primary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button></div>
         : <NotificationList items={items} error={null} onOpen={(item) => { void open(item); }} />}
     </section>
   </main>;

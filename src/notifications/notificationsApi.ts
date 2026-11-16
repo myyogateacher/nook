@@ -6,8 +6,12 @@ import { formatRoute, parseRoute } from "../router";
 export type NotificationItem = { id: string; kind?: "reminder" | "proposals" | "access"; title: string; href: string; late: boolean; read: boolean; createdAt: string; occurrenceStart: string | null };
 export type NotificationList = { items: NotificationItem[]; unreadCount: number };
 
-export const listNotifications = (options: { unread?: boolean; limit?: number } = {}) => {
+/** The topic of an @mention notification (docs/plan/MENTIONS.md D1333): the page's Mentions view asks for it. */
+export const MENTION_TOPIC = "core.mention";
+
+export const listNotifications = (options: { unread?: boolean; limit?: number; topic?: string } = {}) => {
   const params = new URLSearchParams();
+  if (options.topic) params.set("topic", options.topic);
   if (options.unread) params.set("unread", "1");
   if (options.limit) params.set("limit", String(options.limit));
   const query = params.toString();

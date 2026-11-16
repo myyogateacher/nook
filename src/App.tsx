@@ -68,6 +68,7 @@ import { buildNavTree, type NavItem } from "./shell/navModel";
 import { announceShellRoute, splitHref, useLocationHref } from "./shell/locationSignal";
 import { useRecents } from "./shell/recents";
 import { searchAllSections } from "./ui/workspaceApi";
+import { recordRecentPath } from "./shell/recentItems";
 import { useFolderRename } from "./shell/folderRename";
 import { PALETTE_RECENT_NOTES } from "./shell/paletteModel";
 import { useLocalLayout, useSidebarSync } from "./shell/sidebarPrefs";
@@ -1798,6 +1799,8 @@ export function App() {
   // nest under Tasks and Collections (their lists are read while the app is on screen).
   const locationHref = useLocationHref();
   const recentUser = session?.user.id ?? "";
+  // D1344: an item's page (note, card, goal, contact, event…) joins the palette's recently opened list.
+  useEffect(() => { if (recentUser) recordRecentPath(recentUser, splitHref(locationHref).pathname); }, [recentUser, locationHref]);
   const recentTasks = useRecents("tasks", recentUser, Boolean(session) && isModuleEnabled(disabledModules, "tasks"), activeApp === "tasks", (id) => formatRoute(tasksRoute(id)));
   const recentCollections = useRecents("collections", recentUser, Boolean(session) && isModuleEnabled(disabledModules, "collections"), activeApp === "collections", (id) => formatRoute(collectionsRoute(id)));
   function openFromSidebar(item: NavItem) {
@@ -2344,7 +2347,8 @@ export function App() {
       onOpenPath: openPalettePath,
       onSearchNotes: (text) => { void openSearch(text); },
       // D1340: search across apps, while the Search module is on.
-      searchAll: isModuleEnabled(disabledModules, "search") ? searchAllSections : undefined
+      searchAll: isModuleEnabled(disabledModules, "search") ? searchAllSections : undefined,
+      userId: session.user.id
     }}
     shortcuts={{ module: shownModule ? { label: shownModule.label, shortcuts: shownModule.shortcuts } : null, notes: shownApp === "notes", time: isModuleEnabled(disabledModules, "time") }}
     customize={{ apps: customizeApps, onShown: (id, shown) => { const owner = moduleOfApp(id); if (owner) modulePreferences.setModuleEnabled(owner, shown); } }}

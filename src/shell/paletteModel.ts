@@ -51,6 +51,8 @@ export type PaletteSources = {
   tree: NavTree;
   /** Recently edited notes, newest first (the Notes list already loaded in this tab). */
   recentNotes?: readonly NavRecent[];
+  /** Recently opened items of any kind, newest first, already resolved for this person (D1344); `app` is its app's label. */
+  recentItems?: ReadonlyArray<{ kind: string; id: string; title: string; href: string; icon: LucideIcon; app: string }>;
   /** Quick actions this person may run (visibleQuickActions). */
   quickActions?: ReadonlyArray<QuickActionDef & { module: string }>;
   /** The module label each quick action belongs to, by module id. */
@@ -68,7 +70,7 @@ export type PaletteSources = {
 export const PALETTE_RECENT_NOTES = 5;
 
 /** Every entry, before filtering, in the order shown when nothing is typed. */
-export function paletteEntries({ tree, recentNotes = [], quickActions = [], moduleLabels = {}, canToggleSidebar = false, toggleShortcut, canCustomize = false }: PaletteSources): PaletteEntry[] {
+export function paletteEntries({ tree, recentNotes = [], recentItems = [], quickActions = [], moduleLabels = {}, canToggleSidebar = false, toggleShortcut, canCustomize = false }: PaletteSources): PaletteEntry[] {
   const entries: PaletteEntry[] = [];
   const recents: PaletteEntry[] = [];
   const top = [...tree.primary, ...tree.pinned, ...tree.apps, tree.settings];
@@ -79,9 +81,13 @@ export function paletteEntries({ tree, recentNotes = [], quickActions = [], modu
       if (child.kind === "recent") recents.push(entry); else entries.push(entry);
     }
   }
+  // D1344: recently opened items lead, newest first; a board, collection, or note they already name
+  // is not listed twice.
+  const opened = recentItems.map((item): PaletteEntry => ({ id: `opened:${item.kind}:${item.id}`, group: "recent", label: item.title || "Untitled", context: item.app, icon: item.icon, hint: item.app, browse: true, action: { kind: "path", href: item.href } }));
+  const openedIds = new Set(recentItems.map((item) => item.id));
   const notesIcon = tree.apps.find((item) => item.id === "notes")?.icon ?? tree.pinned.find((item) => item.id === "notes")?.icon;
   if (notesIcon) for (const note of recentNotes.slice(0, PALETTE_RECENT_NOTES)) recents.push({ id: `note:${note.id}`, group: "recent", label: note.name || "Untitled", context: "Notes", icon: notesIcon, hint: "Notes", browse: true, action: { kind: "path", href: note.href } });
-  entries.push(...recents);
+  entries.push(...opened, ...recents.filter((entry) => !openedIds.has(entry.id.slice(entry.id.lastIndexOf(":") + 1))));
   for (const action of quickActions) entries.push({ id: `quick:${action.module}:${action.id}`, group: "actions", label: action.label, context: moduleLabels[action.module], icon: action.icon, browse: true, action: { kind: "quick", action } });
   entries.push({ id: "command:shortcuts", group: "commands", label: "Keyboard shortcuts", icon: Keyboard, hint: "?", browse: true, keywords: "help keys", action: { kind: "command", command: "shortcuts" } });
   if (canCustomize) entries.push({ id: "command:customize", group: "commands", label: "Customize sidebar", icon: SlidersHorizontal, browse: true, keywords: "pin reorder order hide apps", action: { kind: "command", command: "customize" } });

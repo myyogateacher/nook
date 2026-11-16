@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
 import "../src/workspaceModules";
-import { installDom, render } from "./support/dom";
+import { installDom, mockApi, reply, render } from "./support/dom";
 import { buildNavTree } from "../src/shell/navModel";
 import { CommandPalette } from "../src/shell/CommandPalette";
-import { paletteEntries, type PaletteEntry } from "../src/shell/paletteModel";
+import { filterPalette, flatPalette, paletteEntries, type PaletteEntry } from "../src/shell/paletteModel";
+import { appOfKind, clearRecentItems, itemOfPath, RECENT_ITEMS_LIMIT, recordRecentPath, resolveRecentItems } from "../src/shell/recentItems";
+import { FileText, Target } from "lucide-react";
 import { paletteResultRenderers, resultGroups, shownApps } from "../src/shell/paletteSearch";
 import { PALETTE_SEARCH_DEBOUNCE_MS } from "../src/shell/usePaletteSearch";
 import { candidateOf } from "../src/ui/links/WorkLinks";
@@ -120,4 +122,69 @@ test("the link picker reads every built-in hit by its ref; chats are not linkabl
   expect(candidateOf(sections[6]!.results[0])).toMatchObject({ kind: "contact", title: "Launch Larry", subtitle: "Acme" });
   expect(candidateOf({ ref: { kind: "collection", id: "k1", title: "Roadmap", href: "/collections/roadmap-1a2b3c4d5e" }, kind: "collection" })).toMatchObject({ kind: "collection", title: "Roadmap" });
   expect(candidateOf({ rowId: "r1", collectionName: "Roadmap", ...ref("row", "r1", "Row one", "/collections/x/row/r1") })).toMatchObject({ kind: "row", subtitle: "Roadmap" });
+});
+
+const NOTE = "11111111-1111-4111-8111-111111111111";
+const EVENT = "22222222-2222-4222-8222-222222222222";
+const GOAL = "33333333-3333-4333-8333-333333333333";
+const GONE = "44444444-4444-4444-8444-444444444444";
+
+test("recently opened: item pages are recorded (kind and reference only), lists and home pages are not", () => {
+  clearRecentItems("u1");
+  expect(itemOfPath("/notes")).toBeNull();
+  expect(itemOfPath("/goals/insights")).toBeNull();
+  expect(itemOfPath("//evil.example/notes/x-3f9x2ab01k")).toBeNull();
+  expect(itemOfPath(`/calendar/event/${EVENT}`)).toEqual({ kind: "event", ref: EVENT, by: "id" });
+  recordRecentPath("u1", "/goals/grow-mrr-3f9x2ab01k");
+  recordRecentPath("u1", "/notes/eng/release-1a2b3c4d5e");
+  recordRecentPath("u1", "/tasks/MYT-12");
+  recordRecentPath("u1", `/calendar/event/${EVENT}`);
+  recordRecentPath("u1", "/notes");
+  recordRecentPath("u1", "/goals/grow-mrr-3f9x2ab01k");
+  const stored = JSON.parse(window.localStorage.getItem("nook.recent.items.u1")!);
+  expect(stored.map((item: { kind: string; ref: string }) => `${item.kind}:${item.ref}`)).toEqual(["goal:3f9x2ab01k", `event:${EVENT}`, "card:MYT-12", "note:1a2b3c4d5e"]);
+  expect(JSON.stringify(stored)).not.toContain("release");
+  expect(JSON.stringify(stored)).not.toContain("grow");
+  // Per person, capped.
+  expect(window.localStorage.getItem("nook.recent.items.u2")).toBeNull();
+  for (let index = 10; index < 30; index += 1) recordRecentPath("u1", `/notes/n-${index}x2b3c4d5`);
+  expect(JSON.parse(window.localStorage.getItem("nook.recent.items.u1")!)).toHaveLength(RECENT_ITEMS_LIMIT);
+  expect(appOfKind("contact")).toBe("crm");
+  expect(appOfKind("document")).toBe("files");
+});
+
+test("recently opened: resolved by the server each time; hidden or missing items are dropped and forgotten", async () => {
+  clearRecentItems("u3");
+  recordRecentPath("u3", `/notes/${GONE}`);
+  recordRecentPath("u3", "/goals/grow-mrr-3f9x2ab01k");
+  recordRecentPath("u3", `/notes/${NOTE}`);
+  const api = mockApi({
+    "POST /refs/summaries": (call) => ({ summaries: (call.body as { refs: Array<{ kind: string; id: string }> }).refs.map((item) => item.id === NOTE
+      ? { kind: "note", id: NOTE, title: "Release notes", href: "/notes/release-notes-1a2b3c4d5e", icon: "file-text" }
+      : { kind: item.kind, hidden: true }) }),
+    "GET /refs/resolve?ref=goal%3A3f9x2ab01k": () => ({ summary: { kind: "goal", id: GOAL, title: "Grow MRR", href: "/goals/grow-mrr-3f9x2ab01k", icon: "target" } })
+  });
+  const items = await resolveRecentItems("u3");
+  expect(items.map((item) => item.title)).toEqual(["Release notes", "Grow MRR"]);
+  expect(api.calls.map((call) => `${call.method} ${call.path}`).sort()).toEqual(["GET /refs/resolve?ref=goal%3A3f9x2ab01k", "POST /refs/summaries"]);
+  // The hidden note is forgotten; the goal's id is kept for next time (one batch request).
+  const stored = JSON.parse(window.localStorage.getItem("nook.recent.items.u3")!);
+  expect(stored).toEqual([{ kind: "note", ref: NOTE, by: "id", id: NOTE }, { kind: "goal", ref: "3f9x2ab01k", by: "short_id", id: GOAL }]);
+  const again = mockApi({ "POST /refs/summaries": () => reply(200, { summaries: [{ kind: "note", id: NOTE, title: "Release notes", href: "/notes/x", icon: "" }, { kind: "goal", hidden: true }] }) });
+  expect((await resolveRecentItems("u3")).map((item) => item.kind)).toEqual(["note"]);
+  expect(again.calls).toHaveLength(1);
+});
+
+test("the palette's Recent leads with opened items of every kind, then boards and edited notes not already listed", () => {
+  const tree = buildNavTree({ disabledModules: [], features, role: "member", active: "tasks", recents: { tasks: [{ id: "b1", name: "Roadmap", href: "/tasks/MYT" }] } });
+  const entries = paletteEntries({
+    tree, searchNotes: true,
+    recentNotes: [{ id: NOTE, name: "Release notes", href: "/notes/x" }, { id: "n2", name: "Other note", href: "/notes/y" }],
+    recentItems: [
+      { kind: "goal", id: GOAL, title: "Grow MRR", href: "/goals/grow-mrr-3f9x2ab01k", icon: Target, app: "Goals" },
+      { kind: "note", id: NOTE, title: "Release notes", href: "/notes/release-notes-1a2b3c4d5e", icon: FileText, app: "Notes" }
+    ]
+  });
+  const recent = flatPalette(filterPalette(entries, "", true)).filter((entry) => entry.group === "recent");
+  expect(recent.map((entry) => [entry.label, entry.hint])).toEqual([["Grow MRR", "Goals"], ["Release notes", "Notes"], ["Roadmap", "Tasks"], ["Other note", "Notes"]]);
 });

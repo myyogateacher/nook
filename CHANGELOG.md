@@ -4,6 +4,17 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 
 ## Unreleased
 
+**Activity on forms, standups, townhalls, booking types and time projects**
+
+- A form, a standup, a townhall session and a time project have a new **Activity** tab, and a booking type an **Activity** section at the end of its editor. It lists what changed, who did it and when (published, closed, renamed, rounds opened and closed, weeks submitted and approved, and more), and you can comment there.
+- Anyone who can open the item sees its activity. Respondents who only answer a form, and people who join a townhall from its audience link, don't.
+
+**Email from Time, Goals, and Contacts**
+
+- The Time, Goals, and Contacts switches in Settings → Notifications → Email now send email: a week submitted for your approval, your week approved or returned, a project's budget alerts; a goal at risk or off track, a check-in due, being made a goal's owner or contributor; a follow-up due, a deal you now own, and a deal you own won or lost.
+- The email is checked again when it is sent: if you can no longer open the item, or the moment has passed (the goal recovered, the follow-up is done), nothing is sent. Notes and reasons are never emailed.
+- You hear when someone makes you a goal's owner or adds you as a contributor.
+
 **@mentions**
 
 - Type @ in a card's comments or description, or in a comment on a goal, deal, contact, standup answer, booking or form response, to mention someone. Pick them from the list with the arrow keys and Enter, or with the mouse; they show as a chip that opens their profile.

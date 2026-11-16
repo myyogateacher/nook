@@ -60,6 +60,8 @@ Decisions **D770–D789**. Threats **T490–T492**. Migration **083** (`short_id
 
 ## Follow-ups (exact steps)
 
+Status (D1345, docs/plan/SEARCH_EVERYWHERE.md): 1–3 were reviewed again and stay deferred: each needs its own migration, resolver kind, router branches, and name registration, and they are list pages whose UUID URLs keep working. 084 is still unused; a lane picking these up should take the migration numbers it is assigned then.
+
 1. **Folder URLs** (`/notes/folder/<uuid>`, `/files/folder/<uuid>`, `/whiteboards/folder/<uuid>`): add `short_id` to `folders` in a new migration (084 is free) with the same backfill and trigger as 083; add `"folder"` to `LINK_KINDS` and to `resolveLinkRef` (check with `listReadableFolders`); in `parseCollection` read `folder/<slug>-<shortid>`; in `formatCollection` write it from a `nameItems("folder", …)` registration in `loadNavigation` and the Files/Whiteboards folder loads.
 2. **Report folders and lists** (`/reports/folder/:id`, `/reports/lists/:id`): `short_id` on `report_folders` and `report_lists` (migration 084), `report-folder`/`report-list` kinds checked with `liveFolder` and `readableList`, and the two branches in `parseRoute`'s reports block.
 3. **Cross-board task views** (`/tasks/views/:id`): `short_id` on `task_views`; parse in `parseTasksHome` (a segment with a short id); name views from `homeApi` list loads.

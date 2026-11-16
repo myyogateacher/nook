@@ -4,6 +4,15 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 
 ## Unreleased
 
+**Search everything from ⌘K**
+
+- The command palette (`⌘K`, `Ctrl+K`) now searches your work in every app as you type: notes, cards, calendar events, files, whiteboards, collections, reports, your own chats, contacts, goals, forms, bookings, standups, time, and townhall. Results are grouped under each app, and the arrow keys move through all of them. **Search notes for "…"** is still the last line.
+- You only see what you can open. Chats shared with you are not searched, only your own.
+- With nothing typed, **Recent** now lists what you opened lately of any kind (a goal, a contact, an event, a report…), not only boards, collections, and notes. It is checked each time, so renamed items show their new name and removed ones drop out.
+- **Link work** now finds notes, cards, files, whiteboards, collections, rows, reports, and events by name, besides goals and contacts.
+- Fixed: a link to a shared note could show, in its address, the title of a draft its owner had not published yet. Links now use the published title.
+- API: `GET /api/search` has three new scopes, `cards`, `events`, and `chats`, and every built-in result now also carries `ref: { kind, id, title, href }`. See docs/plan/API_CONTRACTS.md.
+
 **@mentions**
 
 - Type @ in a card's comments or description, or in a comment on a goal, deal, contact, standup answer, booking or form response, to mention someone. Pick them from the list with the arrow keys and Enter, or with the mouse; they show as a chip that opens their profile.

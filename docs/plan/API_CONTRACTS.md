@@ -360,6 +360,26 @@ type RowSearchHit = { rowId: string; collectionId: string; collectionName: strin
 
 → 200 `{ results: RowSearchHit[], truncated }`. The live `readableCollection` rule is applied in the query before `LIMIT` (T60); binned rows and rows of binned collections never match. The title is the primary field; the body is the other text, url, number, and date values and chosen option labels. Note titles and file names are never indexed (T59). Rows are indexed in the transaction that writes them (`collection_row_search` + `collection_row_fts`), a schema change reindexes its collection, and boot reconciles entries whose `source_revision` or `schema_version` is stale.
 
+### Search everywhere: cards, events, chats, and `ref` (D1341–D1343)
+
+Built-in scopes are now `notes`, `cards`, `events`, `files`, `whiteboards`, `collections`, `reports`, `chats` (plus `all` and every registered module scope; anything else is 400). Same `q`, `limit`, rate limit (one bucket for every scope, `all` included), and 200 shapes `{ results, truncated }`.
+
+**Every built-in hit also carries `ref`** (additive; each scope keeps all of its own fields):
+
+```ts
+type SearchItemRef = { kind: WorkKind | "chat"; id: string; title: string; href: string };  // title plain text; href a relative in-app path
+```
+
+`ref.kind` is `note`, `card`, `event`, `document` (Files), `whiteboard`, `collection`, `row`, `report`, or `chat`. A note's `href` slugs its **published** title (never the owner's draft title; the owner's own unpublished note uses its draft title, which only they can read).
+
+| Scope | Matches | Read check (before `LIMIT`) | Hit (besides `ref`) |
+| --- | --- | --- | --- |
+| `cards` | Card titles (case-insensitive substring, `%`/`_` literal) or a card key (`MYT-12`, an old key too) | Live cards on boards the caller can read (the relation picker's search, T95); archived cards included and marked | `CardSearchHit` (`id, board_id, board_name, title, column_name, is_done, is_archived, key`) + `kind: "card"`, `href` |
+| `events` | Event titles (substring) | Live events on calendars the caller can read (T61); a series is one hit | `{ kind: "event", id, title, href: "/calendar/event/<id>", calendarId, calendarName, allDay, start, recurring, updatedAt }` (`start`: the date of an all-day event, else the first start instant) |
+| `chats` | Title or message words (the chat FTS, as `GET /api/chats?q=`) | The caller's **own** live chats only; never chats shared with them; nothing for guests or a role that may not chat, or while Chat is not set up | `{ kind: "chat", id, title, href: "/chat/<id>", agentName, updatedAt }` |
+
+**`scope=all`** lists, in order, Notes, Tasks (`cards`), Calendar (`events`), Files, Whiteboards, Collections, Reports, Chat (`chats`), then each module scope the caller has; guests get no Reports or Chat section. Its Collections section lists collections whose **name** matches (`{ kind: "collection", id, title, href, updatedAt, ref }`, readable collections only) ahead of row hits, five in all.
+
 ## Tasks (Wave 9)
 
 Task Boards ([WAVES_7-9.md](WAVES_7-9.md) §3). Every endpoint is under `/api/tasks`, takes and returns JSON, and inherits the global session, Origin, CSRF, `Content-Type: application/json`, and TOTP rules. Path ids are UUIDs (400 otherwise) and are always joined to a board the caller can read.

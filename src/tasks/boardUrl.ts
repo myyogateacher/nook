@@ -18,11 +18,11 @@ export type BoardViewId = typeof BOARD_VIEWS[number];
  * Grouping dimensions of the list view (§4.5). The hierarchy wave adds `parent` and `sprint`
  * here and in `GROUP_DIMENSIONS` (src/tasks/boardQuery.ts); nothing else changes.
  */
-export const BOARD_GROUPS = ["column", "assignee", "tag", "flag", "parent", "due"] as const;
+export const BOARD_GROUPS = ["column", "assignee", "tag", "priority", "flag", "parent", "due"] as const;
 export type BoardGroupId = typeof BOARD_GROUPS[number];
 
 /** Sortable table columns (§4.5); `estimate` shows only on boards with estimates on (lane ESTIMATES, D754). */
-export const BOARD_SORT_FIELDS = ["title", "column", "assignees", "due", "tags", "flags", "created", "updated", "estimate"] as const;
+export const BOARD_SORT_FIELDS = ["title", "column", "assignees", "due", "priority", "tags", "flags", "created", "updated", "estimate"] as const;
 export type BoardSortField = typeof BOARD_SORT_FIELDS[number];
 export type BoardSort = { field: BoardSortField; direction: "asc" | "desc" };
 
@@ -123,7 +123,7 @@ export function formatBoardSearch(query: BoardQuery): string {
   if (query.zoom && query.zoom !== "month" && oneOf(TIMELINE_ZOOMS, query.zoom)) params.set("zoom", query.zoom);
   encodeFilterParams(query.filter, params);
   // `:` and `,` are legal in a query; keeping them readable makes shared links easier to read
-  // ("sort=due:asc&q=assignee:me+flag:blocked,urgent").
+  // ("sort=due:asc&q=assignee:me+priority:high,urgent").
   const text = params.toString().replace(/%3A/gi, ":").replace(/%2C/gi, ",");
   return text ? `?${text}` : "";
 }

@@ -195,7 +195,7 @@ describe("URL codec", () => {
     const query = decodeFilterParams(new URLSearchParams(
       `assignee=me&assignee=${A}&tag=${B},Backend&flag=urgent&flag=nope&due=before:2026-10-01&rel=blocked&q=invoice&column=${C}&board=${A}&mystery=1`
     ));
-    expect(format(query)).toBe(`board:${A} column:${C} assignee:me,${A} tag:${B},Backend flag:urgent due:<2026-10-01 has:blocked "invoice"`);
+    expect(format(query)).toBe(`board:${A} column:${C} assignee:me,${A} tag:${B},Backend priority:urgent due:<2026-10-01 has:blocked "invoice"`);
     expect(format(decodeFilterParams(new URLSearchParams("rel=any")))).toBe("has:relation");
     expect(format(decodeFilterParams(new URLSearchParams("rel=none")))).toBe("-has:relation");
     // Without one board, column is dropped rather than failing the whole URL.
@@ -209,9 +209,9 @@ describe("bridges to the Wave 13 structured filter", () => {
   test("queryFromCardFilter writes the canonical grammar and cardFilterFromQuery reads it back", () => {
     const filter = { assignees: ["me", "none"], tags: [A.toUpperCase()], flags: ["urgent" as const], due: { before: "2026-10-01", after: "2026-09-01", none: true }, columns: [B], text: " invoice " };
     const text = format(queryFromCardFilter(filter));
-    expect(text).toBe(`column:${B} assignee:me,none tag:${A} flag:urgent due:none,<2026-10-01 due:none,>2026-09-01 "invoice"`);
+    expect(text).toBe(`column:${B} assignee:me,none tag:${A} priority:urgent due:none,<2026-10-01 due:none,>2026-09-01 "invoice"`);
     const parsed = parse(text, { boardScoped: true });
-    expect(parsed.ok && cardFilterFromQuery(parsed.query)).toEqual({ columns: [B], assignees: ["me", "none"], tags: [A], flags: ["urgent"], due: { before: "2026-10-01", after: "2026-09-01", none: true }, text: "invoice" });
+    expect(parsed.ok && cardFilterFromQuery(parsed.query)).toEqual({ columns: [B], assignees: ["me", "none"], tags: [A], priorities: ["urgent"], due: { before: "2026-10-01", after: "2026-09-01", none: true }, text: "invoice" });
     expect(format(queryFromCardFilter({ due: { none: true } }))).toBe("due:none");
     expect(format(queryFromCardFilter({}))).toBe("");
     expect(cardFilterFromQuery({ terms: [] })).toEqual({});

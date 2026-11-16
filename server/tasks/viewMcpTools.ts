@@ -49,6 +49,7 @@ function mcpCard(card: QueriedCard) {
     assignee_name: card.assignees[0]?.display_name ?? null,
     tags: card.tags.map((tag) => tag.name),
     flags: card.flags,
+    priority: card.priority,
     // Hierarchy (17A, D138): the level and the parent on the same board.
     parent_id: card.parent_card_id,
     parent_title: card.parent_title,
@@ -119,7 +120,7 @@ export const taskViewTools: McpToolSpec[] = [
       "Find cards across every board the user can open, with a saved view (viewId) or a filter in the task query language (filter); give exactly one.",
       "Terms are separated by spaces and must all match; values after a colon are alternatives: assignee:me,none state:todo,doing due:overdue,week.",
       "Keys: board:<id>, state:todo|doing|done, column:<id> (needs exactly one board:), assignee:me|none|<userId>, creator:me|<userId>, tag:<id>|<name>|none,",
-      "flag:urgent|blocked|needs_review|on_hold|none, due:overdue|today|week|next-week|none|YYYY-MM-DD|<YYYY-MM-DD|>YYYY-MM-DD, has:relation|blocked|subtasks, parent:<cardId>|none, level:0|1|2|work, sprint:current|next|none|<sprintId> (current and next per board; subtasks follow their task),",
+      "priority:urgent|high|medium|low|none, flag:blocked|needs_review|on_hold|none (flag:urgent is read as priority:urgent), due:overdue|today|week|next-week|none|YYYY-MM-DD|<YYYY-MM-DD|>YYYY-MM-DD, has:relation|blocked|subtasks, parent:<cardId>|none, level:0|1|2|work, sprint:current|next|none|<sprintId> (current and next per board; subtasks follow their task),",
       "and \"quoted text\" for title or excerpt text. A leading - negates a term. Results are paged: pass nextCursor back as cursor."
     ].join(" "),
     scopes: ["tasks:read"],
@@ -128,7 +129,7 @@ export const taskViewTools: McpToolSpec[] = [
     inputSchema: z.object({
       viewId: uuid.optional().describe("A saved view from list_views; runs its filter, sort, and grouping as this user"),
       filter: z.string().max(TASK_QUERY_LIMITS.length).optional().describe("A filter in the task query language; an empty string matches every card"),
-      sort: z.enum(QUERY_SORTS).optional().describe("With filter: due (default), updated, created, title, board, or start"),
+      sort: z.enum(QUERY_SORTS).optional().describe("With filter: due (default), updated, created, title, board, start, or priority (urgent first, none last)"),
       group: z.enum(QUERY_GROUPS).optional().describe("With filter: none (default), board, state, or due (overdue, today, this week, later, none)"),
       cursor: z.string().min(1).max(1024).optional().describe("nextCursor from the previous page of the same query"),
       limit: z.number().int().min(1).max(MCP_QUERY_PAGE_MAX).optional().describe(`Cards per page, 1 to ${MCP_QUERY_PAGE_MAX} (default 50)`),
@@ -177,7 +178,7 @@ export const taskViewTools: McpToolSpec[] = [
       filter: z.string().max(TASK_QUERY_LIMITS.length).optional().describe("A filter in the task query language, as for query_cards"),
       layout: z.enum(VIEW_LAYOUTS).optional().describe("list (default), table, board, or timeline (a Gantt of start and due dates; a view on one board opens in it, a cross-board view shows it as the list)"),
       group: z.enum(VIEW_GROUPS).optional().describe("The list's grouping: none, board, state, due, assignee, or tag"),
-      sort: z.enum(QUERY_SORTS).optional().describe("due (default), updated, created, title, board, or start"),
+      sort: z.enum(QUERY_SORTS).optional().describe("due (default), updated, created, title, board, start, or priority (urgent first, none last)"),
       lanes: z.enum(LANE_MODES).optional().describe("The board layout's lanes across boards: columns (default), state, assignee, tag, sprint, due, or board")
     }).strict(),
     handler: async ({ viewId, baseRevision, name, filter, layout, group, sort, lanes }, key) => {

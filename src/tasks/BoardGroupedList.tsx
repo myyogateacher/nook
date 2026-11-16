@@ -63,7 +63,7 @@ export function BoardGroupedList({ board, groups, group, today, onGroup, onOpenC
               const names = assigneeNames(card);
               return <li key={card.id} className={`task-group-row${column?.is_done === 1 ? " done" : ""}`} data-card-id={card.id}>
                 <button type="button" className="task-group-open" onClick={() => onOpenCard(card)} data-open-card={card.id}>
-                  <span className="task-group-title">{card.key && <span className="task-card-key-face">{card.key}</span>}<FlagIcons flags={card.flags} /><span>{card.title}</span>{card.archived_at && <ArchivedChip at={card.archived_at} />}</span>
+                  <span className="task-group-title">{card.key && <span className="task-card-key-face">{card.key}</span>}<FlagIcons flags={card.flags} priority={card.priority} /><span>{card.title}</span>{card.archived_at && <ArchivedChip at={card.archived_at} />}</span>
                   {card.description_excerpt && <span className="task-group-excerpt">{card.description_excerpt}</span>}
                   <span className="task-group-meta">
                     {group !== "column" && <span className="task-group-column">{column?.name}</span>}

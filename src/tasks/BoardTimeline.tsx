@@ -607,7 +607,7 @@ function CardRow({ card, bar, top, range, dayWidth, today, status, columnName, s
           {phone
             ? <span className="task-tl-stack"><span className="task-tl-name">{card.title}</span>{key && <span className="task-tl-key">{key}</span>}</span>
             : <>{key && <span className="task-tl-key">{key}</span>}<span className="task-tl-name">{card.title}</span></>}
-          {!phone && <FlagIcons flags={card.flags} />}
+          {!phone && <FlagIcons flags={card.flags} priority={card.priority} />}
           <span className="sr-only">, {columnName}</span>
         </button>
         {!phone && <span className={`task-tl-duration${bar ? "" : " empty"}`}>{bar ? durationLabel(bar) : "—"}</span>}

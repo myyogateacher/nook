@@ -4,14 +4,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Archive, ArchiveRestore, ArrowDownWideNarrow, Clock, OctagonAlert, Target, ArrowRight, ArrowRightLeft, ArrowUpNarrowWide, CalendarClock, CalendarPlus, Flag, FlagOff, Gauge, IterationCw, Layers, Link2, Network,
-  Paperclip, Plus, Tag, TextAlignStart, Trash2, Type, Unlink, UserMinus, UserPlus, type LucideIcon
+  Paperclip, Plus, SignalHigh, Tag, TextAlignStart, Trash2, Type, Unlink, UserMinus, UserPlus, type LucideIcon
 } from "lucide-react";
 import { relativeTime, formatDateTime } from "../files/format";
 import { appName } from "../appName";
 import { IntegrationBadge } from "../ui/IntegrationBadge";
 import type { ActivityValue, CardActivityEntry, CardActivityKind, CardActivityPayload } from "../../shared/cardActivity";
-import type { TaskFlag } from "../../shared/taskQuery";
-import { FLAG_LABELS } from "./cardTags";
+import { HISTORY_FLAG_LABELS } from "./cardTags";
+import { priorityLabel } from "./priority";
 import { RELATION_LABELS } from "./relationsModel";
 import type { RelationType } from "./tasksApi";
 import { listCardActivity, mergeActivityPage, readTimelinePrefs, writeTimelinePrefs, type ActivityPage, type TimelinePrefs } from "./cardActivityModel";
@@ -47,7 +47,9 @@ function item(verb: string, icon: LucideIcon, format: Format = plain, after = ""
   return { icon, text: ({ item: value }) => <>{verb} {value ? b(format(value)) : "something"}{after}</> };
 }
 
-const flagLabel: Format = (value) => FLAG_LABELS[value.id as TaskFlag] ?? value.label;
+const flagLabel: Format = (value) => (value.id ? HISTORY_FLAG_LABELS[value.id] : undefined) ?? value.label;
+/** D1314: "set the priority to High", "changed the priority from High to Urgent", "cleared the priority (was Low)". */
+const priorityWords: Format = (value) => value.id ? priorityLabel(value.id) : value.label;
 const relationText = (verb: string) => ({ item: value }: CardActivityPayload) => {
   const type = value?.detail ? RELATION_LABELS[value.detail as RelationType]?.toLowerCase() : null;
   return <>{verb} {value ? b(value.label) : "a card"}{type ? <> ({type})</> : null}</>;
@@ -82,6 +84,7 @@ export const ACTIVITY_RENDERERS: Record<CardActivityKind, Renderer> = {
   tag_removed: item("removed the tag", Tag),
   flag_set: item("flagged this", Flag, flagLabel),
   flag_cleared: item("cleared the flag", FlagOff, flagLabel),
+  priority: change("priority", SignalHigh, priorityWords),
   parent: change("parent", Network),
   level: change("level", Layers),
   relation_added: { icon: Link2, text: relationText("linked") },

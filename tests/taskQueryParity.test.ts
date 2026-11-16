@@ -62,7 +62,9 @@ beforeAll(async () => {
   tag.run(cardIds.Gamma!, tagA, stamp);
   tag.run(cardIds.Gamma!, tagB, stamp);
   const flag = db.query("INSERT INTO card_flags (card_id, flag, created_at) VALUES (?, ?, ?)");
-  flag.run(cardIds.Beta!, "urgent", stamp);
+  // Beta has the Urgent priority (once the Urgent flag, D1310) and Zeta Low; the legacy `urgent` flag filter still finds Beta (D1313).
+  db.query("UPDATE cards SET priority = ? WHERE id = ?").run("urgent", cardIds.Beta!);
+  db.query("UPDATE cards SET priority = ? WHERE id = ?").run("low", cardIds.Zeta!);
   flag.run(cardIds.Gamma!, "blocked", stamp);
   db.query("UPDATE cards SET description_excerpt = 'pay the plumber' WHERE id = ?").run(cardIds.Zeta!);
   // Relations: Beta depends on Gamma (open), Epsilon depends on Zeta (done column), Alpha relates to a card the owner cannot read.
@@ -84,6 +86,10 @@ const filters: CardFilter[] = [
   { tags: ["none"] },
   { tags: ["TAG_A", "TAG_B"], flags: ["blocked"] },
   { flags: ["urgent", "none"] },
+  { flags: ["urgent"] },
+  { priorities: ["urgent", "low"] },
+  { priorities: ["none"] },
+  { priorities: ["high", "none"], flags: ["blocked"] },
   { flags: ["none"] },
   { due: { before: "2026-10-05" } },
   { due: { after: "2026-10-01" } },
@@ -235,7 +241,7 @@ describe("board views (lane VIEWS, D635): the view's filter on its board matches
     const board = hydrateBoard((await call(owner, "GET", `/boards/${boardId}`)).body as BoardPayload);
     const data = boardData(board);
     const context = { userId: owner.userId, today: "2026-10-03", now: Date.parse("2026-10-03T12:00:00Z"), timeZone: "UTC" };
-    for (const text of ["state:todo", "-state:done assignee:me", "tag:Backend", "-flag:urgent", "flag:urgent,blocked", "due:<2026-10-02,none", "creator:me", "has:blocked",
+    for (const text of ["state:todo", "-state:done assignee:me", "tag:Backend", "-flag:urgent", "flag:urgent,blocked", "priority:urgent,none", "-priority:low", "priority:high", "due:<2026-10-02,none", "creator:me", "has:blocked",
       '"invoice"', `column:${columns[1]!.id}`, "-assignee:none tag:none", "assignee:me,none -tag:Design"]) {
       const parsed = parse(`board:${boardId} ${text}`);
       if (!parsed.ok) throw new Error(`${text}: ${parsed.error.message}`);

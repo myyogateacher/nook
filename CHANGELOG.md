@@ -29,6 +29,14 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 - In Settings, the sidebar lists Settings' own sections (Account, Workspace with the Bin, Team) in place of the apps; **Back to apps** at its top shows the apps again. Each section is 264 px wider.
 - An open standup lists Rounds, Insights, and Settings under its name in the sidebar, and a form's header reads **Forms › Team feedback** instead of repeating the title on a second line.
 
+**Card priority**
+
+- A card now has a **Priority**: Urgent, High, Medium, or Low, or none. Pick it from the dropdown beside the card's dates; Urgent keeps its red flame, and High, Medium, and Low show as orange, yellow, and blue bars.
+- Cards that had the **Urgent** flag now have the Urgent priority, and Urgent is no longer among the flags (Blocked, Needs review, and On hold stay). Older history still says "flagged this Urgent"; new changes read "set the priority to High" or "cleared the priority".
+- Card faces, the list, the calendar, the timeline, and My work show the priority's icon before the flags; the table has a **Priority** column you can sort by. The list can be grouped by priority, and My work and views can be sorted by it.
+- **+ Filter** on a board has **Priority** (pick several, or No priority); the filter stays in the link like the others. Links and saved views that filtered by the Urgent flag now show Urgent-priority cards.
+- For integrations: the API and the MCP tools take and return `priority`; `flags: ["urgent"]` still works and sets the Urgent priority (deprecated). Migration **123** (`card_priority`) runs once on the first boot and converts the Urgent flags.
+
 **Jump anywhere with ⌘K, and a sidebar of your own**
 
 - Press ⌘K (Ctrl+K on Windows and Linux), or **Search** at the top of the sidebar, to jump anywhere: type a few letters of an app, a section ("ins" finds every Insights, "con ins" Contacts › Insights), a recent board, collection, or note, or a quick action such as Start timer. The last line searches your notes for what you typed. In Notes, ⌘K now opens this palette too; `/` still jumps to the notes search box.

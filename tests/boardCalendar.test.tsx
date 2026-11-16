@@ -21,7 +21,7 @@ const kiritimati = { due_on: "2026-03-06", due_time: "23:30", due_tz: "Pacific/K
 const board = boardData({
   columns: [{ id: todo, board_id: "b", name: "To do", position: 1, is_done: 0, created_at: "", updated_at: "" }, { id: done, board_id: "b", name: "Done", position: 2, is_done: 1, created_at: "", updated_at: "" }],
   cards: [
-    card("date", { due_on: "2026-03-06", flags: ["urgent"] }),
+    card("date", { due_on: "2026-03-06", priority: "urgent" }),
     card("timed", { ...kiritimati, title: "Late <b>call</b>" }),
     card("none", { title: "Someday" }),
     card("shipped", { column_id: done, due_on: "2026-03-10" })

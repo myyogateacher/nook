@@ -5,7 +5,9 @@ import { CARD_FLAGS, type BoardDetail, type BoardTag, type CardDetail, type Card
 export const MAX_TAGS_PER_CARD = 10;
 export const TAG_NAME_MAX = 40;
 
-export const FLAG_LABELS: Record<CardFlag, string> = { urgent: "Urgent", blocked: "Blocked", needs_review: "Needs review", on_hold: "On hold" };
+export const FLAG_LABELS: Record<CardFlag, string> = { blocked: "Blocked", needs_review: "Needs review", on_hold: "On hold" };
+/** Flag words for history entries, including the Urgent flag from before it became a priority (D1310). */
+export const HISTORY_FLAG_LABELS: Record<string, string> = { urgent: "Urgent", ...FLAG_LABELS };
 
 /** The card's tags in tagging order, resolved against the board's; ids the board no longer has are skipped. */
 export function cardTags(tagIds: readonly string[] | undefined, tags: readonly BoardTag[]) {
@@ -79,6 +81,7 @@ export function mergeCardDetail(item: CardSummary, card: CardDetail): CardSummar
     assignees: card.assignees,
     tag_ids: card.tag_ids ?? item.tag_ids,
     flags: card.flags ?? item.flags,
+    priority: card.priority !== undefined ? card.priority : item.priority,
     column_id: item.column_id,
     // Hierarchy (17A): a reparent or level change saves through the same dialog.
     parent_card_id: card.parent_card_id !== undefined ? card.parent_card_id : item.parent_card_id,

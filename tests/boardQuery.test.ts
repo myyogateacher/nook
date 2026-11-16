@@ -28,9 +28,9 @@ const board: BoardData = boardData({
   columns: [{ ...column(done, "Done", 3072), is_done: 1 }, column(todo, "To do", 1024), column(doing, "Doing", 2048)],
   tags: [{ id: backend, name: "Backend", color: "blue" }, { id: design, name: "Design", color: "pink" }],
   cards: [
-    card("login", { title: "Fix login", position: 1, assignees: [person(asha, "Asha"), person(ben, "Ben")], tag_ids: [backend, design], flags: ["urgent"], due_on: "2026-09-25", description_excerpt: "Crème brûlée recipe", relation_count: 2, open_blockers: 1 }),
+    card("login", { title: "Fix login", position: 1, assignees: [person(asha, "Asha"), person(ben, "Ben")], tag_ids: [backend, design], flags: [], priority: "urgent", due_on: "2026-09-25", description_excerpt: "Crème brûlée recipe", relation_count: 2, open_blockers: 1 }),
     card("docs", { title: "Écrire docs", position: 2, assignees: [person(me, "Pat")], tag_ids: [design], due_on: "2026-09-26", created_at: "2026-09-03T00:00:00.000Z" }),
-    card("api", { title: "api keys", column_id: doing, position: 1, flags: ["blocked", "on_hold"], due_on: "2026-09-27", due_time: "23:30", due_tz: "Pacific/Kiritimati", due_at: "2026-09-27T09:30:00.000Z", relation_count: 1, open_blockers: 0 }),
+    card("api", { title: "api keys", column_id: doing, position: 1, flags: ["blocked", "on_hold"], priority: "low", due_on: "2026-09-27", due_time: "23:30", due_tz: "Pacific/Kiritimati", due_at: "2026-09-27T09:30:00.000Z", relation_count: 1, open_blockers: 0 }),
     card("ship", { title: "Ship", column_id: done, position: 1, assignees: [person(ben, "Ben")], due_on: "2026-10-10", updated_at: "2026-09-20T00:00:00.000Z" }),
     card("idea", { title: "Idea", column_id: doing, position: 2 })
   ]
@@ -56,7 +56,11 @@ test("each filter field, with me and none, OR within a field and AND across fiel
   expect(run(`?tag=${design}`)).toEqual(["login", "docs"]);
   expect(run("?tag=none")).toEqual(["api", "idea", "ship"]);
   expect(run("?flag=on_hold&flag=urgent")).toEqual(["login", "api"]);
-  expect(run("?flag=none")).toEqual(["docs", "idea", "ship"]);
+  // Urgent is a priority now (D1310): "login" has no flag; priority filters OR their values (D1315).
+  expect(run("?flag=none")).toEqual(["login", "docs", "idea", "ship"]);
+  expect(run("?q=priority:urgent,low")).toEqual(["login", "api"]);
+  expect(run("?q=priority:none")).toEqual(["docs", "idea", "ship"]);
+  expect(run("?q=-priority:none")).toEqual(["login", "api"]);
   expect(run(`?column=${doing}`)).toEqual(["api", "idea"]);
   expect(run("?rel=any")).toEqual(["login", "api"]);
   expect(run("?rel=blocked")).toEqual(["login"]);
@@ -124,7 +128,8 @@ test("each grouping dimension; a card with two assignees or tags appears in each
   expect(shape("column")).toEqual([["To do", ["login", "docs"]], ["Doing", ["api", "idea"]], ["Done", ["ship"]]]);
   expect(shape("assignee")).toEqual([["Asha", ["login"]], ["Ben", ["login", "ship"]], ["Pat (you)", ["docs"]], ["No assignee", ["api", "idea"]]]);
   expect(shape("tag")).toEqual([["Backend", ["login"]], ["Design", ["login", "docs"]], ["No tag", ["api", "idea", "ship"]]]);
-  expect(shape("flag")).toEqual([["Urgent", ["login"]], ["Blocked", ["api"]], ["On hold", ["api"]], ["No flag", ["docs", "idea", "ship"]]]);
+  expect(shape("flag")).toEqual([["Blocked", ["api"]], ["On hold", ["api"]], ["No flag", ["login", "docs", "idea", "ship"]]]);
+  expect(shape("priority")).toEqual([["Urgent", ["login"]], ["Low", ["api"]], ["No priority", ["docs", "idea", "ship"]]]);
   expect(shape("due")).toEqual([["Overdue", ["login"]], ["Today", ["docs"]], ["Next 7 days", ["api"]], ["Later", ["ship"]], ["No date", ["idea"]]]);
   // "also in …" names the card's other groups.
   expect(groups("assignee")[0]!.items[0]!.also).toEqual(["Ben"]);
@@ -148,7 +153,10 @@ test("table sorts are stable and tie-break on board order; empty values sort las
   expect(sort("assignees:desc")).toEqual(["docs", "ship", "login", "api", "idea"]);
   expect(sort("tags:asc")).toEqual(["login", "docs", "api", "idea", "ship"]);
   expect(sort("tags:desc")).toEqual(["docs", "login", "api", "idea", "ship"]);
-  expect(sort("flags:asc")).toEqual(["login", "api", "docs", "idea", "ship"]);
+  expect(sort("flags:asc")).toEqual(["api", "login", "docs", "idea", "ship"]);
+  // D1316: Urgent first; cards without a priority last both ways.
+  expect(sort("priority:asc")).toEqual(["login", "api", "docs", "idea", "ship"]);
+  expect(sort("priority:desc")).toEqual(["api", "login", "docs", "idea", "ship"]);
   expect(sort("created:desc")).toEqual(["docs", "login", "api", "idea", "ship"]);
   expect(sort("updated:desc")).toEqual(["ship", "login", "docs", "api", "idea"]);
 });
@@ -156,23 +164,26 @@ test("table sorts are stable and tie-break on board order; empty values sort las
 test("the filter bar edits one positive term per field and keeps the query canonical", () => {
   let query: TaskQuery = { terms: [] };
   query = withTermValues(query, "tag", [design, "none"]);
-  query = withTermValues(query, "flag", ["urgent"]);
+  query = withTermValues(query, "flag", ["on_hold"]);
   query = withText(query, "  login  ");
-  expect(format(query)).toBe(`tag:none,${design} flag:urgent "login"`);
+  expect(format(query)).toBe(`tag:none,${design} flag:on_hold "login"`);
+  expect(format(withTermValues(query, "priority", ["low", "urgent"]))).toBe(`tag:none,${design} priority:urgent,low flag:on_hold "login"`);
+  // The legacy Urgent flag alone is the Urgent priority (D1313).
+  expect(format(withTermValues(query, "flag", ["urgent"]))).toBe(`tag:none,${design} priority:urgent "login"`);
   expect(termValues(query, "tag")).toEqual(["none", design]);
   expect(textTerm(query)).toBe("login");
   query = withTermValues(query, "flag", []);
   expect(format(query)).toBe(`tag:none,${design} "login"`);
   // A negated term from a shared URL is kept when the positive one changes, and removed by index.
-  const parsed = parse("-flag:urgent flag:blocked", { boardScoped: true });
+  const parsed = parse("-flag:needs_review flag:blocked", { boardScoped: true });
   if (!parsed.ok) throw new Error("parse");
-  expect(format(withTermValues(parsed.query, "flag", ["on_hold"]))).toBe("flag:on_hold -flag:urgent");
+  expect(format(withTermValues(parsed.query, "flag", ["on_hold"]))).toBe("flag:on_hold -flag:needs_review");
   expect(format(withoutTerm(parsed.query, 1))).toBe("flag:blocked");
   expect(format(withText(query, ""))).toBe(`tag:none,${design}`);
   expect(FILTER_FIELDS.assignee!.optionsFor(board, context).map((option) => option.label)).toEqual(["Me", "Asha", "Ben", "No assignee"]);
   expect(FILTER_FIELDS.tag!.labelFor("bbbbbbbb-0000-4000-8000-00000000ffff", board, context)).toBe("Unknown tag");
   expect(FILTER_FIELDS.due!.labelFor("<2026-10-01", board, context)).toBe(`before ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(2026, 9, 1)))}`);
-  expect(Object.keys(GROUP_DIMENSIONS)).toEqual(["column", "assignee", "tag", "flag", "parent", "due"]);
+  expect(Object.keys(GROUP_DIMENSIONS)).toEqual(["column", "assignee", "tag", "priority", "flag", "parent", "due"]);
 });
 
 test("hierarchy readiness: a stub `parent` dimension and filter plug in without code changes", () => {

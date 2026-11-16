@@ -58,7 +58,8 @@ async function fixture(label: string, full: boolean) {
       if (!full) continue;
       for (const user of [owner, ...members]) insertAssignee.run(id, user.userId, owner.userId, timestamp);
       for (let tag = 0; tag < 3; tag += 1) insertTagLink.run(id, tagIds[(index + tag) % tagIds.length]!, timestamp);
-      insertFlag.run(id, "urgent", timestamp);
+      // The Urgent flag became a priority (D1310).
+      db.query("UPDATE cards SET priority = 'urgent' WHERE id = ?").run(id);
       insertFlag.run(id, "needs_review", timestamp);
     }
   })();

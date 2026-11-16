@@ -1,7 +1,7 @@
 import { nameBoard, nameCard } from "../routeNames";
 import { api, ApiError } from "../api";
 import { uploadForHost } from "../ui/attachments";
-import { TASK_FLAGS, type TaskFlag } from "../../shared/taskQuery";
+import { TASK_FLAGS, type TaskFlag, type TaskPriority } from "../../shared/taskQuery";
 import type { BoardStructure, BoardTemplateId } from "../../shared/boardStructure";
 import type { ReactionAggregate, ReactionKey } from "../../shared/reactions";
 import { cardKey } from "../../shared/boardKeys";
@@ -88,6 +88,8 @@ export type CardSummary = {
   tag_ids?: string[];
   /** In the fixed order of `CARD_FLAGS` (D110). */
   flags?: CardFlag[];
+  /** urgent, high, medium, low, or null without one (D1310); absent in an older payload. */
+  priority?: TaskPriority | null;
   comment_count: number;
   attachment_count: number;
   /** Relations this viewer sees (restricted rows count, hidden binned ones do not), and readable open `depends_on` cards (13D). */
@@ -255,6 +257,8 @@ export type CardCreate = {
   dueTz?: string | null;
   assigneeIds?: string[];
   tagIds?: string[];
+  /** D1310: urgent, high, medium, or low; left out for none. */
+  priority?: TaskPriority | null;
   flags?: string[];
   relations?: Array<{ targetCardId: string; type: RelationType }>;
   attachmentIds?: string[];
@@ -325,6 +329,8 @@ export const getCard = (cardId: string) => api<CardView>(`/tasks/cards/${cardId}
  */
 export type CardChange = {
   title?: string; description?: string; dueOn?: string | null; dueTime?: string | null; dueTz?: string; assigneeIds?: string[]; tagIds?: string[]; flags?: CardFlag[];
+  /** The priority (D1310), or null to clear it. */
+  priority?: TaskPriority | null;
   /** The start (D720), as the due fields: `startTime` with `startTz`; on or before the due date (400 `START_AFTER_DUE`). */
   startOn?: string | null; startTime?: string | null; startTz?: string;
   /** Reparent (D128): a card one level up on this board, or null to detach. */

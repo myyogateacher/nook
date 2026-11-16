@@ -32,7 +32,7 @@ The home screen shows what needs you now: cards due soon and assigned to you, re
 ### Tasks
 
 - **Boards** with drag and drop, columns with To do / In progress / Done states, and **WIP limits**.
-- **Cards** with due dates and times, multiple assignees, colour **tags**, **flags** (urgent, blocked, needs review, on hold), **relations** (depends on, relates to, duplicates), comments, and attachments.
+- **Cards** with due dates and times, multiple assignees, colour **tags**, a **priority** (urgent, high, medium, low), **flags** (blocked, needs review, on hold), **relations** (depends on, relates to, duplicates), comments, and attachments.
 - A full-screen **card composer** that sets everything in one step, and a full-page card view.
 - **Views**: columns, a sortable table, a grouped list, and a calendar with drag-to-reschedule. A filter bar (assignee, tag, flag, due, column, level, sprint, relations) keeps its state in the URL, so filtered views are shareable links.
 - **Hierarchy**: Task › Subtask, Epic › Story › Subtask, or your own level names, with subtask checklists, progress, and parent chips.

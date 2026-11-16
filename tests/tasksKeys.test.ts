@@ -213,7 +213,7 @@ describe("move a card to another board (D715, D716, T462)", () => {
     const targetUrgent = (await call(owner, "POST", `/boards/${target.id}/tags`, { name: "urgent" })).body.tag.id;
     const existing = await card(owner, target.id, target.columns[0]!.id, "Already there");
     const sprintId = (await call(owner, "GET", `/boards/${source.id}`)).body.sprints[0].id as string;
-    const moving = await card(owner, source.id, source.columns[0]!.id, "Moving", { tagIds: [sourceUrgent, sourceOnly], flags: ["urgent"], dueOn: "2026-12-01", sprintId });
+    const moving = await card(owner, source.id, source.columns[0]!.id, "Moving", { tagIds: [sourceUrgent, sourceOnly], flags: ["blocked"], priority: "high", dueOn: "2026-12-01", sprintId });
     expect((await call(owner, "POST", `/cards/${moving.id}/comments`, { body: "Comes along" })).status).toBe(201);
     const before = (await call(owner, "GET", `/cards/${moving.id}`)).body.card;
     expect(before.sprint_id).toBe(sprintId);
@@ -222,7 +222,7 @@ describe("move a card to another board (D715, D716, T462)", () => {
     expect(moved.body).toMatchObject({ fromBoardId: source.id, previousKey: before.key, droppedTags: ["Source only"] });
     expect(moved.body.parentDetached).toBeUndefined();
     const after = moved.body.card;
-    expect(after).toMatchObject({ board_id: target.id, column_id: target.columns[0]!.id, key: `${target.code}-2`, tag_ids: [targetUrgent], flags: ["urgent"], due_on: "2026-12-01", sprint_id: null, parent_card_id: null, comment_count: 1, revision: before.revision + 1 });
+    expect(after).toMatchObject({ board_id: target.id, column_id: target.columns[0]!.id, key: `${target.code}-2`, tag_ids: [targetUrgent], flags: ["blocked"], priority: "high", due_on: "2026-12-01", sprint_id: null, parent_card_id: null, comment_count: 1, revision: before.revision + 1 });
     expect(after.position).toBeGreaterThan((await call(owner, "GET", `/cards/${existing.id}`)).body.card.position);
     expect((await lookup(owner, before.key)).body).toEqual({ cardId: moving.id, boardId: target.id, key: `${target.code}-2`, moved: true });
     // The source board never reuses the number.

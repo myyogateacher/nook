@@ -47,10 +47,11 @@ export const TASK_QUERY_LIMITS = {
 
 /** Keys in canonical order. */
 /** The sort orders of a task query (POST /api/tasks/query, saved views, MCP, and the home's Sort menu). */
-export const QUERY_SORTS = ["due", "updated", "created", "title", "board", "start"] as const;
+/** `priority` (D1316): Urgent first, then High, Medium, Low; cards without a priority last; ties by due date. */
+export const QUERY_SORTS = ["due", "updated", "created", "title", "board", "start", "priority"] as const;
 export type QuerySort = typeof QUERY_SORTS[number];
 
-export const FILTER_KEYS = ["board", "state", "column", "assignee", "creator", "tag", "flag", "due", "start", "sprint", "parent", "level", "has", "text"] as const;
+export const FILTER_KEYS = ["board", "state", "column", "assignee", "creator", "tag", "priority", "flag", "due", "start", "sprint", "parent", "level", "has", "text"] as const;
 export type FilterKey = typeof FILTER_KEYS[number];
 
 /**
@@ -71,9 +72,33 @@ export const SPRINT_VALUES = ["current", "next", "none"] as const;
 
 export const TASK_STATES = ["todo", "doing", "done"] as const;
 export type TaskState = typeof TASK_STATES[number];
-/** The fixed card flag set (WAVE_13 D110), in display order. */
-export const TASK_FLAGS = ["urgent", "blocked", "needs_review", "on_hold"] as const;
+/**
+ * The fixed card flag set (WAVE_13 D110), in display order. `urgent` left the set when it became a
+ * priority (D1310, migration 123): see `LEGACY_URGENT_FLAG`.
+ */
+export const TASK_FLAGS = ["blocked", "needs_review", "on_hold"] as const;
 export type TaskFlag = typeof TASK_FLAGS[number];
+/**
+ * A card's priority (D1310, migration 123), most pressing first: the display, sort, and filter order.
+ * A card without one has `priority: null` (`priority:none` in the grammar).
+ */
+export const TASK_PRIORITIES = ["urgent", "high", "medium", "low"] as const;
+export type TaskPriority = typeof TASK_PRIORITIES[number];
+export const isTaskPriority = (value: unknown): value is TaskPriority => typeof value === "string" && (TASK_PRIORITIES as readonly string[]).includes(value);
+/** A priority's sort rank: 0 for Urgent to 3 for Low, 4 without one. */
+export const priorityRank = (value: string | null | undefined) => {
+  const index = value ? (TASK_PRIORITIES as readonly string[]).indexOf(value) : -1;
+  return index < 0 ? TASK_PRIORITIES.length : index;
+};
+/**
+ * Deprecated (D1312, D1313): the old Urgent flag. A write that sends it in `flags` sets the priority
+ * to Urgent instead; a `flag:urgent` filter means `priority:urgent` (rewritten so when it stands
+ * alone, and matched as the card's priority when it shares a term with other flags), so older links,
+ * saved views, and integrations keep working.
+ */
+export const LEGACY_URGENT_FLAG = "urgent";
+/** A `flag:` filter value: a flag, the legacy `urgent` (the Urgent priority), or `none`. */
+export type FlagFilterValue = TaskFlag | typeof LEGACY_URGENT_FLAG | "none";
 /**
  * `has:` values. `relation`: any visible relation; `blocked`: an open `depends_on` blocker; `subtasks`: live children (17A);
  * `estimate`: an estimate on a board with estimates on (lane ESTIMATES, D756).
@@ -162,8 +187,12 @@ function normalizeValue(key: FilterKey, raw: string, position: number): string {
       if (!(TASK_STATES as readonly string[]).includes(lower)) throw bad("state: takes todo, doing, or done");
       return lower;
     case "flag":
-      if (lower === "none" || (TASK_FLAGS as readonly string[]).includes(lower)) return lower;
+      // `urgent` is the legacy flag (D1313): kept, and read as the Urgent priority.
+      if (lower === "none" || lower === LEGACY_URGENT_FLAG || (TASK_FLAGS as readonly string[]).includes(lower)) return lower;
       throw bad(`flag: takes ${TASK_FLAGS.join(", ")}, or none`);
+    case "priority":
+      if (lower === "none" || (TASK_PRIORITIES as readonly string[]).includes(lower)) return lower;
+      throw bad(`priority: takes ${TASK_PRIORITIES.join(", ")}, or none`);
     case "tag": {
       if (lower === "none") return lower;
       if (isUuid(raw)) return lower;
@@ -216,7 +245,8 @@ const KEYWORD_ORDER: Partial<Record<FilterKey, readonly string[]>> = {
   assignee: ["me", "none"],
   creator: ["me"],
   state: TASK_STATES,
-  flag: [...TASK_FLAGS, "none"],
+  flag: [LEGACY_URGENT_FLAG, ...TASK_FLAGS, "none"],
+  priority: [...TASK_PRIORITIES, "none"],
   tag: ["none"],
   due: DUE_KEYWORDS,
   start: START_KEYWORDS,
@@ -402,7 +432,7 @@ export function parse(input: string, options: ParseOptions = {}): ParseResult {
             break;
           }
           if (!values.length) throw new Fail("FILTER_INVALID", `Give a value for ${key}:`, start);
-          term = { key, negate, values: canonicalValues(key, values) };
+          term = legacyUrgentTerm({ key, negate, values: canonicalValues(key, values) });
         }
       }
       if (terms.length >= TASK_QUERY_LIMITS.terms) {
@@ -424,6 +454,15 @@ export function parse(input: string, options: ParseOptions = {}): ParseResult {
     return { ok: true, query: { terms: canonicalTerms(terms.filter((raw) => raw.term.key !== "column").map((raw) => raw.term)) } };
   }
   return { ok: true, query: { terms: canonicalTerms(terms.map((raw) => raw.term)) } };
+}
+
+/**
+ * `flag:urgent` alone is `priority:urgent` (D1313), negated or not, so a pre-priority link or saved
+ * view reads in today's words. Mixed with other flags (`flag:blocked,urgent`: blocked or urgent) it
+ * stays a flag term, since one term cannot OR two keys; the matchers read its `urgent` as the priority.
+ */
+function legacyUrgentTerm(term: FilterTerm): FilterTerm {
+  return term.key === "flag" && term.values.length === 1 && term.values[0] === LEGACY_URGENT_FLAG ? { key: "priority", negate: term.negate, values: ["urgent"] } : term;
 }
 
 /** `column:` needs one board: the board page, or exactly one positive `board:` value (§10.3 scope rules). */
@@ -539,7 +578,8 @@ export function encodeFilterParams(query: TaskQuery, params: URLSearchParams = n
 // are AND-ed, and an empty or missing field does not filter.
 // - `assignees`: user ids, `me` (the viewer), or `none` (no assignee).
 // - `tags`: tag ids, or `none` (no tag). An id no card carries matches nothing.
-// - `flags`: flags from the fixed set, or `none` (no flag).
+// - `flags`: flags from the fixed set, or `none` (no flag); the legacy `urgent` is the Urgent priority.
+// - `priorities`: urgent, high, medium, low, or `none` (no priority; D1315).
 // - `due`: `before`/`after` are exclusive bounds on `due_on` (the civil date
 //   in the card's zone) and are AND-ed into one range over dated cards;
 //   `none` adds cards without a date. `{ none: true }` alone means undated
@@ -562,6 +602,8 @@ export type QueryCard = {
   assignees: ReadonlyArray<{ id: string }>;
   tag_ids: readonly string[];
   flags: readonly string[];
+  /** The card's priority (D1310); null, or absent in an older payload, without one. */
+  priority?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -570,13 +612,16 @@ export type QueryColumn = { id: string; position: number };
 export type CardFilter = {
   assignees?: readonly string[];
   tags?: readonly string[];
-  flags?: ReadonlyArray<TaskFlag | "none">;
+  /** Flags, or `none`; the legacy `urgent` matches the Urgent priority (D1313). */
+  flags?: ReadonlyArray<FlagFilterValue>;
+  /** Priorities (D1315), or `none` for cards without one. */
+  priorities?: ReadonlyArray<TaskPriority | "none">;
   due?: { before?: string; after?: string; none?: boolean };
   columns?: readonly string[];
   text?: string;
 };
 
-export const CARD_SORT_KEYS = ["board", "due", "title", "created", "updated"] as const;
+export const CARD_SORT_KEYS = ["board", "due", "title", "created", "updated", "priority"] as const;
 export type CardSortKey = typeof CARD_SORT_KEYS[number];
 export type CardSort = { key: CardSortKey; direction: "asc" | "desc" };
 
@@ -586,7 +631,9 @@ export type QueryContext = { userId: string };
 export type NormalizedFilter = {
   assignees: { ids: string[]; none: boolean } | null;
   tags: { ids: string[]; none: boolean } | null;
-  flags: { values: TaskFlag[]; none: boolean } | null;
+  /** `urgent`: the legacy flag was asked for, so cards with the Urgent priority match too (D1313). */
+  flags: { values: TaskFlag[]; none: boolean; urgent: boolean } | null;
+  priorities: { values: TaskPriority[]; none: boolean } | null;
   due: { before: string | null; after: string | null; none: boolean } | null;
   columns: string[] | null;
   text: string | null;
@@ -610,7 +657,10 @@ export function foldText(value: string) {
 
 export function normalizeFilter(filter: CardFilter, context: QueryContext): NormalizedFilter {
   const flags = filter.flags?.length
-    ? { values: TASK_FLAGS.filter((flag) => filter.flags!.includes(flag)), none: filter.flags.includes("none") }
+    ? { values: TASK_FLAGS.filter((flag) => filter.flags!.includes(flag)), none: filter.flags.includes("none"), urgent: filter.flags.includes(LEGACY_URGENT_FLAG) }
+    : null;
+  const priorities = filter.priorities?.length
+    ? { values: TASK_PRIORITIES.filter((priority) => filter.priorities!.includes(priority)), none: filter.priorities.includes("none") }
     : null;
   const due = filter.due && (filter.due.before || filter.due.after || filter.due.none)
     ? { before: filter.due.before ?? null, after: filter.due.after ?? null, none: filter.due.none === true }
@@ -620,6 +670,7 @@ export function normalizeFilter(filter: CardFilter, context: QueryContext): Norm
     assignees: idSet(filter.assignees, context.userId),
     tags: idSet(filter.tags),
     flags,
+    priorities,
     due,
     columns: filter.columns?.length ? [...new Set(filter.columns.map((id) => id.toLowerCase()))] : null,
     text
@@ -645,7 +696,9 @@ export function matchesCard(card: QueryCard, filter: NormalizedFilter) {
   if (filter.columns && !filter.columns.includes(card.column_id)) return false;
   if (filter.assignees && !anyOf(filter.assignees, card.assignees.map((assignee) => assignee.id))) return false;
   if (filter.tags && !anyOf(filter.tags, card.tag_ids)) return false;
-  if (filter.flags && !((filter.flags.none && card.flags.length === 0) || card.flags.some((flag) => (filter.flags!.values as readonly string[]).includes(flag)))) return false;
+  if (filter.flags && !((filter.flags.none && card.flags.length === 0) || card.flags.some((flag) => (filter.flags!.values as readonly string[]).includes(flag))
+    || (filter.flags.urgent && card.priority === "urgent"))) return false;
+  if (filter.priorities && !(card.priority ? (filter.priorities.values as readonly string[]).includes(card.priority) : filter.priorities.none)) return false;
   if (filter.due && !matchesDue(filter.due, card.due_on)) return false;
   if (filter.text !== null && !matchesText(card, filter.text)) return false;
   return true;
@@ -672,7 +725,16 @@ export function sortCards<T extends QueryCard>(cards: readonly T[], columns: rea
     },
     title: (a, b) => sign * foldText(a.title).localeCompare(foldText(b.title)) || board(a, b),
     created: (a, b) => sign * compare(a.created_at, b.created_at) || board(a, b),
-    updated: (a, b) => sign * compare(a.updated_at, b.updated_at) || board(a, b)
+    updated: (a, b) => sign * compare(a.updated_at, b.updated_at) || board(a, b),
+    // D1316: Urgent first ascending; cards without a priority sort last both ways, like an empty due date.
+    priority: (a, b) => {
+      const left = priorityRank(a.priority);
+      const right = priorityRank(b.priority);
+      if (left === right) return board(a, b);
+      if (left === TASK_PRIORITIES.length) return 1;
+      if (right === TASK_PRIORITIES.length) return -1;
+      return sign * (left - right) || board(a, b);
+    }
   };
   return [...cards].sort(byKey[sort.key]);
 }
@@ -695,6 +757,7 @@ export function queryFromCardFilter(filter: CardFilter): TaskQuery {
   add("column", filter.columns);
   add("assignee", filter.assignees);
   add("tag", filter.tags);
+  add("priority", filter.priorities);
   add("flag", filter.flags);
   const due = filter.due;
   if (due && (due.before || due.after || due.none)) {
@@ -735,7 +798,8 @@ export function cardFilterFromQuery(query: TaskQuery): CardFilter | null {
         if (!term.values.every((value) => value === "none" || isUuid(value))) return null;
         filter.tags = term.values;
         break;
-      case "flag": filter.flags = term.values as Array<TaskFlag | "none">; break;
+      case "flag": filter.flags = term.values as FlagFilterValue[]; break;
+      case "priority": filter.priorities = term.values as Array<TaskPriority | "none">; break;
       case "text": filter.text = term.values[0]; break;
       default: return null;
     }
@@ -866,7 +930,9 @@ function matchesTerm(card: MemoryQueryCard, term: FilterTerm, context: MemoryQue
       for (const tag of context.tags ?? []) if (names.includes(tag.name.toLowerCase())) ids.add(tag.id);
       return card.tag_ids.some((id) => ids.has(id));
     }
-    case "flag": return (values.includes("none") && card.flags.length === 0) || card.flags.some((flag) => values.includes(flag));
+    case "flag": return (values.includes("none") && card.flags.length === 0) || card.flags.some((flag) => values.includes(flag))
+      || (values.includes(LEGACY_URGENT_FLAG) && card.priority === "urgent");
+    case "priority": return card.priority ? values.includes(card.priority) : values.includes("none");
     case "due": return values.some((value) => matchesDueValue(card, value, context));
     case "start": return values.some((value) => matchesStartValue(card, value, context));
     case "parent": return (values.includes("none") && !card.parent_card_id) || (!!card.parent_card_id && values.includes(card.parent_card_id));

@@ -482,7 +482,7 @@ export const taskTools: McpToolSpec[] = [
       boardId: uuid,
       columnId: uuid,
       title: z.string().min(1).max(200),
-      description: z.string().optional().describe("Markdown, up to 64 KiB"),
+      description: z.string().optional().describe("Markdown, up to 64 KiB. Mention a person as @[Name](user:<id>) (find_people_to_mention gives the text); board readers mentioned are notified."),
       dueOn: z.string().optional().describe("Due date as YYYY-MM-DD"),
       dueTime: dueTimeInput.optional(),
       dueTz: dueTzInput.optional(),
@@ -650,7 +650,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "comment_on_card",
     title: "Comment on a card",
-    description: "Add a comment, as the user, to a card on a board where they can comment (READ_ONLY otherwise). Plain text or Markdown, up to 16 KiB. attachmentIds (up to 10) attaches the user's own uploads with the comment: create_text_file or begin_upload with purpose \"attachment\" first. With files, body may be empty; the comment then reads \"📎 <name>\" or \"📎 N files\". Files from the user's other Files folders are refused (INVALID, reason CONFIRM_REQUIRED): attach those with link_attachment.",
+    description: "Add a comment, as the user, to a card on a board where they can comment (READ_ONLY otherwise). Plain text or Markdown, up to 16 KiB. Mention a person as @[Name](user:<id>) (find_people_to_mention gives the text): board readers mentioned are notified. attachmentIds (up to 10) attaches the user's own uploads with the comment: create_text_file or begin_upload with purpose \"attachment\" first. With files, body may be empty; the comment then reads \"📎 <name>\" or \"📎 N files\". Files from the user's other Files folders are refused (INVALID, reason CONFIRM_REQUIRED): attach those with link_attachment.",
     scopes: ["tasks:write"],
     access: { mode: "items", items: [{ arg: "cardId", kind: "card" }], related: ["attachmentIds"] },
     write: true,

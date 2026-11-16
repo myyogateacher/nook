@@ -420,14 +420,15 @@ export function proposalNotificationTitle(keyName: string | null, count: number,
  * dispatch tick stamps several rows with the same `created_at`; rowid (insertion order) breaks the
  * tie, not the random id.
  */
-export function listNotifications(userId: string, options: { unread: boolean; limit: number }) {
+export function listNotifications(userId: string, options: { unread: boolean; limit: number; topic?: string }) {
   const rows = db.query(`SELECT n.id, n.event_id, r.title AS reminder_title, n.late, n.read_at, n.created_at, n.occurrence_start,
              n.kind, n.proposal_count, k.name AS key_name, ro.name AS routine_name, n.run_id, n.proposal_key_id,
              n.module, n.topic, n.title, n.body, n.href, n.item_kind, n.item_id, n.actor_id, au.display_name AS actor_name
       FROM notifications n LEFT JOIN reminders r ON r.id = n.reminder_id LEFT JOIN mcp_api_keys k ON k.id = n.proposal_key_id
       LEFT JOIN routine_runs rr ON rr.id = n.run_id LEFT JOIN routines ro ON ro.id = rr.routine_id LEFT JOIN users au ON au.id = n.actor_id
-      WHERE n.user_id = $userId AND ($unread = 0 OR n.read_at IS NULL) ORDER BY n.created_at DESC, n.rowid DESC LIMIT $limit`)
-    .all({ userId, unread: options.unread ? 1 : 0, limit: options.limit }) as NotificationRow[];
+      WHERE n.user_id = $userId AND ($unread = 0 OR n.read_at IS NULL) AND ($topic IS NULL OR (n.kind = 'module' AND n.topic = $topic))
+      ORDER BY n.created_at DESC, n.rowid DESC LIMIT $limit`)
+    .all({ userId, unread: options.unread ? 1 : 0, limit: options.limit, topic: options.topic ?? null }) as NotificationRow[];
   const calendarItems = rows.map((row): NotificationItem => {
     // Module rows (D809): the title and href were written by the server from kinds (T509); the app shows the module's icon.
     if (row.kind === "module") {
@@ -445,7 +446,8 @@ export function listNotifications(userId: string, options: { unread: boolean; li
     return { id: row.id, kind: "reminder", title, href: notificationHref(event ? row.event_id : null), late: row.late === 1, read: row.read_at !== null, createdAt: row.created_at, occurrenceStart: row.occurrence_start };
   });
   // Access notices (Wave 33, migration 032) share the bell: merged newest first, one page.
-  const items = [...calendarItems, ...listAccessNotices(userId, options)]
+  // A topic (the Notifications page's Mentions view, docs/plan/MENTIONS.md D1333) shows module rows only.
+  const items = [...calendarItems, ...(options.topic ? [] : listAccessNotices(userId, options))]
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, options.limit);
   const unreadCount = (db.query("SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND read_at IS NULL").get(userId) as { count: number }).count
     + unreadAccessNotices(userId);

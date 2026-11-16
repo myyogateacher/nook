@@ -1,3 +1,4 @@
+import { NOTIFY_TOPIC_PATTERN } from "../../shared/notify";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
@@ -79,7 +80,9 @@ export function registerReminderRoutes(app: Hono<AppEnv>) {
     if (unread !== undefined && !["1", "0", "true", "false"].includes(unread)) return invalid(c, "unread must be 1 or 0");
     const limit = limitText === undefined ? 20 : Number(limitText);
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_NOTIFICATIONS_PAGE) return invalid(c, `limit must be 1 to ${MAX_NOTIFICATIONS_PAGE}`);
-    return c.json(listNotifications(c.get("user").id, { unread: unread === "1" || unread === "true", limit }));
+    const topic = c.req.query("topic");
+    if (topic !== undefined && !NOTIFY_TOPIC_PATTERN.test(topic)) return invalid(c, "Unknown topic");
+    return c.json(listNotifications(c.get("user").id, { unread: unread === "1" || unread === "true", limit, ...(topic ? { topic } : {}) }));
   });
 
   app.post("/api/notifications/read", async (c) => {

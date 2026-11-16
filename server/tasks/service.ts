@@ -25,7 +25,7 @@ import { foldText } from "../../shared/taskQuery";
 import { boardCodeMessage, normalizeBoardCode } from "../../shared/boardKeys";
 import { boardCodeTaken, freeBoardCode, keyOfCard, writeBoardCode } from "./keys";
 import { visibleEstimateSql } from "./estimateSql";
-import { activityValue, cardActivitySnapshot, recordCardActivity, recordCardChange, recordCardItems, recordSnapshotChanges } from "./activity";
+import { activityValue, cardActivitySnapshot, recordCardActivity, recordCardChange, recordCardItems, recordCardMentions, recordSnapshotChanges } from "./activity";
 import { checkEstimate, estimateSettingsOf, type EstimateKind, type EstimateScale, type EstimateSettings } from "../../shared/estimates";
 
 /**
@@ -894,6 +894,7 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, boardId);
       // Card history (lane ACTIVITY): "created this card in <column>"; the fields it starts with are part of it.
       recordCardActivity({ cardId: id, boardId, actorId: userId, kind: "created", payload: { from: null, to: activityValue.column(input.columnId) }, at: timestamp });
+      if (description) recordCardMentions({ cardId: id, boardId, authorId: userId, text: description, before: null, where: "description", at: timestamp });
       audit(userId, null, "task.card_create", {
         boardId, cardId: id,
         ...(assignees?.length ? { assigneesAdded: assignees.length } : {}),
@@ -1130,7 +1131,11 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, board.id);
       // Card history (lane ACTIVITY): every field this patch changed, in the same transaction.
       recordSnapshotChanges(cardId, userId, before, cardActivitySnapshot(cardId)!, timestamp);
-      if (input.description !== undefined && input.description !== card.description) recordCardActivity({ cardId, boardId: board.id, actorId: userId, kind: "description", at: timestamp });
+      if (input.description !== undefined && input.description !== card.description) {
+        recordCardActivity({ cardId, boardId: board.id, actorId: userId, kind: "description", at: timestamp });
+        // @mentions the save adds (docs/plan/MENTIONS.md D1326, D1334): compared with the stored description.
+        recordCardMentions({ cardId, boardId: board.id, authorId: userId, text: input.description, before: card.description, where: "description", at: timestamp });
+      }
       if (changed) recordCardItems(cardId, board.id, userId, { added: "assignee_added", removed: "assignee_removed" }, changed, activityValue.user, timestamp);
       if (tagsChanged) recordCardItems(cardId, board.id, userId, { added: "tag_added", removed: "tag_removed" }, tagsChanged, activityValue.tag, timestamp);
       if (flagsChanged) recordCardItems(cardId, board.id, userId, { added: "flag_set", removed: "flag_cleared" }, flagsChanged, activityValue.flag, timestamp);

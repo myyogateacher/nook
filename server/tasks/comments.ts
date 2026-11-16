@@ -5,6 +5,7 @@ import { linksChanged } from "../attachments/undoTickets";
 import { LIMITS, limitReached, requireBoardAt, requireCardAt, TaskError, withBoardLock } from "./service";
 import { withReactions } from "../reactions/service";
 import { mailComment } from "../mail/triggers";
+import { recordCardMentions } from "./activity";
 import type { ReactionAggregate } from "../../shared/reactions";
 import { FILES_ONLY_MARK, generatedCommentBody, isGeneratedCommentBody } from "../../shared/commentFiles";
 
@@ -131,6 +132,8 @@ export async function createComment(userId: string, cardId: string, input: Comme
       audit(userId, null, "task.comment_create", { boardId: board.id, cardId, commentId: id, ...(linked.length ? { files: linked.length } : {}), ...(filesOnly ? { filesOnly: true } : {}) });
       // "New comment on your card" mail for its assignees and creator (outbound email #17).
       mailComment(userId, cardId, id);
+      // @mentions (docs/plan/MENTIONS.md): the board readers named in the text hear about it.
+      if (!filesOnly) recordCardMentions({ cardId, boardId: board.id, authorId: userId, text: input.body!, before: null, where: "comment", at: timestamp });
     })();
     return { comment: commentById(userId, id)! };
   });
@@ -161,6 +164,8 @@ export async function updateComment(userId: string, commentId: string, input: Co
         body = generatedCommentBody(names);
       }
       if (body !== current.body || linked.length) db.query("UPDATE card_comments SET body = ?, edited_at = ? WHERE id = ?").run(body, now(), commentId);
+      // Only people this edit newly mentions are notified (D1326).
+      if (body !== current.body) recordCardMentions({ cardId: current.card_id, boardId: current.board_id, authorId: userId, text: body, before: current.body, where: "comment" });
       if (linked.length) db.query("UPDATE cards SET updated_at = ? WHERE id = ?").run(now(), current.card_id);
       audit(userId, null, "task.comment_update", { boardId: current.board_id, cardId: current.card_id, commentId, ...(linked.length ? { filesAdded: linked.length } : {}) });
     })();

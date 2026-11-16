@@ -2,6 +2,7 @@ import { auditVia, db, now } from "../db";
 import { readableBoard, readableCard } from "./access";
 import { boardStructure } from "./hierarchy";
 import { reportCardChange } from "./cardEvents";
+import { notifyMentions } from "../activity/mentions";
 import { estimateBadge, type EstimateKind } from "../../shared/estimates";
 import {
   ACTIVITY_COALESCE_MS,
@@ -266,4 +267,19 @@ export function listCardActivity(userId: string, cardId: string, options: {
   });
   const last = page[page.length - 1];
   return { activity, next: rows.length > options.limit && last ? encodeActivityCursor({ at: last.created_at, id: last.id }) : null };
+}
+
+/**
+ * @mentions in a card's comment or description (docs/plan/MENTIONS.md §5, §9, D1326, D1332): notifies
+ * each newly mentioned board reader (never the author, at most 20) and records one `mentioned` entry
+ * per person notified. Call inside the write's transaction, with the text before the write (null for
+ * a new comment or card).
+ */
+export function recordCardMentions(input: { cardId: string; boardId: string; authorId: string; text: string; before: string | null; where: "comment" | "description"; at?: string }) {
+  const notified = notifyMentions({
+    kind: "card", itemId: input.cardId, authorId: input.authorId, text: input.text, before: input.before,
+    where: input.where === "description" ? "in a card description" : "on a card"
+  });
+  for (const userId of notified) recordCardActivity({ cardId: input.cardId, boardId: input.boardId, actorId: input.authorId, kind: "mentioned", payload: { item: activityValue.user(userId) }, at: input.at });
+  return notified;
 }

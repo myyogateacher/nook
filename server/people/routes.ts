@@ -11,7 +11,9 @@ import { companyPath, contactPath } from "./paths";
 import { contactSummaries, readableContact, searchContacts } from "./contacts";
 import { userSummaries } from "./summaries";
 import { PEOPLE_ALLOW, type PersonSummary } from "../../shared/people";
-import { WORK_KIND_ICONS } from "../../shared/workRefs";
+import { isWorkKind, WORK_KIND_ICONS } from "../../shared/workRefs";
+import { MENTIONABLE_LIMIT_MAX, MENTION_QUERY_MAX } from "../../shared/itemActivity";
+import { mentionCandidates, mentionLookupRetryAfter } from "./mentions";
 import { readableContainerSql } from "../access/workspaceItems";
 
 /**
@@ -80,6 +82,32 @@ export function registerPeopleRoutes(app: Hono<AppEnv>) {
       }
     }
     return c.json({ people });
+  });
+
+  /**
+   * The @mention picker (docs/plan/MENTIONS.md §4, D1323, T660, T661):
+   * `GET /api/people/mentionable?kind=<workKind>&id=<itemId>&q=<text>&limit=<1–20>`. 404 unless the
+   * caller can read the item; readers first, non-readers (`canRead: false`) only for callers who see
+   * the Team. 120 lookups a minute per person.
+   */
+  app.get("/api/people/mentionable", (c) => {
+    const user = c.get("user");
+    const retryAfter = mentionLookupRetryAfter(user.id);
+    if (retryAfter) {
+      c.header("Retry-After", String(retryAfter));
+      return c.json({ error: "Too many requests. Try again in a moment.", code: "RATE_LIMITED" }, 429);
+    }
+    const kind = c.req.query("kind");
+    const id = c.req.query("id") ?? "";
+    const q = c.req.query("q") ?? "";
+    const limitText = c.req.query("limit");
+    if (!isWorkKind(kind) || !/^[0-9A-Za-z_-]{1,64}$/.test(id)) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+    if (q.length > MENTION_QUERY_MAX) return c.json({ error: `q is at most ${MENTION_QUERY_MAX} characters`, code: "INVALID" }, 400);
+    if (limitText !== undefined && (!/^\d+$/.test(limitText) || Number(limitText) < 1 || Number(limitText) > MENTIONABLE_LIMIT_MAX)) {
+      return c.json({ error: `limit must be an integer from 1 to ${MENTIONABLE_LIMIT_MAX}`, code: "INVALID" }, 400);
+    }
+    const people = mentionCandidates({ id: user.id, role: user.role }, kind, id.toLowerCase(), { q, limit: limitText === undefined ? undefined : Number(limitText) });
+    return people ? c.json({ people }) : c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
   });
 
   /**

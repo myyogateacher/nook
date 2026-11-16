@@ -6,6 +6,7 @@ import { parseMentionToken } from "../src/editor/mention";
 import { closesOnSpace, findMentionTrigger, firstSelectable, insertMention, mentionKeyAction, moveSelection } from "../src/ui/mentions/mentionModel";
 import { popoverPlace } from "../src/ui/mentions/MentionTextarea";
 import { MentionChip, MentionList, MentionText } from "../src/ui/mentions/Mentions";
+import { resetMentionAvatars, seedMentionAvatars } from "../src/ui/mentions/mentionAvatars";
 import { RoleContext } from "../src/team/roleAccess";
 import { mentionMarkdown, newMentionIds, splitMentions, type MentionCandidate } from "../shared/itemActivity";
 
@@ -114,3 +115,32 @@ test("rich editor: a mention round-trips through Markdown as one node, and odd t
   expect(parseMentionToken(`${mentionMarkdown("Ana", ana.toUpperCase())} rest`)).toEqual({ raw: mentionMarkdown("Ana", ana.toUpperCase()), id: ana, label: "Ana" });
   expect(parseMentionToken("@[Ana]")).toBeNull();
 });
+
+test("marks around a mention survive the round-trip; code keeps the Markdown as text (D1337)", () => {
+  const manager = new MarkdownManager({ extensions: noteContentExtensions(), markedOptions: markdownOptions });
+  const m = mentionMarkdown("Cy", cy);
+  for (const markdown of [`**${m}**`, `**see ${m} now**`, `*${m}* and ~~${m}~~`, `[ask ${m}](https://example.com)`, `a \\* ${m} \\[b\\]`]) {
+    const doc = manager.parse(markdown);
+    expect(JSON.stringify(doc)).toContain('"type":"mention"');
+    expect(manager.serialize(doc)).toBe(markdown);
+  }
+  const bold = JSON.stringify(manager.parse(`**${m}**`));
+  expect(bold).toMatch(/"type":"mention","attrs":\{[^}]*\},"marks":\[\{"type":"bold"/);
+  // Inside inline code or a code block it is text, and stays the same text.
+  for (const markdown of [`\`${m}\``, `\`\`\`\n${m}\n\`\`\``]) {
+    const doc = manager.parse(markdown);
+    expect(JSON.stringify(doc)).not.toContain('"type":"mention"');
+    expect(manager.serialize(doc)).toBe(markdown);
+  }
+});
+
+test("a chip shows the person's picture once it is known (T353: only Nook's own avatar route)", () => {
+  resetMentionAvatars();
+  const url = `/api/users/${ana}/avatar?v=${cy}`;
+  seedMentionAvatars([{ id: ana, avatarUrl: url }, { id: ben, avatarUrl: "https://evil.example/x.png" }]);
+  const markup = renderToStaticMarkup(<RoleContext.Provider value="member"><MentionChip name="Ana Silva" userId={ana} /><MentionChip name="Ben" userId={ben} /></RoleContext.Provider>);
+  expect(markup).toContain(`<img src="${url.replace("&", "&amp;")}"`);
+  expect(markup).not.toContain("evil.example");
+  resetMentionAvatars();
+});
+

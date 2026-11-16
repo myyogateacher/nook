@@ -19,4 +19,5 @@ button.mention-chip:hover { background: rgb(201 161 74 / 24%); }
 button.mention-chip:focus-visible { outline: 2px solid #c9a14a; outline-offset: 1px; }
 .mention-chip-avatar { width: 16px; height: 16px; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 50%; background: #5a4a26; color: #fff3cf; font-size: .62rem; font-weight: 700; line-height: 1; }
 .ProseMirror .mention-chip.ProseMirror-selectednode { outline: 2px solid #c9a14a; outline-offset: 1px; }
-.mention-popover-editor { z-index: 120; width: min(280px, calc(100vw - 24px)); }
+.mention-popover-host { z-index: 120; }
+.mention-popover-editor { width: min(280px, calc(100vw - 24px)); }

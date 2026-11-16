@@ -131,7 +131,17 @@ export const MentionSuggestion = Extension.create<{ target: MentionTarget | null
               current = next;
               active = firstSelectable(next.items);
               renderer = new ReactRenderer(MentionPopover, { props: props(), editor: next.editor });
-              unmount = next.mount(renderer.element as HTMLElement);
+              // Above the card dialog and the app frame (the plugin positions it, absolutely, in <body>).
+              (renderer.element as HTMLElement).classList.add("mention-popover-host");
+              const element = renderer.element as HTMLElement;
+              unmount = next.mount(element, {
+                // Kept 12 px inside the viewport's sides (a phone's caret near the left edge).
+                onPosition: ({ x, y, strategy }) => {
+                  const scrollX = strategy === "absolute" ? window.scrollX : 0;
+                  const max = scrollX + window.innerWidth - element.offsetWidth - 12;
+                  Object.assign(element.style, { position: strategy, left: `${Math.max(scrollX + 12, Math.min(x, max))}px`, top: `${y}px` });
+                }
+              });
             },
             onUpdate: sync,
             onKeyDown({ event }: SuggestionKeyDownProps) {

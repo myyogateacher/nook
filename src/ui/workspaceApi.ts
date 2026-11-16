@@ -1,5 +1,6 @@
 import { api } from "../api";
 import type { ItemActivityEntry, ItemComment } from "../../shared/itemActivity";
+import type { ReactionAggregate, ReactionKey } from "../../shared/reactions";
 import type { PeopleAllow, PersonSummary } from "../../shared/people";
 import type { LinkRelation, WorkKind, WorkLinkView, WorkRef, WorkSummary } from "../../shared/workRefs";
 
@@ -40,9 +41,18 @@ export const itemActivity = (kind: WorkKind, id: string, options: { order?: "asc
 };
 export const itemComments = (kind: WorkKind, id: string, cursor?: string | null) =>
   api<{ comments: ItemComment[]; nextCursor: string | null }>(`${itemPath(kind, id)}/comments${cursor ? `?${new URLSearchParams({ cursor })}` : ""}`);
-export const addItemComment = (kind: WorkKind, id: string, body: string, parentId?: string | null) =>
-  api<{ comment: ItemComment }>(`${itemPath(kind, id)}/comments`, { method: "POST", body: JSON.stringify({ body, ...(parentId ? { parentId } : {}) }) });
+/** `attachmentIds`: the caller's own files, uploaded with uploadForHost(file, "item_comment") (D1363); with files the text may be empty. */
+export const addItemComment = (kind: WorkKind, id: string, body: string, parentId?: string | null, attachmentIds: readonly string[] = []) =>
+  api<{ comment: ItemComment }>(`${itemPath(kind, id)}/comments`, { method: "POST", body: JSON.stringify({ ...(body ? { body } : {}), ...(parentId ? { parentId } : {}), ...(attachmentIds.length ? { attachmentIds } : {}) }) });
 export const editItemComment = (kind: WorkKind, id: string, commentId: string, body: string) =>
   api<{ comment: ItemComment }>(`${itemPath(kind, id)}/comments/${encodeURIComponent(commentId)}`, { method: "PATCH", body: JSON.stringify({ body }) });
+/** Deletes at once; the ticket undoes it through POST /api/undo/:ticket (D813, D1364). */
 export const deleteItemComment = (kind: WorkKind, id: string, commentId: string) =>
-  api<void>(`${itemPath(kind, id)}/comments/${encodeURIComponent(commentId)}`, { method: "DELETE" });
+  api<{ undoTicket: string }>(`${itemPath(kind, id)}/comments/${encodeURIComponent(commentId)}`, { method: "DELETE" });
+
+/** Puts back what a fine-grained delete removed (server/undo.ts, D813): the shared Undo toast's action. */
+export const undoTicket = (ticket: string) => api<{ restored: number }>(`/undo/${encodeURIComponent(ticket)}`, { method: "POST" });
+
+/** A reaction on an item comment (D1362): PUT adds the caller's emoji, DELETE removes it. */
+export const setItemCommentReaction = (commentId: string, emoji: ReactionKey, on: boolean) =>
+  api<{ reactions: ReactionAggregate[] }>(`/reactions/item_comment/${encodeURIComponent(commentId)}/${encodeURIComponent(emoji)}`, { method: on ? "PUT" : "DELETE", headers: { "Content-Type": "application/json" } });

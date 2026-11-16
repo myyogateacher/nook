@@ -5,6 +5,7 @@ import { ReactionPicker } from "../ui/ReactionPicker";
 import { reactionChipLabel, reactionPeople, replaceAggregate, toggleAggregate } from "./reactionsModel";
 import { setCommentReaction, taskErrorCode, taskErrorMessage } from "./tasksApi";
 import type { TaskNotify } from "./taskActions";
+import "../ui/reactions.css";
 
 type CommentReactionsProps = {
   commentId: string;
@@ -14,6 +15,8 @@ type CommentReactionsProps = {
   /** Applies a change to this comment's reactions from their latest state. */
   onUpdate: (commentId: string, update: (current: ReactionAggregate[]) => ReactionAggregate[]) => void;
   notify: TaskNotify;
+  /** Sends the change (default: a card comment's route); item comments pass the generic one (D1362). */
+  send?: (commentId: string, emoji: ReactionKey, on: boolean) => Promise<{ reactions: ReactionAggregate[] }>;
 };
 
 /** A second tap on the same emoji this soon after the first is the same gesture (a double tap). */
@@ -26,7 +29,7 @@ export const REACTION_TAP_GAP_MS = 500;
  * ignored, so a double tap is one change even when the request is already back. On an error the
  * emoji's previous state comes back and a toast says why.
  */
-export function CommentReactions({ commentId, reactions, readOnly, onUpdate, notify }: CommentReactionsProps) {
+export function CommentReactions({ commentId, reactions, readOnly, onUpdate, notify, send = setCommentReaction }: CommentReactionsProps) {
   const [picking, setPicking] = useState(false);
   const pending = useRef(new Set<ReactionKey>());
   const lastTap = useRef(new Map<ReactionKey, number>());
@@ -47,7 +50,7 @@ export function CommentReactions({ commentId, reactions, readOnly, onUpdate, not
     const { next, on } = toggleAggregate(before, emoji);
     pending.current.add(emoji);
     onUpdate(commentId, (current) => replaceAggregate(current, emoji, next.find((item) => item.emoji === emoji), previousIndex));
-    setCommentReaction(commentId, emoji, on)
+    send(commentId, emoji, on)
       .then(({ reactions: fresh }) => onUpdate(commentId, (current) => replaceAggregate(current, emoji, fresh.find((item) => item.emoji === emoji), fresh.findIndex((item) => item.emoji === emoji))))
       .catch((reason: unknown) => {
         onUpdate(commentId, (current) => replaceAggregate(current, emoji, previous, previousIndex));

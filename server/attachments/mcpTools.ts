@@ -18,8 +18,10 @@ import { keyMaySeeAttachmentId } from "./keyLinks";
  * covered by its `files:read`, or an Attachments-folder file linked nowhere the key cannot reach.
  */
 
-const READ_SCOPES = [...new Set(HOST_KINDS.map((kind) => HOSTS[kind].readScope))] as McpScope[];
-const hostKindInput = z.enum(HOST_KINDS).describe(`The kind of item the files are attached to: ${HOST_KINDS.join(", ")}`);
+/** Item comments stay out (D1363): their read rule is per module, which one MCP scope cannot name. */
+const MCP_HOST_KINDS = HOST_KINDS.filter((kind) => HOSTS[kind].mcp !== false) as [HostKind, ...HostKind[]];
+const READ_SCOPES = [...new Set(MCP_HOST_KINDS.map((kind) => HOSTS[kind].readScope))] as McpScope[];
+const hostKindInput = z.enum(MCP_HOST_KINDS).describe(`The kind of item the files are attached to: ${MCP_HOST_KINDS.join(", ")}`);
 const uuid = z.string().uuid();
 /** The containers a key can choose that hold hosts (events by calendar, cards by board, and so on). */
 const HOST_CONTAINERS: ResourceKind[] = ["calendar", "note", "folder", "board", "collection", "whiteboard"];

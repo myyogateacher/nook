@@ -20,7 +20,7 @@ import { registerAgentTools } from "./agents/nookBridge";
 import { readableCard } from "./tasks/access";
 import { cardIdForKey } from "./tasks/keys";
 import { CARD_KEY_PATTERN } from "../shared/boardKeys";
-import { ITEM_COMMENT_MAX, MENTIONABLE_LIMIT_MAX, MENTION_QUERY_MAX, mentionMarkdown } from "../shared/itemActivity";
+import { ITEM_COMMENT_MAX, MENTIONABLE_LIMIT_MAX, MENTION_QUERY_MAX, mentionMarkdown, type ItemComment } from "../shared/itemActivity";
 import { mentionCandidates } from "./people/mentions";
 import { LINK_RELATIONS, WORK_KINDS, type WorkKind, type WorkRef } from "../shared/workRefs";
 import { WORKSPACE_SCOPES } from "../shared/workspaceModules";
@@ -80,6 +80,13 @@ const mapLinkError = (error: unknown): never => {
   if (error instanceof CommentError) throw new McpToolError(error.status === 404 ? "NOT_FOUND" : error.status === 403 ? "READ_ONLY" : "INVALID", error.message);
   throw error;
 };
+
+
+/**
+ * A comment as a key sees it (D1363): its files as a count only. The attachment tools never offer item
+ * comments, so no file name or id reaches a key through here either.
+ */
+const forKey = ({ attachments, ...comment }: ItemComment) => ({ ...comment, fileCount: attachments.length });
 
 export const workTools: McpToolSpec[] = [
   defineTool({
@@ -198,7 +205,7 @@ export const workTools: McpToolSpec[] = [
       const ref = toRef(item, key);
       keyItem(key, ref, "read");
       try {
-        return { comments: listComments(ref.kind, ref.id, key.userId) };
+        return { comments: listComments(ref.kind, ref.id, key.userId).map(forKey) };
       } catch (error) {
         return mapLinkError(error);
       }
@@ -217,7 +224,7 @@ export const workTools: McpToolSpec[] = [
       const ref = toRef(item, key);
       keyItem(key, ref, "write");
       try {
-        return { comment: addComment({ kind: ref.kind, itemId: ref.id, authorId: key.userId, body, parentId: parentId?.toLowerCase() ?? null }) };
+        return { comment: forKey(addComment({ kind: ref.kind, itemId: ref.id, authorId: key.userId, body, parentId: parentId?.toLowerCase() ?? null })) };
       } catch (error) {
         return mapLinkError(error);
       }

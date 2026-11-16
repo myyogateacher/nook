@@ -27,7 +27,8 @@ const HOST_EXISTS: Record<string, string> = {
   event: "EXISTS (SELECT 1 FROM events h WHERE h.id = l.host_id)",
   note: "EXISTS (SELECT 1 FROM notes h WHERE h.id = l.host_id)",
   chat_message: "EXISTS (SELECT 1 FROM chat_messages h WHERE h.id = l.host_id)",
-  whiteboard: "EXISTS (SELECT 1 FROM whiteboards h WHERE h.document_id = l.host_id)"
+  whiteboard: "EXISTS (SELECT 1 FROM whiteboards h WHERE h.document_id = l.host_id)",
+  item_comment: "EXISTS (SELECT 1 FROM item_comments h WHERE h.id = l.host_id)"
 };
 
 export function sweepStaleAttachmentLinks() {

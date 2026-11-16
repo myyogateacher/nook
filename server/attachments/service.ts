@@ -84,6 +84,8 @@ const ctx = { documentReadable: (alias: string) => readableDocumentPredicate.rep
 
 /** Whether the live host is readable by `userId` right now (the registry's SQL, checked fresh). */
 export function hostReadable(kind: HostKind, hostId: string, userId: string) {
+  const readable = HOSTS[kind].readable;
+  if (readable) return readable(hostId, userId);
   return Boolean(db.query(`SELECT 1 AS ok WHERE ${HOSTS[kind].readableSql("$hostId", ctx)}`).get({ hostId, userId }));
 }
 

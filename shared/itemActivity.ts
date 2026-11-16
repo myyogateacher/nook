@@ -20,6 +20,7 @@
  */
 import type { ActivityShape, ActivityValue, ActivityVia } from "./cardActivity";
 import type { WorkKind } from "./workRefs";
+import type { ReactionAggregate } from "./reactions";
 
 export type { ActivityShape, ActivityValue, ActivityVia } from "./cardActivity";
 export { ACTIVITY_COALESCE_MS, ACTIVITY_LABEL_MAX, ACTIVITY_PAGE_DEFAULT, ACTIVITY_PAGE_MAX, sameActivityValue } from "./cardActivity";
@@ -139,4 +140,16 @@ export type ItemComment = {
   updatedAt: string;
   /** Whether the viewer may edit or delete it (the author, or a manager of the item). */
   canEdit: boolean;
+  /** Reactions as this viewer sees them (`target_kind = 'item_comment'`, D1362); none on a deleted comment. */
+  reactions: ReactionAggregate[];
+  /** Files attached through the comment (`host_kind = 'item_comment'`, D1363); none on a deleted comment. */
+  attachments: ItemCommentAttachment[];
 };
+
+/** A file on an item comment, as the item's readers see it; `removed` while it sits in its owner's Bin (D409). */
+export type ItemCommentAttachment =
+  | { documentId: string; removed: false; name: string; mimeType: string; previewKind: string; sizeBytes: number; partId: string | null; position: number; linkedAt: string; isOwner: boolean; inAttachmentsFolder: boolean }
+  | { documentId: string; removed: true; partId: string | null; position: number; linkedAt: string };
+
+/** Files one comment may carry (D1363). */
+export const ITEM_COMMENT_FILES_MAX = 10;

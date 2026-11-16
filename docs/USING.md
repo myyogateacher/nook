@@ -881,6 +881,7 @@ Every change an agent makes is yours to undo, and none deletes anything forever.
 | --- | --- | --- | --- |
 | `publish_note_draft` | Publish notes | Publishes a draft of your own note as a new version, but only the exact revision the key read with `get_note_draft` (or wrote). If you changed the draft after the agent read it, nothing is published. | Restore the earlier version from the note's version history. |
 | `create_folder` | Write drafts or Write files | Adds a private folder (it never takes its parent's sharing). | Delete the folder in the app. |
+| `rename_folder` | Write drafts or Write files | Renames one of your folders (not Default or Attachments). Its sharing and contents stay the same. | Rename it back in the app (the folder's ⋯ → Rename) or with `rename_folder`. |
 | `bin_note`, `bin_card`, `bin_event`, `bin_row` | Move to Bin + the module's write permission | Moves the item (a card with its subtasks) to the Bin for 30 days. A blank note also goes to the Bin, never straight to deletion. | `restore_*`, the Bin, or **Review → Restore all** on the key. |
 | `restore_note`, `restore_card`, `restore_event`, `restore_row` | Move to Bin + the module's write permission | Restores an item the key's owner may restore (notes: yours; cards, events, rows: the owner or whoever binned it). | Bin it again. |
 | `manage_tags` | Write tasks | Creates a tag (any board member), or renames or recolours one (board owner only). No deletes. | Rename or recolour it back in the app. |

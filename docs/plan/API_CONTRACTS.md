@@ -121,6 +121,17 @@ Audit: `document.upload { documentId, size, mimeType }`. The filename is never l
 - 200 → `{ document: DocumentSummary }` with the new effective `visibility`, so the UI can report it.
 - Audit: `document.rename { documentId }`, `document.move { documentId, folderId }`.
 
+### Folder rename and move (Notes and Files share folders, D1300)
+
+`PATCH /api/folders/:id` with body `{ name?: string, parentId?: uuid | null }` (strict; the same `folderSchema` as `POST /api/folders`, every key optional). Notes and Files read the same `folders` rows, so one route renames a folder in both.
+
+- **Owner only.** A recipient of a shared folder, at view **or edit** (`folder_shares.level`, groups, all users), gets the same 404 `Folder not found` as a missing id: folder structure (create, move, rename, delete, sharing) is its owner's; an edit share edits the notes and files inside. Viewers and guests get 403 `ROLE_READ_ONLY` from the role write gate.
+- `name` is trimmed and must be 1–120 characters (400 otherwise). `"Default"` in any case is 409 `{ code: "NAME_TAKEN" }`, as on create. Sibling names may repeat, as on create.
+- The Default folder: 409 `{ code: "DEFAULT_FOLDER" }`. The Attachments folder (or a system folder as `parentId`): 400 `SYSTEM_FOLDER`. `parentId` equal to the folder: 400; a parent not owned: 404 `Parent folder not found`.
+- 200 → `{ ok: true, folder: { id, parent_id, name, created_at, updated_at } }` (before D1300 the body was `{ ok: true }`; the key stays).
+- Audit (ids only), only when something changed: `folder.rename { folderId }`, `folder.move { folderId, parentId }`.
+- MCP: `rename_folder` (below) uses the same service.
+
 ### Sharing
 
 This mirrors the notes endpoints exactly.
@@ -988,6 +999,7 @@ type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]
 | `publish_note_draft` | notes:publish | `note_publish` | `{ noteId, revision }` (owned) | `{ noteId, version, publishedAt, audience: "private" \| "shared", url }`. The revision must be one this key was shown by `create_note`, `get_note_draft`, or `update_note_draft` (the D173 ledger: `DRAFT_NOT_SEEN` otherwise, also after a restart); a draft changed since is `DRAFT_CHANGED`; `NO_DRAFT`, `NO_CHANGES`. Runs `publishDraft` (the HTTP route's service); clears `draft_mcp_key_id`; audited `note.publish { version, via, keyId }` |
 | `get_note_draft` | notes:write-draft **or** notes:publish | – | unchanged | unchanged; records the returned revision in the key's ledger |
 | `create_folder` | notes:write-draft or files:write | `structure_write` | `{ name, parentId? }` | `{ folder: { id, parent_id, name, created_at, updated_at } }`, always private (no cascade). `NAME_TAKEN` for Default; a parent not owned is `NOT_FOUND`. Shares `createFolder` with `POST /api/folders`; audited `folder.create` |
+| `rename_folder` | notes:write-draft or files:write | `structure_write` | `{ folderId, name }` | `{ folder: { id, parent_id, name, created_at, updated_at } }`. Owned folders only (someone else's, shared or not, is `NOT_FOUND`); a chosen-items key needs the folder in its reach. `NAME_TAKEN` for "Default"; the Default and Attachments folders are `INVALID` with `reason` `DEFAULT_FOLDER` / `SYSTEM_FOLDER`. Shares `updateFolder` with `PATCH /api/folders/:id` (D1301); audited `folder.rename` |
 | `bin_note` / `restore_note` | notes:write-draft + bin:write | `bin_action` + `bin_burst` / – | `{ noteId }` (owned) | `{ noteId, binned: true, purgeAfter }` (a blank note is binned too, never purged) / `{ noteId, restored: true, alreadyRestored?, folderId, folderName, visibility, url }`; `PURGING` |
 | `bin_card` / `restore_card` | tasks:write + bin:write | `bin_action` + `bin_burst` / – | `{ cardId }` | `{ cardId, binned: true, purgeAfter, descendantCount }` / `{ cardId, restored: true, alreadyRestored?, boardId, columnId, columnName, descendantCount?, detached? }`; restore by the board owner or the binner; `PARENT_IN_BIN` (board binned), `LIMIT_REACHED`, `PURGING` |
 | `manage_tags` | tasks:write | `task_write` | `{ boardId, action: "create" \| "rename" \| "recolour", tagId?, name?, color? }` | `{ tag: { id, name, color } }`. Anyone at edit creates (`READ_ONLY` below it since Wave 32; `NAME_TAKEN` for an existing name in any case); rename and recolour are the board owner's only through a key, managers included (`OWNER_ONLY`, D265, T145), and change only their own field; a tag of another board is `NOT_FOUND`. No delete |

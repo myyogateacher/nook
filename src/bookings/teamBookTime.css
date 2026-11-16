@@ -53,3 +53,9 @@
 @media (max-width: 760px) {
   .bk-book-body { padding: 4px 16px 16px; }
 }
+
+/* D1384: Reset booking link name, on a member page (admins). */
+.bk-reset-handle { display: grid; gap: 6px; justify-items: start; }
+.bk-reset-handle-button { display: inline-flex; align-items: center; gap: 8px; }
+.bk-reset-handle-hint { color: #8a8a92; font-size: .76rem; overflow-wrap: anywhere; }
+.bk-reset-handle-hint code { color: #c9c9ce; }

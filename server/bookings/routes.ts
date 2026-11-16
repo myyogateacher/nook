@@ -170,6 +170,16 @@ export function registerBookingRoutes(router: ModuleRouter) {
     if (c.get("user").role !== "admin") throw new BookingError(403, "ADMIN_ONLY", "Only admins can reset a link name");
     return c.json({ profile: resetHandle(userId, c.req.param("userId") ?? "") });
   }));
+  // D1384: the members' booking link names for Settings → Team's "Reset booking link name" (admins, one
+  // batched read for the members on screen). Members without a booking profile are left out.
+  router.get("/api/bookings/admin/handles", handle((c) => {
+    if (c.get("user").role !== "admin") throw new BookingError(403, "ADMIN_ONLY", "Only admins see members' booking link names");
+    const ids = [...new Set((c.req.query("users") ?? "").split(",").map((id) => id.trim().toLowerCase()).filter((id) => /^[0-9a-f-]{6,64}$/.test(id)))];
+    if (ids.length > MAX_BOOKABLE_HOSTS) throw new BookingError(400, "INVALID", `Ask for at most ${MAX_BOOKABLE_HOSTS} members at a time`);
+    if (!ids.length) return c.json({ handles: {} });
+    const rows = db.query(`SELECT user_id, handle FROM booking_profiles WHERE user_id IN (${ids.map(() => "?").join(",")})`).all(...ids) as Array<{ user_id: string; handle: string }>;
+    return c.json({ handles: Object.fromEntries(rows.map((row) => [row.user_id, row.handle])) });
+  }));
   router.get("/api/bookings/feeds", handle((c, userId) => c.json({ feeds: listFeeds(userId) })));
   router.post("/api/bookings/feeds", handle(async (c, userId) => {
     const input = await body(c, z.object({ label: z.string().max(80).default(""), url: z.string().min(8).max(2048) }).strict());

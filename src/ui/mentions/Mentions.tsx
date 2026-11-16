@@ -3,6 +3,7 @@ import { Avatar } from "../Avatar";
 import { RoleContext } from "../../team/roleAccess";
 import { splitMentions, type MentionCandidate } from "../../../shared/itemActivity";
 import { cannotReadLabel } from "./mentionModel";
+import { useMentionAvatar } from "./mentionAvatars";
 import "./mentions.css";
 
 /**
@@ -47,10 +48,11 @@ const seesTeam = (role: string | undefined) => role !== undefined && role !== "g
 
 export const memberProfilePath = (userId: string) => `/settings/team/members/${userId.toLowerCase()}`;
 
-/** One mention as a chip: the person's initial and @Name; a button to their Team profile for people who see the Team. */
+/** One mention as a chip: the person's picture (or initial) and @Name; a button to their Team profile for people who see the Team. */
 export function MentionChip({ name, userId }: { name: string; userId: string }) {
   const role = useContext(RoleContext);
-  const body = <><Avatar className="mention-chip-avatar" name={name} /><span>@{name}</span></>;
+  const url = useMentionAvatar(userId);
+  const body = <><Avatar className="mention-chip-avatar" name={name} url={url} /><span>@{name}</span></>;
   if (!seesTeam(role)) return <span className="mention-chip" data-user-id={userId}>{body}</span>;
   return <button type="button" className="mention-chip" data-user-id={userId} title={`Open ${name}'s profile`}
     onClick={(event) => { event.stopPropagation(); window.dispatchEvent(new CustomEvent("nook:open-path", { detail: { path: memberProfilePath(userId) } })); }}>{body}</button>;

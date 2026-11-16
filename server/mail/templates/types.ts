@@ -4,6 +4,8 @@ import { WORKSPACE_MAIL_CATEGORIES, WORKSPACE_MODULE_LABELS } from "../../../sha
 export type MailClass = "security" | "account" | "activity" | "reminders" | "digest";
 /** Activity categories (§A.1, D231); `reminders` is the Wave 29 reminders-by-email switch. */
 export const MAIL_CATEGORIES = ["assignments", "comments", "sharing", "proposals", "sprints", "bin", "reminders",
+  // @mentions (docs/plan/MENTIONS.md D1328): one switch for every app.
+  "mentions",
   // Workspace modules (docs/plan/WORKSPACE_MODULES.md §B.7, D809): one switch per module.
   ...WORKSPACE_MAIL_CATEGORIES] as const;
 export type MailCategory = typeof MAIL_CATEGORIES[number];
@@ -16,6 +18,7 @@ export const CATEGORY_LABELS: Record<MailCategory, string> = {
   sprints: "Sprints",
   bin: "Bin clean-up",
   reminders: "Reminders by email",
+  mentions: "Mentions of you",
   ...Object.fromEntries(WORKSPACE_MAIL_CATEGORIES.map((id) => [id, WORKSPACE_MODULE_LABELS[id].label])) as Record<typeof WORKSPACE_MAIL_CATEGORIES[number], string>
 };
 

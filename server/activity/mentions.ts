@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { workKindAdapter } from "../links/adapters";
 import { notify, type NotifyModule } from "../notify";
+import { mailMentions } from "./mentionMail";
 import { MENTION_NOTIFY_MAX, newMentionIds } from "../../shared/itemActivity";
 import { WORK_KIND_LABELS, WORK_KIND_MODULE, type WorkKind } from "../../shared/workRefs";
 
@@ -44,10 +45,13 @@ export function notifyMentions(input: { kind: WorkKind; itemId: string; authorId
   const author = (db.query("SELECT display_name FROM users WHERE id = ?").get(input.authorId) as { display_name: string } | null)?.display_name ?? "Someone";
   // Each mentioned reader can open the item, so its href and kind word are theirs to see.
   const summary = adapter.resolve([input.itemId], { userId: mentioned[0]! }).get(input.itemId);
-  notify({
+  const where = input.where ?? `on a ${WORK_KIND_LABELS[input.kind].toLowerCase()}`;
+  const { notified } = notify({
     userIds: mentioned, module, topic: "core.mention", actor: input.authorId,
-    title: `${author} mentioned you ${input.where ?? `on a ${WORK_KIND_LABELS[input.kind].toLowerCase()}`}`,
+    title: `${author} mentioned you ${where}`,
     href: summary?.href ?? "/notifications", item: { kind: input.kind, id: input.itemId }, dedupeKey: `mention:${input.kind}:${input.itemId}`
   });
+  // The `mentions` email (D1328): ids only, re-read as each recipient when it is sent.
+  mailMentions(notified, { kind: input.kind, id: input.itemId, actorId: input.authorId, where });
   return mentioned;
 }

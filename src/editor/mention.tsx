@@ -8,6 +8,7 @@ import { Avatar } from "../ui/Avatar";
 import { MentionChip, MentionList } from "../ui/mentions/Mentions";
 import { closesOnSpace, firstSelectable, mentionKeyAction, moveSelection } from "../ui/mentions/mentionModel";
 import { mentionablePeople, type MentionTarget } from "../ui/mentions/mentionsApi";
+import { useMentionAvatar } from "../ui/mentions/mentionAvatars";
 import { mentionMarkdown, type MentionCandidate } from "../../shared/itemActivity";
 
 /**
@@ -122,13 +123,18 @@ export function parseMentionToken(src: string): { raw: string; id: string; label
   return match ? { raw: match[0], label: match[1]!, id: match[2]!.toLowerCase() } : null;
 }
 
+function EditingChip({ id, label }: { id: string; label: string }) {
+  const url = useMentionAvatar(id);
+  return <span className="mention-chip" data-user-id={id} contentEditable={false}><Avatar className="mention-chip-avatar" name={label} url={url} /><span>@{label}</span></span>;
+}
+
 function MentionNodeView({ node, editor }: NodeViewProps) {
   const id = String(node.attrs.id ?? "");
   const label = String(node.attrs.label ?? "");
   // While editing, the chip is text (a click places the caret); read-only, it opens the person's profile.
   return <NodeViewWrapper as="span" className="mention-node">
     {editor.isEditable
-      ? <span className="mention-chip" data-user-id={id} contentEditable={false}><Avatar className="mention-chip-avatar" name={label} /><span>@{label}</span></span>
+      ? <EditingChip id={id} label={label} />
       : <MentionChip name={label} userId={id} />}
   </NodeViewWrapper>;
 }

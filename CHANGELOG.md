@@ -4,6 +4,19 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 
 ## Unreleased
 
+**Fixes and gaps: the Bin, AI usage, week start, exports** (lane bake3, D1380–D1387)
+
+- The Bin names the apps' items (Form, Goal, Standup, Contact, Company, Deal, Contact book, Time project, Booking type, Townhall session) with their own icons, instead of "Item". An **Apps** row of filters lists the apps that have something in the Bin. Restoring one offers **Open**.
+- Restoring a goal from the Bin works again (it always said the goal was no longer in the Bin).
+- **Settings → AI → Usage** (admins): runs and tokens per day, by person or by agent, for the last 7 to 90 days, with a chart and a table of totals. Counts only: no chat is read there.
+- **Public townhall links** is a workspace setting of its own (Settings → Workspace). Before, "Public forms and polls" also closed townhall audience links. Upgrading keeps each workspace as it was.
+- **Week starts on** now applies to Calendar's month view, the month grid of a board's calendar, the booking pickers in the app, and the board timeline's weeks.
+- Admins can **reset a member's booking link name** from the member's page in Settings → Team (it was only in the API).
+- MCP: `restore_form`, `restore_goal`, `restore_contact`, `restore_company`, `restore_deal`, and `bin_` / `restore_` tools for time projects and townhall sessions (each with `bin:write`).
+- A card shows the goal it contributes to, with the goal's progress, on its face. Each key result shows a small line of its progress over time.
+- **Export to CSV** for Goals (the list as filtered), Standups (every round's answers you can read), Bookings (Upcoming, Past, or Cancelled), and a board's cards (the download button beside Board settings).
+- Removed two endpoints nothing used: `PUT /api/crm/pipelines/:id/stages` (use `PATCH /api/crm/pipelines/:id`) and `GET /api/crm/search`.
+
 **@mentions**
 
 - Type @ in a card's comments or description, or in a comment on a goal, deal, contact, standup answer, booking or form response, to mention someone. Pick them from the list with the arrow keys and Enter, or with the mouse; they show as a chip that opens their profile.

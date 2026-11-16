@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { parseWorkRef, WORK_KIND_MODULE, type ParsedWorkRef, type WorkKind, type WorkSummary } from "../../shared/workRefs";
+import { parseWorkRef, type ParsedWorkRef, type WorkKind, type WorkSummary } from "../../shared/workRefs";
 
 /**
  * Recently opened items for the ⌘K palette's Recent group (docs/plan/SEARCH_EVERYWHERE.md, D1344):
@@ -114,21 +114,8 @@ export async function resolveRecentItems(userId: string): Promise<RecentItem[]> 
   return shown;
 }
 
-/** The app (sidebar id) a kind's items open in. */
-export function appOfKind(kind: WorkKind): string {
-  const module = WORK_KIND_MODULE[kind];
-  if (module) return module;
-  switch (kind) {
-    case "note": return "notes";
-    case "document": return "files";
-    case "whiteboard": return "whiteboards";
-    case "report": return "reports";
-    case "card": case "board": case "sprint": return "tasks";
-    case "event": case "calendar": return "calendar";
-    case "collection": case "row": return "collections";
-    default: return kind;
-  }
-}
+/** The app (sidebar id) a kind's items open in (one map, src/ui/links/workIcons.ts). */
+export { appOfKind } from "../ui/links/workIcons";
 
 /** The palette's recently opened items, resolved each time it opens; [] while closed or loading. */
 export function useRecentItems(userId: string | undefined, open: boolean): RecentItem[] {

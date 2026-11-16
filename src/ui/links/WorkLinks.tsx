@@ -7,7 +7,7 @@ import { EmptyState } from "../EmptyState";
 import { HealthChip } from "../progress/Progress";
 import { useHistoryDialogGuard } from "../useHistoryDialogGuard";
 import { createLink, deleteLink, listLinks, resolveRef, searchWork } from "../workspaceApi";
-import { workIcon } from "./workIcons";
+import { appIcon, workIcon } from "./workIcons";
 import { isWorkKind, LINK_RELATIONS, parseWorkRef, RELATION_WORDS, WORK_KIND_LABELS, type HiddenWorkSummary, type LinkRelation, type WorkLinkView, type WorkRef, type WorkSummary } from "../../../shared/workRefs";
 import "../pickerSheet.css";
 import "../workspace.css";
@@ -211,7 +211,7 @@ export function LinkPicker({ title, relations, onPick, onClose }: {
           ? <p className="nook-picker-empty">Nothing found you can open.</p>
           : <ul className="nook-picker-list" aria-label="Results">
             {results.map((item) => {
-              const Icon = workIcon(item.icon, item.kind);
+              const Icon = appIcon(item.kind);
               return <li key={`${item.kind}:${item.id}`}><button type="button" disabled={busy} onClick={() => { void pick(item); }}>
                 <Icon aria-hidden="true" />
                 <span><strong>{item.key ? `${item.key} · ` : ""}{item.title}</strong><small>{[WORK_KIND_LABELS[item.kind], item.subtitle].filter(Boolean).join(" · ")}</small></span>

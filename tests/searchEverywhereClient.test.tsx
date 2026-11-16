@@ -11,6 +11,9 @@ import { PALETTE_SEARCH_DEBOUNCE_MS } from "../src/shell/usePaletteSearch";
 import { candidateOf } from "../src/ui/links/WorkLinks";
 import { ApiError } from "../src/api";
 import type { SearchSection } from "../shared/workspaceSearch";
+import { APP_ICONS, appIcon } from "../src/ui/links/workIcons";
+import { MODULES } from "../src/modules";
+import { WORK_KINDS } from "../shared/workRefs";
 
 /**
  * Search everywhere in the ⌘K palette (docs/plan/SEARCH_EVERYWHERE.md, D1340, D1342): results grouped
@@ -194,4 +197,48 @@ test("the palette's Recent leads with opened items of every kind, then boards an
   ] }];
   const merged = withResults(filterPalette(entries, "grow", true), results);
   expect(merged.flatMap((group) => group.entries.map((entry) => `${group.label}:${entry.label}`))).toEqual(["Recent:Grow MRR", "Goals:Grow ARR", "Search:Search notes for “grow”"]);
+});
+
+test("an item shown in an earlier group never appears in a later one, by kind and id even when hrefs differ (D1346)", () => {
+  const CARD = "55555555-5555-4555-8555-555555555555";
+  const tree = buildNavTree({ disabledModules: [], features, role: "member", active: "tasks", recents: { tasks: [{ id: "b1", name: "Atlas roadmap", href: "/tasks/ATL" }] } });
+  const entries = paletteEntries({
+    tree, searchNotes: true,
+    // An edited note from the Notes list: its href has the folder segment, the server's has none.
+    recentNotes: [{ id: NOTE, name: "Atlas salary bands", href: "/notes/hr/atlas-salary-bands-1a2b3c4d5e" }],
+    recentItems: [
+      { kind: "card", id: CARD, title: "Ship the Atlas onboarding flow", href: "/tasks/ATL-1", icon: Target, app: "Tasks" },
+      // The same note opened recently too: listed once in Recent.
+      { kind: "note", id: NOTE, title: "Atlas salary bands", href: "/notes/atlas-salary-bands-1a2b3c4d5e", icon: FileText, app: "Notes" }
+    ]
+  });
+  const found: SearchSection[] = [
+    { scope: "notes", label: "Notes", truncated: false, results: [
+      { id: NOTE, title: [{ text: "Atlas salary bands", hit: true }], snippet: [], is_owner: 1, source: "published", ...ref("note", NOTE, "Atlas salary bands", "/notes/atlas-salary-bands-1a2b3c4d5e?x") },
+      { id: "n9", title: [], snippet: [], is_owner: 1, ...ref("note", "n9", "Atlas launch plan", "/notes/atlas-launch-plan-9a2b3c4d5e") }
+    ] },
+    { scope: "cards", label: "Tasks", truncated: false, results: [{ id: CARD, key: "ATL-1", board_name: "Atlas roadmap", ...ref("card", CARD, "Ship the Atlas onboarding flow", "/tasks/ATL-1") }] },
+    { scope: "contacts", label: "Contacts", truncated: false, results: [
+      { kind: "contact", id: "p1", title: "Dana Atlas", href: "/contacts/dana-atlas-1a2b3c4d5e" },
+      { kind: "contact", id: "p1", title: "Dana Atlas", href: "/contacts/dana-atlas-1a2b3c4d5e" }
+    ] }
+  ];
+  const groups = withResults(filterPalette(entries, "atlas", true), resultGroups(found, paletteResultRenderers(), shownApps(tree)));
+  const shown = groups.flatMap((group) => group.entries.map((entry) => `${group.label}:${entry.label}`));
+  expect(shown.filter((line) => line.endsWith("Atlas salary bands"))).toEqual(["Recent:Atlas salary bands"]);
+  expect(shown.filter((line) => line.endsWith("Ship the Atlas onboarding flow"))).toEqual(["Recent:Ship the Atlas onboarding flow"]);
+  expect(shown).toContain("Notes:Atlas launch plan");
+  expect(shown.filter((line) => line === "Contacts:Dana Atlas")).toHaveLength(1);
+  // The Tasks group had only the recent card: it is gone, not shown empty.
+  expect(groups.map((group) => group.label)).not.toContain("Tasks");
+  const ids = groups.flatMap((group) => group.entries.map((entry) => entry.item ? `${entry.item.kind}:${entry.item.id}` : entry.id));
+  expect(new Set(ids).size).toBe(ids.length);
+});
+
+test("one icon map: the palette and the link picker draw each kind with its app's sidebar icon", () => {
+  for (const module of MODULES) if (module.launcher && APP_ICONS[module.launcher.section]) expect([module.launcher.section, APP_ICONS[module.launcher.section]]).toEqual([module.launcher.section, module.icon]);
+  expect(appIcon("note")).toBe(MODULES.find((module) => module.id === "notes")!.icon);
+  expect(appIcon("contact")).toBe(MODULES.find((module) => module.id === "crm")!.icon);
+  expect(appIcon("chat")).toBe(MODULES.find((module) => module.id === "agents")!.icon);
+  for (const kind of WORK_KINDS) expect(typeof appIcon(kind)).not.toBe("undefined");
 });

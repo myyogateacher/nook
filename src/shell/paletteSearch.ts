@@ -24,6 +24,11 @@ const ref = (result: Record<string, unknown>) => {
   const href = text(value.href);
   return href.startsWith("/") && !href.startsWith("//") ? { id: text(value.id), title: text(value.title) || "Untitled", href, kind: text(value.kind) } : null;
 };
+/** The item a hit names (its `ref`, else a module result's own kind and id), for de-duplication (D1346). */
+const itemOf = (result: Record<string, unknown>) => {
+  const value = result.ref && typeof result.ref === "object" ? result.ref as Record<string, unknown> : result;
+  return typeof value.kind === "string" && typeof value.id === "string" ? { kind: value.kind, id: value.id } : null;
+};
 const join = (...parts: unknown[]) => parts.map(text).filter(Boolean).join(" · ") || undefined;
 const day = (value: string) => {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00`) : new Date(value);
@@ -88,7 +93,8 @@ export function resultGroups(sections: readonly SearchSection[], renderers: read
       try { drawn = renderer.row(result as Record<string, unknown>); } catch { drawn = null; }
       if (!drawn || seen.has(drawn.key)) return [];
       seen.add(drawn.key);
-      return [{ id: `result:${section.scope}:${drawn.key}`, group: "results", label: drawn.title || "Untitled", context: app.label, icon: app.icon, hint: drawn.meta, browse: false, action: { kind: "path", href: drawn.href } } satisfies PaletteEntry];
+      const named = itemOf(result as Record<string, unknown>);
+      return [{ id: `result:${section.scope}:${drawn.key}`, group: "results", label: drawn.title || "Untitled", context: app.label, icon: app.icon, hint: drawn.meta, browse: false, ...(named ? { item: named } : {}), action: { kind: "path", href: drawn.href } } satisfies PaletteEntry];
     }).slice(0, PALETTE_RESULTS_PER_APP);
     return entries.length ? [{ id: "results", key: `results:${section.scope}`, label: app.label, entries }] : [];
   });

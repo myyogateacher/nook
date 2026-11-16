@@ -11,7 +11,7 @@ import { paletteEntries, type PaletteEntry } from "./paletteModel";
 import { paletteResultRenderers, resultGroups, shownApps } from "./paletteSearch";
 import type { PaletteSearchRun } from "./usePaletteSearch";
 import { appOfKind, useRecentItems } from "./recentItems";
-import { workIcon } from "../ui/links/workIcons";
+import { appIcon } from "../ui/links/workIcons";
 import type { SearchSection } from "../../shared/workspaceSearch";
 import { ShellContext, useUnreadNotifications, type LeaveGuard, type ShellValue } from "./shellContext";
 import { CommandPalette } from "./CommandPalette";
@@ -158,7 +158,7 @@ export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onAccount, 
     const apps = shownApps(tree);
     return opened.flatMap((item) => {
       const app = apps.get(appOfKind(item.kind));
-      return app ? [{ kind: item.kind, id: item.id, title: item.title, href: item.href, icon: workIcon(item.icon, item.kind), app: app.label }] : [];
+      return app ? [{ kind: item.kind, id: item.id, title: item.title, href: item.href, icon: appIcon(item.kind), app: app.label }] : [];
     });
   }, [opened, tree]);
   const entries = useMemo(() => paletteOpen ? paletteEntries({

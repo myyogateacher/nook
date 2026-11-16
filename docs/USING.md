@@ -215,9 +215,10 @@ Tasks holds kanban boards. **New board** asks for a name and a template: **Simpl
 
 ## Mentioning people
 
-Type **@** in a card's comment or description, or in a comment on a goal, deal, contact, standup answer, booking or form response, and a list of people appears. Keep typing to narrow it, use ↑ and ↓ to choose, and press Enter or Tab to add the person (Esc closes the list). The mention shows as a chip with their name; click it to open their profile in Team.
+Type **@** in a card's comment or description (also while creating a card), a note, a standup answer, a note on a contact, a goal check-in, or a comment on a goal, deal, contact, standup answer, booking or form response, and a list of people appears. Keep typing to narrow it, use ↑ and ↓ to choose, and press Enter or Tab to add the person (Esc closes the list). The mention shows as a chip with their name; click it to open their profile in Team.
 
-- **Who hears about it.** Each person you mention who can open the card or item gets a notification in the bell and on their phone. They are told once: editing your comment or description again does not notify them again unless you add someone new. You never notify yourself.
+- **Who hears about it.** Each person you mention who can open the card or item gets a notification in the bell and on their phone, and an email (Settings → Notifications → Email → **Mentions of you**, on by default; several mentions within 10 minutes come as one email). They are told once: editing your comment or description again does not notify them again unless you add someone new. You never notify yourself.
+- **Notes** tell people when you **publish**, not while you write the draft. Mentions in an anonymous standup notify no one.
 - **People who can't see it.** People who can't open the card are shown greyed out with "Can't see this card" and can't be picked. A mention never shares anything: share the board (or the item) with them first.
 - **Your mentions.** Notifications → **Mentions** lists only the times someone mentioned you.
 - **Agents.** Over MCP, `find_people_to_mention` gives the text to write (`@[Name](user:…)`) for anyone who can read the item; `comment_on_card`, `create_card` and `comment_on_item` notify the same way.

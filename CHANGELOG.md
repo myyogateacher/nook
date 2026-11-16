@@ -11,6 +11,11 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 - People who can't open the card are shown greyed out ("Can't see this card"). A mention never shares the card: share the board first.
 - A card's history shows who was mentioned. Notifications has a new **Mentions** view.
 - MCP: `find_people_to_mention` finds people and gives the mention text; `comment_on_card` and `create_card` notify mentioned board readers.
+- You can also mention people in notes (they hear about it when you publish), standup answers, notes on contacts, goal check-ins, and the description of a card you're creating.
+- A new email setting, **Mentions of you** (on by default), emails you when someone mentions you. Several mentions within 10 minutes come as one email, and it lists only things you can still open.
+- Mention chips show the person's profile picture.
+- Bold, italic and links around a mention are kept when you save.
+- Card descriptions now use the same font as the rest of the app.
 
 **A sidebar for every app**
 

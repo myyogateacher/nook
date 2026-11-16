@@ -3296,3 +3296,11 @@ Plan: `docs/plan/MENTIONS.md`. A mention is `@[Name](user:<uuid>)` in any commen
 
 **MCP**: `find_people_to_mention { item: {kind, id} | {ref}, query?, limit? }` → `{ people: [{ id, name, canRead, mention }] }` (`mention` is the ready-made text). Offered to keys with any tasks, notes or workspace module read scope; each call needs the item's own module read scope and the key's chosen items (NOT_FOUND otherwise). `comment_on_card`, `create_card` (description) and `comment_on_item` describe the format and notify as the web does.
 
+**Phases B and C (D1337–D1339)**:
+- `POST /api/notes/:id/publish`: the note's readers newly mentioned, compared with the previous published version, are notified ("… mentioned you in a note", module `notes`). Draft saves never notify.
+- `POST`/`PUT /api/checkin-rounds/:rid/answer`: for a named standup, the round's readers newly mentioned in the answer are notified ("… in a standup answer"). Anonymous standups never notify.
+- `POST /api/crm/interactions` and `PATCH /api/crm/interactions/:id`: readers of the book are notified on the first record named ("… in a note on a contact").
+- `POST /api/goals/:id/checkins`: the goal's readers are notified ("… in a goal check-in").
+- `GET /api/people/mentionable?kind=board&id=…` serves the new-card composer.
+- **Mail**: category `mentions` in `GET`/`PUT /api/mail/settings` `categories`. It is optional in the PUT body; a missing value keeps the stored one. Template `core.mention`, class `activity`, coalesced per recipient for 10 minutes. The payload is `{ mentions: [{ kind, id, actorId, where }] }` (≤ 20), resolved as the recipient at send time.
+

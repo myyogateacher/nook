@@ -1,6 +1,6 @@
 # @mentions across Nook: plan
 
-Status: **phase A built** (branch `feat/mentions`; no migration). Phases B and C are next (§11). Decisions D1320–D1336 (§12; D1337–D1339 spare). Migrations: none needed for phases A and B (ids 140–149 are reserved for this lane if phase C needs one). Threat rows T660–T664.
+Status: **phases A, B and C built** (branch `feat/mentions`; no migration). Decisions D1320–D1339 (§12). Threat rows T660–T666.
 
 ## 1. What exists today (surveyed on upstream/main 46b6368d)
 
@@ -119,6 +119,9 @@ The Notifications page gets an **All · Mentions** switch. Mentions asks `GET /a
 | D1333 | The Notifications page gets an All · Mentions switch backed by `?topic=core.mention`. |
 | D1334 | The description notifies on save (the description is saved explicitly, not autosaved), with "previous" being the stored description. |
 | D1335 | Notes notify on publish, not on draft saves (phase B). |
+| D1337 | Marks around a mention survive Markdown: parse and serialize go through private-use placeholders, so a mention is text to the mark logic (`**@Ana**`, links, strike) and literal Markdown inside code. `@tiptap/markdown` itself marks only text nodes, so the manager's `parse`/`serialize` are wrapped once (src/editor/mention.tsx). |
+| D1338 | Chips show the person's picture: looked up once per page load, batched through `GET /api/people/resolve?users=` (names any member can see, T353), seeded by the picker. `Avatar` loads only Nook's own avatar route. |
+| D1339 | Phase B targets: notes on **publish** against the previous published version; standup answers on the round (`checkin_round`), never for anonymous standups; contact notes on the first record they name (readers of its book); goal check-in notes on the goal; the new-card composer offers the board's readers (`kind=board`), and the card's creation notifies. |
 | D1336 | Agent chat, whiteboards, public forms, townhall public questions and booking messages get no mentions: an agent is not a person to notify, and outsiders' text must not page members. |
 
 ## 13. As built (phase A)
@@ -127,8 +130,20 @@ The Notifications page gets an **All · Mentions** switch. Mentions asks `GET /a
 - **Client**: `src/ui/mentions/` (`mentionModel.ts`, `mentionsApi.ts`, `Mentions.tsx` with `MentionList`/`MentionChip`/`MentionText`, `MentionTextarea.tsx`, `mentions.css`), `src/editor/mention.tsx` (the `mention` node and `MentionSuggestion`), wired into CardDialog (comment composer, comment edit, description) and ItemTimeline (comment, edit, reply). Notifications page: All · Mentions.
 - **Found while building**:
   - A card's comment and description mentions share one unread row per person (`mention:card:<id>`): the newest title wins ("… in a card description"). This is by design (D1327).
-  - Bold or italic around a mention is not kept: the node is an atom and its Markdown carries no marks.
-  - The new-card composer (no card id yet) has no picker. Mentions typed as text there still notify when the card is created.
+  - Bold or italic around a mention was lost on save (fixed in phase B, D1337).
+  - The new-card composer had no picker (no card id yet). Phase B gives it one on the board (D1339).
   - Tiptap's suggestion mounts its popover absolutely in `<body>`: it needs `z-index` (`.mention-popover-host`) above the card dialog, and an `onPosition` clamp keeps it 12 px from the viewport's sides on phones.
-- **Next (phase B)**: notes body (notify on publish against the previous published version, D1335); standup answers (`QuestionInput` long text); contact interaction notes and goal check-in notes (`MentionTextarea` + `MentionText` where they render); `mentionTarget` for the new-card composer once the card exists. **Phase C**: the `mentions` email category and template (D1328), and picture chips via `/api/people/resolve`.
+
+## 14. As built (phases B and C)
+
+- **Fixes**: card descriptions use the app's sans font (`.note-prose` is serif for notes; the description inherited it since D44). Marks around mentions round-trip (D1337).
+- **Phase B**:
+  - Notes: `NotesApp` passes `mentionTarget` (the picker is shown only while the note is editable). `publishDraftLocked` reads the previous published version and calls `notifyMentions` inside the publish transaction. Draft saves never notify.
+  - Standups: `QuestionInput` long text takes `mentionTarget` (AnswerSheet passes the round unless the standup is anonymous). `answerRound` compares against the answer's previous text (its search row). Answers render chips (`RefText`).
+  - Contacts: the record composer is a `MentionTextarea`; `logInteraction`/`updateInteraction` notify on the first subject; interaction bodies render chips.
+  - Goals: the check-in note is a `MentionTextarea`; `checkIn` notifies (an edited check-in from a standup notifies only new mentions); notes render chips.
+  - New-card composer: the picker lists the board's readers; `createCard` already notifies.
+- **Phase C**:
+  - Email: category `mentions` ("Mentions of you", on by default; optional in the PUT schema for older clients). Template `core.mention` (server/activity/mentionMail.ts) is registered with `resolve`. `notifyMentions` queues one mail per notified person, coalesced for 10 minutes (merge keeps one row per item and author, at most 20). The payload holds `{ kind, id, actorId, where }` only. At send time each item is re-read as the recipient: items they cannot open are dropped, a card on a muted board is dropped, and nothing left means `access_lost`. Preferences, quiet hours, suppression and verification apply as for every activity mail.
+  - Picture chips (D1338): `src/ui/mentions/mentionAvatars.ts`.
 

@@ -756,6 +756,16 @@ Plan: `docs/plan/WORKSPACE_MODULES.md` §D.6 (decisions as built D1009–D1026).
 | T641 | **A writer links a contact they can't read, or names a non-member** | `parseValue` checks every person and contact value with the writer's access (`isPickablePerson`, `readableContact`); missing and unreadable contacts fail alike; Undo and CSV import go through the same checks (D1200, D1203). | Required (built) |
 | T642 | **An MCP key without `crm:read` reads or links contacts through a collection** | Contact values are presented only when `keyMayRead(key, { type: "contact" })` holds; writes and filters naming a contact the key may not read are NOT_FOUND (D1204). | Required (built) |
 
+### @mentions (lane MENTIONS, docs/plan/MENTIONS.md, D1320–D1336)
+
+| Id | Threat | Mitigation | Status |
+|---|---|---|---|
+| T660 | **@mention picker leaks member names** to someone enumerating `GET /api/people/mentionable` on an item they can read (docs/plan/MENTIONS.md §7) | The caller must read the item (404 otherwise); guests get only the item's readers (names they already see in its assignee and access lists); members already see the whole Team. 120 lookups a minute, at most 20 rows, never emails. `tests/mentions.test.ts` | Mitigated |
+| T661 | **`canRead` reveals who can open an item** | Only callers who can read the item ask; only members see `canRead: false` rows (they can open its sharing list or board readers anyway); guests never see non-readers; rendered chips never show it. | Accepted (members) |
+| T662 | **A mention leaks item content to a non-reader, or spams people** | Only people who can read the item at write time are notified; the title has the author's name and the item's kind word only, the href is the item's relative path (T509). No self-notify, at most 20 people a write, an edit notifies only new ids, one unread row per person and item (dedupe key). `tests/mentions.test.ts` | Mitigated |
+| T663 | **Forged mention markup** (another person's name on an id, script in the name, a crafted id) | The id decides who is notified; the name is display text, rendered as React text or a Tiptap attribute, never HTML. `MENTION_PATTERN` accepts UUIDs only and names ≤ 120 characters without `]` or newlines. A chip links only to the Team route. `tests/mentionsUi.test.tsx` | Mitigated |
+| T664 | **Mentioning to share**: someone expects a mention to give access | A mention never shares (D1324): the picker greys out non-readers and cannot insert them; USING.md says to share first; the MCP tool returns `canRead`. | Mitigated |
+
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
 Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The mitigations above still hold.

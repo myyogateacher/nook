@@ -4,6 +4,14 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 
 ## Unreleased
 
+**@mentions**
+
+- Type @ in a card's comments or description, or in a comment on a goal, deal, contact, standup answer, booking or form response, to mention someone. Pick them from the list with the arrow keys and Enter, or with the mouse; they show as a chip that opens their profile.
+- The people you mention who can open the card or item are notified in the bell and on their phone. Editing the text notifies only people you newly add, and you are never notified about yourself.
+- People who can't open the card are shown greyed out ("Can't see this card"). A mention never shares the card: share the board first.
+- A card's history shows who was mentioned. Notifications has a new **Mentions** view.
+- MCP: `find_people_to_mention` finds people and gives the mention text; `comment_on_card` and `create_card` notify mentioned board readers.
+
 **A sidebar for every app**
 
 - Every app now has a sidebar on the left: Search, Home, Inbox, and Notifications, then all your apps, then the timer, Settings, and your account. Switching apps no longer means going back to Home.

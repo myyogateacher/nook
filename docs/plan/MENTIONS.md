@@ -1,6 +1,6 @@
 # @mentions across Nook: plan
 
-Status: plan (branch `feat/mentions`). Decisions D1320–D1339 (§12). Migrations: none needed for phases A and B (ids 140–149 are reserved for this lane if phase C needs one). Threat rows T660–T664.
+Status: **phase A built** (branch `feat/mentions`; no migration). Phases B and C are next (§11). Decisions D1320–D1336 (§12; D1337–D1339 spare). Migrations: none needed for phases A and B (ids 140–149 are reserved for this lane if phase C needs one). Threat rows T660–T664.
 
 ## 1. What exists today (surveyed on upstream/main 46b6368d)
 
@@ -120,3 +120,15 @@ The Notifications page gets an **All · Mentions** switch. Mentions asks `GET /a
 | D1334 | The description notifies on save (the description is saved explicitly, not autosaved), with "previous" being the stored description. |
 | D1335 | Notes notify on publish, not on draft saves (phase B). |
 | D1336 | Agent chat, whiteboards, public forms, townhall public questions and booking messages get no mentions: an agent is not a person to notify, and outsiders' text must not page members. |
+
+## 13. As built (phase A)
+
+- **Server**: `server/activity/mentions.ts` (`notifyMentions`, `mentionReaders`, shared by item comments and cards), `server/tasks/activity.ts` `recordCardMentions` (card comments create/edit, card create/description save), `server/people/mentions.ts` + `GET /api/people/mentionable`, `?topic=` on `GET /api/notifications`, `notify()` core modules, the card history kind `mentioned`, MCP `find_people_to_mention`.
+- **Client**: `src/ui/mentions/` (`mentionModel.ts`, `mentionsApi.ts`, `Mentions.tsx` with `MentionList`/`MentionChip`/`MentionText`, `MentionTextarea.tsx`, `mentions.css`), `src/editor/mention.tsx` (the `mention` node and `MentionSuggestion`), wired into CardDialog (comment composer, comment edit, description) and ItemTimeline (comment, edit, reply). Notifications page: All · Mentions.
+- **Found while building**:
+  - A card's comment and description mentions share one unread row per person (`mention:card:<id>`): the newest title wins ("… in a card description"). This is by design (D1327).
+  - Bold or italic around a mention is not kept: the node is an atom and its Markdown carries no marks.
+  - The new-card composer (no card id yet) has no picker. Mentions typed as text there still notify when the card is created.
+  - Tiptap's suggestion mounts its popover absolutely in `<body>`: it needs `z-index` (`.mention-popover-host`) above the card dialog, and an `onPosition` clamp keeps it 12 px from the viewport's sides on phones.
+- **Next (phase B)**: notes body (notify on publish against the previous published version, D1335); standup answers (`QuestionInput` long text); contact interaction notes and goal check-in notes (`MentionTextarea` + `MentionText` where they render); `mentionTarget` for the new-card composer once the card exists. **Phase C**: the `mentions` email category and template (D1328), and picture chips via `/api/people/resolve`.
+

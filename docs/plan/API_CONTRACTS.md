@@ -3277,3 +3277,22 @@ Plan: `docs/plan/WORKSPACE_MODULES.md` §D.8. JSON under `/api`, errors `{ error
 **Client registries**: `registerBoardHeaderItem` / `boardHeaderItems` (board header, D1048), `registerItemSection` / `itemSections` (workspace item pages, D1056), the `/` embed picker (D1059).
 
 **Server hooks**: `onCardChange(listener)` (`server/tasks/cardEvents.ts`, D1040): batches of `{ activityId, cardId, boardId, actorId, kind, at }` after the change commits.
+
+## @mentions (lane MENTIONS, D1320–D1336; no migration)
+
+Plan: `docs/plan/MENTIONS.md`. A mention is `@[Name](user:<uuid>)` in any comment or description text (`MENTION_PATTERN`, shared/itemActivity.ts); the server reads the ids, the name is display text only.
+
+| Method | Path | Body / query | Returns |
+| --- | --- | --- | --- |
+| GET | `/api/people/mentionable` | `kind` (a work kind), `id`, `q?` (≤ 40), `limit?` (1–20, default 8) | `{ people: [{ id, displayName, avatarUrl, canRead }] }`: active people, never the caller, readers of the item first. Members, admins and viewers also get non-readers (`canRead: false`); guests get readers only. 404 `NOT_FOUND` when you cannot read the item (or the kind is unknown), 400 `INVALID` on a bad `q` or `limit`, 429 `RATE_LIMITED` past 120 a minute (`Retry-After`). |
+| GET | `/api/notifications` | adds `topic?` (e.g. `core.mention`) | only module rows with that topic (access notices left out); 400 on a malformed topic |
+| POST | `/api/tasks/cards/:k/comments`, PATCH `/api/tasks/comments/:id` | unchanged | the board readers the text newly mentions are notified (never the author, at most 20 a write) and the card records `mentioned` |
+| POST | `/api/tasks/boards/:b/cards`, PATCH `/api/tasks/cards/:k` | unchanged | the same for mentions a `description` adds (compared with the stored description) |
+| POST / PATCH | `/api/items/:kind/:id/comments…` | unchanged | as before (only new mentions on an edit); now shared with cards (`server/activity/mentions.ts`) |
+
+**Notifications**: `kind = 'module'`, topic `core.mention`, module `tasks` for cards (`notify()` now accepts the core modules `tasks` and `notes`, D1325), title "<Author> mentioned you on a card" / "… in a card description" / "… on a <kind>", `href` the item's path, `dedupeKey mention:<kind>:<id>` (one unread row per person and item).
+
+**Card history**: a new kind `mentioned` (`item`: the person notified, `{ id, label }`), one per person per write (`GET /api/tasks/cards/:k/activity`, `get_card_activity`).
+
+**MCP**: `find_people_to_mention { item: {kind, id} | {ref}, query?, limit? }` → `{ people: [{ id, name, canRead, mention }] }` (`mention` is the ready-made text). Offered to keys with any tasks, notes or workspace module read scope; each call needs the item's own module read scope and the key's chosen items (NOT_FOUND otherwise). `comment_on_card`, `create_card` (description) and `comment_on_item` describe the format and notify as the web does.
+

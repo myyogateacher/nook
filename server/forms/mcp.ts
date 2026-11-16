@@ -1,6 +1,7 @@
 import * as z from "zod/v4";
 import { db } from "../db";
-import { defineTool, McpToolError, notFound, BIN_BUCKETS, BIN_DESCRIPTION, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { defineTool, McpToolError, notFound, BIN_BUCKETS, BIN_DESCRIPTION, restoreResult, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { restoreItem } from "../bin";
 import { keyFilter, keyReach } from "../keyResources";
 import { config } from "../config";
 import { ownedNote } from "../access";
@@ -172,6 +173,14 @@ export const formsMcpTools: McpToolSpec[] = [
     annotations: { destructiveHint: true },
     inputSchema: z.object({ formId: formRef }),
     handler: ({ formId }, key) => wrap(() => { const row = binForm(key.userId, formId); return { binned: true, formId: row.id }; })
+  }),
+  defineTool({
+    name: "restore_form", title: "Restore a form from the Bin",
+    description: "Restores a form you own or binned from the Bin, with its responses. Its public link stays off until you turn it on again.",
+    scopes: ["forms:write"], alsoRequires: ["bin:write"], access: { mode: "items", items: [{ arg: "formId", kind: "form" }] }, write: true,
+    inputSchema: z.object({ formId: z.string().uuid() }).strict(),
+    // D1385: the restore every bin_* tool's description promises, through the module's Bin provider.
+    handler: async ({ formId }, key) => restoreResult(await restoreItem("form", formId.toLowerCase(), key.userId), "Form")
   }),
   defineTool({
     name: "list_responses", title: "List a form's responses",

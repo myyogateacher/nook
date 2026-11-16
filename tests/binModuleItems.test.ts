@@ -37,6 +37,11 @@ describe("Bin module items (D1380)", () => {
     const goal = (await api("POST", "/goals", { title: "Bin goal" })).body.goal as Json;
     expect((await api("DELETE", `/goals/${goal.id}`)).status).toBeLessThan(300);
     expect(await binned("goal", goal.id)).toMatchObject({ type: "goal", href: goal.href });
+    // D1385: the goal provider passed its arguments swapped, so this was always a 404.
+    const restored = await api("POST", `/bin/goal/${goal.id}/restore`);
+    expect(restored).toMatchObject({ status: 200, body: { folderName: "Goals" } });
+    expect((await api("GET", `/goals/${goal.id}`)).status).toBe(200);
+    expect((await api("DELETE", `/goals/${goal.id}`)).status).toBeLessThan(300);
 
     const project = (await api("POST", "/time/projects", { name: "Bin project" })).body.project as Json;
     expect((await api("DELETE", `/time/projects/${project.id}`)).status).toBeLessThan(300);

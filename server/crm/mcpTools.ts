@@ -1,6 +1,7 @@
 import * as z from "zod/v4";
 import { db } from "../db";
-import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { restoreItem } from "../bin";
 import { keyContainerIds, keyFilter } from "../keyResources";
 import { PeopleError, upsertContactByEmail } from "../people/contacts";
 import { INTERACTION_KINDS, type CrmContact, type CrmDeal } from "../../shared/crm";
@@ -235,6 +236,30 @@ export const crmMcpTools: McpToolSpec[] = [
     scopes: ["crm:write"], alsoRequires: ["bin:write"], buckets: BIN_BUCKETS, access: { mode: "items", items: [{ arg: "dealId", kind: "deal" }] }, write: true, annotations: { destructiveHint: true },
     inputSchema: z.object({ dealId: ref }).strict(),
     handler: ({ dealId }, key) => run(() => binDeal(dealId, key.userId))
+  }),
+  defineTool({
+    name: "restore_contact", title: "Restore a contact from the Bin",
+    description: "Restores a contact from the Bin (the book's owner, or whoever binned it while they can still edit the book). Restore its contact book first if that is in the Bin too.",
+    scopes: ["crm:write"], alsoRequires: ["bin:write"], access: { mode: "items", items: [{ arg: "contactId", kind: "contact" }] }, write: true,
+    inputSchema: z.object({ contactId: z.string().uuid() }).strict(),
+    // D1385: the restore every bin_* tool's description promises, through the module's Bin provider.
+    handler: async ({ contactId }, key) => restoreResult(await restoreItem("contact", contactId.toLowerCase(), key.userId), "Contact")
+  }),
+  defineTool({
+    name: "restore_company", title: "Restore a company from the Bin",
+    description: "Restores a company from the Bin (the book's owner, or whoever binned it while they can still edit the book). Restore its contact book first if that is in the Bin too.",
+    scopes: ["crm:write"], alsoRequires: ["bin:write"], access: { mode: "items", items: [{ arg: "companyId", kind: "company" }] }, write: true,
+    inputSchema: z.object({ companyId: z.string().uuid() }).strict(),
+    // D1385: the restore every bin_* tool's description promises, through the module's Bin provider.
+    handler: async ({ companyId }, key) => restoreResult(await restoreItem("company", companyId.toLowerCase(), key.userId), "Company")
+  }),
+  defineTool({
+    name: "restore_deal", title: "Restore a deal from the Bin",
+    description: "Restores a deal from the Bin (the book's owner, or whoever binned it while they can still edit the book). Restore its contact book first if that is in the Bin too.",
+    scopes: ["crm:write"], alsoRequires: ["bin:write"], access: { mode: "items", items: [{ arg: "dealId", kind: "deal" }] }, write: true,
+    inputSchema: z.object({ dealId: z.string().uuid() }).strict(),
+    // D1385: the restore every bin_* tool's description promises, through the module's Bin provider.
+    handler: async ({ dealId }, key) => restoreResult(await restoreItem("deal", dealId.toLowerCase(), key.userId), "Deal")
   }),
   defineTool({
     name: "pipeline_summary", title: "Pipeline summary", description: "A book's pipeline by stage: deal count, total value, and weighted value (value × probability), in minor units of the pipeline's currency; plus open totals.",

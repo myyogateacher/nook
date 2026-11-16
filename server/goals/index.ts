@@ -78,7 +78,8 @@ registerWorkspaceModule({
     provider: {
       list: (userId) => goalsInBin(userId).map((row): BinItem => ({ type: "goal" as never, id: row.id, title: row.title, folder_id: null, folder_name: "Goals", deleted_at: row.deleted_at, purge_after: row.purge_after, purging: row.purge_started_at !== null, ...providedDefaults, href: goalHref(row) }) as BinItem),
       restore: async (id, userId) => {
-        const outcome = restoreGoal(id, userId);
+        // D1385: restoreGoal takes the person first; the arguments were swapped, so every goal restore was NOT_FOUND.
+        const outcome = restoreGoal(userId, id);
         if (outcome === "not_found") return { status: "not_found" };
         if (outcome === "purging") return { status: "purging" };
         if (outcome === "already") return { status: "already_restored", folderId: null, folderName: "Goals" };

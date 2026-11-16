@@ -26,6 +26,9 @@
 .palette-option.active .palette-option-context { color: #b8a774; }
 .palette-option-hint { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #77777e; font-size: .76rem; }
 .palette-empty { margin: 14px 12px; color: #8f8f96; font-size: .88rem; }
+/* D1340: "Searching your apps…", the rate limit, or an outage, under the list (never an option). */
+.palette-status { flex: none; margin: 0; border-top: 1px solid #26262b; padding: 7px 14px; color: #9d9da4; font-size: .76rem; }
+.palette-status.empty { display: none; }
 .palette-foot { flex: none; display: flex; align-items: center; gap: 5px; margin: 0; border-top: 1px solid #26262b; padding: 8px 14px; color: #77777e; font-size: .74rem; }
 .palette-foot kbd + kbd { margin-left: -2px; }
 .palette-foot kbd:not(:first-child) { margin-left: 8px; }

@@ -127,12 +127,22 @@ export function LinkedItemsPanel({ item, canEdit, onOpen, relations = ["relates"
 
 type Candidate = WorkSummary;
 
-/** A search result of the All scope that names an item (module scopes; built-in scopes that carry the same fields). */
-function candidateOf(result: unknown): Candidate | null {
+/**
+ * A search result of the All scope that names an item: a module scope's result, or a built-in hit by
+ * its `ref` (notes, cards, events, files, whiteboards, collections and rows, reports; D1342). Chats
+ * are not a work kind and are left out. The subtitle is the hit's own context (a board, a calendar).
+ */
+export function candidateOf(result: unknown): Candidate | null {
   if (!result || typeof result !== "object") return null;
   const value = result as Record<string, unknown>;
-  if (!isWorkKind(value.kind) || typeof value.id !== "string" || typeof value.title !== "string" || typeof value.href !== "string") return null;
-  return { kind: value.kind, id: value.id, title: value.title, href: value.href, icon: typeof value.icon === "string" ? value.icon : "", ...(typeof value.snippet === "string" ? { subtitle: value.snippet } : {}) };
+  const ref = value.ref && typeof value.ref === "object" ? value.ref as Record<string, unknown> : null;
+  const named = ref ?? value;
+  if (!isWorkKind(named.kind) || typeof named.id !== "string" || typeof named.title !== "string" || typeof named.href !== "string") return null;
+  const subtitle = typeof value.snippet === "string" ? value.snippet
+    : typeof value.board_name === "string" ? value.board_name
+      : typeof value.calendarName === "string" ? value.calendarName
+        : typeof value.collectionName === "string" ? value.collectionName : undefined;
+  return { kind: named.kind, id: named.id, title: named.title, href: named.href, icon: typeof value.icon === "string" ? value.icon : "", ...(subtitle ? { subtitle } : {}), ...(typeof value.key === "string" ? { key: value.key } : {}) };
 }
 
 /**

@@ -12,8 +12,8 @@ import type { NavItem, NavRecent, NavTree } from "./navModel";
  * rank first.
  */
 
-export type PaletteGroupId = "apps" | "recent" | "actions" | "commands" | "search";
-export const PALETTE_GROUP_LABELS: Record<PaletteGroupId, string> = { apps: "Apps", recent: "Recent", actions: "Quick actions", commands: "Commands", search: "Search" };
+export type PaletteGroupId = "apps" | "recent" | "actions" | "commands" | "search" | "results";
+export const PALETTE_GROUP_LABELS: Record<PaletteGroupId, string> = { apps: "Apps", recent: "Recent", actions: "Quick actions", commands: "Commands", search: "Search", results: "Results" };
 const GROUP_ORDER: readonly PaletteGroupId[] = ["apps", "recent", "actions", "commands", "search"];
 /** The order before anything is typed (D1293, review): Recent, Quick actions, Apps, Commands. */
 const BROWSE_ORDER: readonly PaletteGroupId[] = ["recent", "actions", "apps", "commands"];
@@ -136,7 +136,18 @@ export function paletteScore(entry: Pick<PaletteEntry, "label" | "context" | "ke
   return total;
 }
 
-export type PaletteGroup = { id: PaletteGroupId; label: string; entries: PaletteEntry[] };
+/** `key`: unique among the groups shown (search results have one group per app, all `results`). */
+export type PaletteGroup = { id: PaletteGroupId; key?: string; label: string; entries: PaletteEntry[] };
+
+/**
+ * The palette with the server's search results (D1340): the local groups as filterPalette ordered
+ * them, then one group per app with results, then Search ("Search notes for …") last, so a query
+ * that names an app or a recent item still opens it with Enter and the fallback stays at the end.
+ */
+export function withResults(groups: readonly PaletteGroup[], results: readonly PaletteGroup[]): PaletteGroup[] {
+  if (!results.length) return [...groups];
+  return [...groups.filter((group) => group.id !== "search"), ...results, ...groups.filter((group) => group.id === "search")];
+}
 
 export const PALETTE_LIMIT = 60;
 

@@ -2,6 +2,7 @@ import { api } from "../api";
 import type { ItemActivityEntry, ItemComment } from "../../shared/itemActivity";
 import type { PeopleAllow, PersonSummary } from "../../shared/people";
 import type { LinkRelation, WorkKind, WorkLinkView, WorkRef, WorkSummary } from "../../shared/workRefs";
+import type { AllSearchResponse } from "../../shared/workspaceSearch";
 
 /**
  * The foundation endpoints the shared components call (docs/plan/WORKSPACE_MODULES.md §D.0 HTTP,
@@ -32,7 +33,10 @@ export const resolveRef = (ref: string, signal?: AbortSignal) => api<{ summary: 
 /** Searching work for the link picker: the All search scope, one query (§B.12). */
 export const searchWork = (q: string, signal?: AbortSignal) => api<{ sections: Array<{ scope: string; label: string; results: unknown[] }> }>(`/search?${new URLSearchParams({ scope: "all", q: q.slice(0, 200) })}`, { signal });
 
-const itemPath = (kind: WorkKind, id: string) => `/items/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`;
+/** The ⌘K palette's search across apps (D1340): the All scope's sections. One stable function (the palette's effect depends on it). */
+export const searchAllSections = (q: string, signal: AbortSignal) => api<AllSearchResponse>(`/search?${new URLSearchParams({ scope: "all", q: q.slice(0, 200) })}`, { signal }).then((body) => body.sections);
+
+const itemPath =(kind: WorkKind, id: string) => `/items/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`;
 export const itemActivity = (kind: WorkKind, id: string, options: { order?: "asc" | "desc"; cursor?: string | null } = {}) => {
   const query = new URLSearchParams({ order: options.order ?? "desc" });
   if (options.cursor) query.set("cursor", options.cursor);

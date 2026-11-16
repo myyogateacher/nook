@@ -43,6 +43,15 @@ describe("month grid days", () => {
   });
 });
 
+describe("loading the preference", () => {
+  test("the units store reads the endpoint's own shape (it used to read a `preferences` key that is never sent)", async () => {
+    const { unitsFromBody } = await import("../src/ui/units");
+    expect(unitsFromBody({ weekStart: 0, durationFormat: "colon", bareDuration: "hours", revision: 3 })).toEqual({ weekStart: 0, durationFormat: "colon", bareDuration: "hours" });
+    expect(unitsFromBody({ revision: 0 })).toEqual({ weekStart: 1, durationFormat: "hm", bareDuration: "minutes" });
+    expect(unitsFromBody({ preferences: { weekStart: 6 } })).toEqual({ weekStart: 6, durationFormat: "hm", bareDuration: "minutes" });
+  });
+});
+
 describe("booking slot pickers in the app", () => {
   test("Book time and Reschedule pass the viewer's week start", () => {
     for (const file of ["bookings/BookTimeSheet.tsx", "bookings/BookingDetail.tsx"]) {

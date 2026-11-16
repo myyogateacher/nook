@@ -1,6 +1,6 @@
 import { Component, type ReactNode } from "react";
 import { useDisabledModules } from "../modules";
-import { boardHeaderItemsFor, cardFaceBadges, cardHeaderActions, cardSections, timelineDecorations, type CardSlotCard, type CardSlotProps } from "./cardSlots";
+import { boardHeaderItemsFor, cardFaceBadges, cardHeaderActions, cardSections, registeredCardFaceBadges, timelineDecorations, type CardSlotCard, type CardSlotProps } from "./cardSlots";
 
 /**
  * Where the card dialog, the card face, and the Timeline render the slots other modules registered
@@ -32,6 +32,17 @@ export function CardHeaderActionsOutlet(props: CardSlotProps) {
 
 /** Whether any face badge applies (the face shows its footer line for them). */
 export const useCardFaceBadges = () => cardFaceBadges(useDisabledModules());
+
+/**
+ * Whether a face badge has something for this card (D1386): each badge's `useShows` hook runs for
+ * every registered badge (a list fixed at startup, so the hooks keep their order), then the modules
+ * that are off drop out.
+ */
+export function useCardFaceBadgesShown(card: CardSlotCard) {
+  const disabled = useDisabledModules();
+  const shows = new Map(registeredCardFaceBadges().map((badge) => [badge.id, badge.useShows ? badge.useShows(card) : true]));
+  return cardFaceBadges(disabled).some((badge) => shows.get(badge.id));
+}
 
 /** The card face's module badges, after the built-in counts. */
 export function CardFaceBadgesOutlet({ card }: { card: CardSlotCard }) {

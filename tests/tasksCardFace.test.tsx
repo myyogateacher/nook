@@ -146,6 +146,18 @@ test("a bare card shows only its title; a description without an excerpt keeps t
   expect(legacy).not.toContain("task-avatar");
 });
 
+test("D1386: a module badge draws the footer line only for cards it has something for", async () => {
+  const { registerCardFaceBadge, registeredCardFaceBadges } = await import("../src/ui/cardSlots");
+  registerCardFaceBadge({ id: "test.face-badge", order: 99, component: ({ card }) => card.id === "k2" ? <span className="test-badge">◎</span> : null, useShows: (card) => card.id === "k2" });
+  try {
+    expect(renderToStaticMarkup(<CardFace card={base} tags={tags} done={false} today={today} excerptId="ex" />)).not.toContain("task-card-meta");
+    expect(renderToStaticMarkup(<CardFace card={{ ...base, id: "k2" }} tags={tags} done={false} today={today} excerptId="ex" />)).toContain('<span class="task-card-meta"><span class="task-card-meta-main"><span class="test-badge">');
+  } finally {
+    const list = registeredCardFaceBadges() as unknown as Array<{ id: string }>;
+    list.splice(list.findIndex((badge) => badge.id === "test.face-badge"), 1);
+  }
+});
+
 test("lane cards are named groups described by their excerpt, with the Move button outside the hidden face", () => {
   const markup = renderToStaticMarkup(<BoardColumnView column={column} cards={[{ ...full, due_on: "2999-01-01" }, { ...base, id: "k2", title: "Plain" }]} tags={tags} owner={false} isFirst isLast draggingId={null} dropIndex={null}
     onDragStart={noop} onDragEnd={noop} onDragOverIndex={noop} onDropAt={noop} onKeyMove={noop} onCardMenu={noop} onOpenCard={noop} onColumnMenu={noop} onMoveColumn={noop} onAddCard={async () => undefined} />);

@@ -76,9 +76,18 @@ export function cardGoalTitle(goals: readonly CardGoal[]) {
   return goals.length === 1 ? `Contributes to ${named[0]}` : `Contributes to ${goals.length} goals: ${named.join(", ")}`;
 }
 
+/** A card's goals as the badge sees them (empty until the batched read answers). */
+export function useCardGoals(cardId: string) {
+  const [goals, setGoals] = useState<CardGoal[]>(() => known.get(cardId) ?? []);
+  useEffect(() => watchCardGoals(cardId, setGoals), [cardId]);
+  return goals;
+}
+
+/** The card face asks this before it draws a footer line for the badge (D1386). */
+export const useCardHasGoals = (card: CardSlotCard) => useCardGoals(card.id).length > 0;
+
 export function CardGoalBadge({ card }: { card: CardSlotCard }) {
-  const [goals, setGoals] = useState<CardGoal[]>(() => known.get(card.id) ?? []);
-  useEffect(() => watchCardGoals(card.id, setGoals), [card.id]);
+  const goals = useCardGoals(card.id);
   if (!goals.length) return null;
   const one = goals.length === 1 ? goals[0]! : null;
   return <span className={`task-card-count goals-card-badge${one ? ` health-${one.health}` : ""}`} title={cardGoalTitle(goals)}>

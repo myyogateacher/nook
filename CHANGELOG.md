@@ -10,7 +10,7 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 - Restoring a goal from the Bin works again (it always said the goal was no longer in the Bin).
 - **Settings → AI → Usage** (admins): runs and tokens per day, by person or by agent, for the last 7 to 90 days, with a chart and a table of totals. Counts only: no chat is read there.
 - **Public townhall links** is a workspace setting of its own (Settings → Workspace). Before, "Public forms and polls" also closed townhall audience links. Upgrading keeps each workspace as it was.
-- **Week starts on** now applies to Calendar's month view, the month grid of a board's calendar, the booking pickers in the app, and the board timeline's weeks.
+- **Week starts on** now applies to Calendar's month view, the month grid of a board's calendar, the booking pickers in the app, and the board timeline's weeks. Your units (week start and how durations show) are also read when the app opens; before, they took effect only after you changed them in Settings → Workspace.
 - Admins can **reset a member's booking link name** from the member's page in Settings → Team (it was only in the API).
 - MCP: `restore_form`, `restore_goal`, `restore_contact`, `restore_company`, `restore_deal`, and `bin_` / `restore_` tools for time projects and townhall sessions (each with `bin:write`).
 - A card shows the goal it contributes to, with the goal's progress, on its face. Each key result shows a small line of its progress over time.

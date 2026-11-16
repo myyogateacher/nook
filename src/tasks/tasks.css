@@ -92,9 +92,6 @@ svg.task-column-status.done { color: #6fbf85; }
 .task-card-meta { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-right: -30px; color: #85858c; font-size: .72rem; }
 .task-card-meta-main { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 5px; }
 .task-card-meta-main > span { flex: none; min-height: 24px; display: inline-flex; align-items: center; gap: 3px; }
-/* D1386: a module badge that has nothing for this card leaves the footer line out, as before any badge was registered. */
-.task-card-meta-main:empty { display: none; }
-.task-card-meta:has(> .task-card-meta-main:empty:only-child) { display: none; }
 .task-card-meta svg { width: 13px; height: 13px; }
 .task-card-more { position: absolute; top: 5px; right: 4px; width: 30px; height: 30px; opacity: .55; }
 .task-card:hover .task-card-more, .task-card:focus-within .task-card-more { opacity: 1; }

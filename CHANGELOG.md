@@ -36,6 +36,12 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 - Drag apps in the sidebar to put them in the order you like, or drop them in **Pinned** to keep them at the top. **Customize sidebar** (the ⋯ beside Apps, or your account menu) does the same with buttons and lets you hide apps, which is the same as turning them off in Settings → Modules. Home's app tiles on a phone follow your order.
 - Your sidebar now follows you: the order, pinned apps, the narrow strip or wide sidebar, and the apps you opened are saved with your account and show up on your other devices after you sign in.
 
+**Rename folders, and Chat in the sidebar**
+
+- Notes and Files folders can be renamed: choose **Rename** in the folder's ⋯ menu in the sidebar (or press F2 on it), type the new name, and press Enter or click away; Esc keeps the old name. On a phone the ⋯ is on each folder in the Folders tab and in the ☰ menu. You can rename your own folders, but not Default or Attachments, and not a folder someone shared with you, even one you can edit.
+- Agents with a key that can write drafts or files can rename your folders too, with the new `rename_folder` tool.
+- Chat lists **New chat** in the sidebar, and **Audit** for the people who can open Chat's Audit log. Both are in ⌘K as well.
+
 **Fixes: final QA of the modules**
 
 - **Open** on a goal, form, or townhall card in a note, and **Open in Bookings** after booking a colleague, open the page in the app again (they did nothing). Leaving a note saves it first; a module that is off shows its hint on Home.

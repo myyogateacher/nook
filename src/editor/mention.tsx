@@ -1,5 +1,6 @@
 import { Extension, Node } from "@tiptap/core";
 import { PluginKey } from "@tiptap/pm/state";
+import { MarkdownManager } from "@tiptap/markdown";
 import Suggestion, { exitSuggestion, type SuggestionKeyDownProps, type SuggestionProps } from "@tiptap/suggestion";
 import { NodeViewWrapper, ReactNodeViewRenderer, ReactRenderer, type NodeViewProps } from "@tiptap/react";
 import { useState } from "react";
@@ -17,6 +18,100 @@ import { mentionMarkdown, type MentionCandidate } from "../../shared/itemActivit
  * published note) draw chips too. The picker (`MentionSuggestion`) is added only by hosts that name the
  * item the text belongs to (`NoteEditor`'s `mentionTarget`): it lists the people who can read it.
  */
+
+/**
+ * Marks around a mention (D1337). @tiptap/markdown marks only text nodes when it parses `**…**`, and
+ * closes every open mark before a non-text node when it serializes, so `**@Ana**` lost its bold on
+ * save. Both directions therefore go through placeholders: a private-use character pair holding an
+ * index, which the lexer and the serializer treat as plain text (never escaped, never syntax).
+ *
+ * - Parse: each mention in the Markdown becomes a placeholder; after parsing, a text node holding one
+ *   is split into text and `mention` nodes that keep the text's marks. Inside code (a code mark or a
+ *   code block) the placeholder goes back to the literal Markdown.
+ * - Serialize: each `mention` node becomes a placeholder text node with the mention's own marks, so
+ *   bold, italic, strike, and links wrap it like any text; then the placeholder becomes the Markdown.
+ */
+type JsonNode = { type?: string; text?: string; attrs?: Record<string, unknown>; marks?: Array<{ type?: string } | string>; content?: JsonNode[] };
+const OPEN = "";
+const CLOSE = "";
+const PLACEHOLDER = /(\d+)/g;
+const MENTION_ANYWHERE = /@\[([^\]\n]{1,120})\]\(user:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)/g;
+const CODE = new Set(["code", "codeBlock"]);
+const isCodeMark = (mark: { type?: string } | string) => CODE.has(typeof mark === "string" ? mark : mark.type ?? "");
+
+export function protectMentions<T>(doc: T): { doc: T; mentions: string[] } {
+  const mentions: string[] = [];
+  const walk = (node: JsonNode): JsonNode => {
+    if (node.type === "mention") {
+      const id = node.attrs?.id;
+      if (!isUuid(id)) return { type: "text", text: "" };
+      mentions.push(mentionMarkdown(String(node.attrs?.label ?? ""), id.toLowerCase()));
+      return { type: "text", text: `${OPEN}${mentions.length - 1}${CLOSE}`, ...(node.marks?.length ? { marks: node.marks } : {}) };
+    }
+    return node.content ? { ...node, content: node.content.map(walk).filter((child) => child.type !== "text" || child.text !== "") } : node;
+  };
+  if (Array.isArray(doc)) return { doc: (doc as JsonNode[]).map(walk) as T, mentions };
+  return { doc: (doc && typeof doc === "object" ? walk(doc as JsonNode) : doc) as T, mentions };
+}
+
+export const restoreMentions = (markdown: string, mentions: readonly string[]) =>
+  mentions.length ? markdown.replace(PLACEHOLDER, (_whole, index: string) => mentions[Number(index)] ?? "") : markdown;
+
+/** The Markdown with each mention as a placeholder, and the mentions found (parse side). */
+export function hideMentions(markdown: string) {
+  const found: Array<{ raw: string; id: string; label: string }> = [];
+  const text = markdown.replace(MENTION_ANYWHERE, (raw, label: string, id: string) => {
+    found.push({ raw, id: id.toLowerCase(), label });
+    return `${OPEN}${found.length - 1}${CLOSE}`;
+  });
+  return { text, found };
+}
+
+/** Turns placeholders in parsed JSON back into mention nodes (with the text's marks), or literal text inside code. */
+export function revealMentions<T>(doc: T, found: ReadonlyArray<{ raw: string; id: string; label: string }>): T {
+  if (!found.length) return doc;
+  const walk = (node: JsonNode, inCode: boolean): JsonNode[] => {
+    if (node.type === "text" && node.text?.includes(OPEN)) {
+      if (inCode || node.marks?.some(isCodeMark)) return [{ ...node, text: node.text.replace(PLACEHOLDER, (_whole, index: string) => found[Number(index)]?.raw ?? "") }];
+      const parts: JsonNode[] = [];
+      let last = 0;
+      for (const match of node.text.matchAll(PLACEHOLDER)) {
+        const index = match.index ?? 0;
+        if (index > last) parts.push({ ...node, text: node.text.slice(last, index) });
+        const mention = found[Number(match[1])];
+        if (mention) parts.push({ type: "mention", attrs: { id: mention.id, label: mention.label }, ...(node.marks?.length ? { marks: node.marks } : {}) });
+        last = index + match[0].length;
+      }
+      if (last < node.text.length) parts.push({ ...node, text: node.text.slice(last) });
+      return parts;
+    }
+    // Attributes (a link's href, a code block's text) keep the literal Markdown.
+    const attrs = node.attrs && JSON.stringify(node.attrs).includes(OPEN)
+      ? JSON.parse(JSON.stringify(node.attrs).replace(PLACEHOLDER, (_whole, index: string) => JSON.stringify(found[Number(index)]?.raw ?? "").slice(1, -1))) as Record<string, unknown>
+      : node.attrs;
+    const code = inCode || CODE.has(node.type ?? "");
+    return [{ ...node, ...(attrs ? { attrs } : {}), ...(node.content ? { content: node.content.flatMap((child) => walk(child, code)) } : {}) }];
+  };
+  if (Array.isArray(doc)) return (doc as JsonNode[]).flatMap((node) => walk(node, false)) as T;
+  return (doc && typeof doc === "object" ? walk(doc as JsonNode, false)[0] : doc) as T;
+}
+
+const patched = Symbol.for("nook.mentionMarkdown");
+const proto = MarkdownManager.prototype as unknown as { serialize: (doc: unknown) => string; parse: (markdown: string) => unknown; [patched]?: true };
+if (!proto[patched]) {
+  const serialize = proto.serialize;
+  const parse = proto.parse;
+  proto.serialize = function (this: unknown, doc: unknown) {
+    const { doc: safe, mentions } = protectMentions(doc);
+    return restoreMentions(serialize.call(this, safe), mentions);
+  };
+  proto.parse = function (this: unknown, markdown: string) {
+    if (typeof markdown !== "string" || !markdown.includes("@[")) return parse.call(this, markdown);
+    const { text, found } = hideMentions(markdown);
+    return revealMentions(parse.call(this, text), found);
+  };
+  proto[patched] = true;
+}
 
 const tokenPattern = /^@\[([^\]\n]{1,120})\]\(user:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)/;
 const isUuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -98,6 +193,8 @@ export const MentionSuggestion = Extension.create<{ target: MentionTarget | null
         char: "@",
         allowSpaces: true,
         allowedPrefixes: [" ", "("],
+        // A read-only view (or a note locked for editing) offers no picker.
+        allow: ({ editor }) => editor.isEditable,
         debounce: 120,
         items: async ({ query }) => {
           try { return await mentionablePeople(target, query.trim()); } catch { return []; }

@@ -296,7 +296,7 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
       ...(whiteboards ? [WhiteboardEmbedPicker.configure({ onOpenPicker: (activeEditor: Editor) => setBoardPicker(activeEditor) })] : []),
       SlashCommands,
       // The editor is created once: the target it starts with is the one it keeps.
-      MentionSuggestion.configure({ target: editable ? mentionTarget : null, noun: mentionNoun })
+      MentionSuggestion.configure({ target: mentionTarget, noun: mentionNoun })
     ],
     content: markdown,
     contentType: "markdown",

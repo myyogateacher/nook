@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
 import { MAX_ASSIGNEES } from "./assignees";
+import { csvFileName, csvResponse } from "../csvExport";
+import { boardCsv } from "./export";
 import { isDueTime, isDueTimeZone } from "./dueTime";
 import { attachToCard, detachFromCard, listAttachments } from "./attachments";
 import { archivedCardsPage, boardPayload, listRelations, MAX_RELATIONS_PER_CARD } from "./cardRelations";
@@ -325,6 +327,18 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
 
   // A board's columns alone, in board order, for anyone who can read it (Move to another board lists
   // a target board's columns without loading its cards).
+  // D1387: a board's cards as CSV, for any reader (archived ones too with ?archived=1).
+  app.get("/api/tasks/boards/:boardId/export.csv", (c) => {
+    const boardId = id(c, "boardId");
+    try {
+      const file = boardCsv(c.get("user").id, boardId, { archived: c.req.query("archived") === "1" });
+      return csvResponse(file.text, csvFileName(file.name, "board"));
+    } catch (error) {
+      if (error instanceof TaskError) return c.json(error.body(), error.status);
+      throw error;
+    }
+  });
+
   app.get("/api/tasks/boards/:boardId/columns", (c) => {
     const boardId = id(c, "boardId");
     return respond(c, () => {

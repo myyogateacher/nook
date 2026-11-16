@@ -16,6 +16,8 @@ import { addFeed, FeedError, listFeeds, refreshFeed, removeFeed } from "./feeds"
 import { bookingsInsights } from "./insights";
 import { bookableByHost, bookingForm, MAX_BOOKABLE_HOSTS, requireTypeForBooking } from "./bookable";
 import { workKindAdapter } from "../links/adapters";
+import { csvResponse } from "../csvExport";
+import { bookingsCsv } from "./export";
 
 /**
  * The app's Bookings routes (§D.6 HTTP), behind every session, CSRF, two-factor, and role-write
@@ -267,6 +269,12 @@ export function registerBookingRoutes(router: ModuleRouter) {
   router.get("/api/bookings", handle((c, userId) => {
     const query = c.req.query();
     return c.json(listBookings(userId, { ...query, view: query.view as ListFilter["view"], limit: query.limit ? Number(query.limit) : undefined }));
+  }));
+  // D1387: the bookings list as CSV, with the list's filters.
+  router.get("/api/bookings/export.csv", handle((c, userId) => {
+    const query = c.req.query();
+    const view = ["upcoming", "past", "cancelled", "pending"].includes(query.view ?? "") ? query.view as ListFilter["view"] : undefined;
+    return csvResponse(bookingsCsv(userId, { view, status: query.status, from: query.from, to: query.to, type: query.type }), `bookings-${view ?? "all"}.csv`);
   }));
   router.get("/api/bookings/insights", handle((c, userId) => c.json(bookingsInsights(userId, { days: Number(c.req.query("days") ?? 90), tz: c.req.query("tz") ?? "UTC" }))));
   router.post("/api/bookings", handle(async (c, userId) => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { recordRecent } from "../shell/recents";
-import { ArrowLeft, ArrowRight, ChevronLeft, ChevronsLeftRight, ChevronsRightLeft, CircleCheck, Gauge, Pencil, Plus, RotateCcw, Rows3, Settings2, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronLeft, ChevronsLeftRight, ChevronsRightLeft, CircleCheck, Download, Gauge, Pencil, Plus, RotateCcw, Rows3, Settings2, Trash2, TriangleAlert } from "lucide-react";
 import { BoardSettingsSheet } from "./BoardSettingsSheet";
 import { BoardHeaderItemsOutlet } from "../ui/CardSlotOutlets";
 import { keyedSendQueue } from "./keyedSendQueue";
@@ -940,6 +940,8 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       {detail && !phone && swimSelect}
       {detail && !phone && savedViewPicker}
       {board && <span className="task-board-actions">
+        {/* D1387: the board's cards as CSV (archived ones too while they are shown). */}
+        <a className="icon-button" href={`/api/tasks/boards/${encodeURIComponent(board.id)}/export.csv${showArchived ? "?archived=1" : ""}`} download aria-label="Export cards (CSV)" title="Export cards (CSV)"><Download /></a>
         <button className="icon-button" onClick={(event) => openDialog({ kind: "settings" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Board settings" title="Board settings"><Settings2 /></button>
       </span>}
     </header>

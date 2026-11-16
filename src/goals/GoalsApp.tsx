@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { CalendarRange, ChevronRight, Eye, EyeOff, Plus, Target } from "lucide-react";
+import { CalendarRange, ChevronRight, Download, Eye, EyeOff, Plus, Target } from "lucide-react";
 import { ModuleHome } from "../ui/ModuleHome";
 import { EmptyState } from "../ui/EmptyState";
 import { GoalHealthChip, ProgressBar } from "../ui/progress/Progress";
@@ -7,7 +7,7 @@ import { Select } from "../ui/Select";
 import { useModuleShortcuts } from "../ui/moduleKeys";
 import { errorText } from "../ui/notify";
 import { relativeTime } from "../files/format";
-import { listGoals, listPeriods, type GoalDetail, type GoalSummary, type Period } from "./goalsApi";
+import { goalsExportUrl, listGoals, listPeriods, type GoalDetail, type GoalSummary, type Period } from "./goalsApi";
 import { GoalEditor, PeriodsSheet } from "./sheets";
 import { HEALTH_TONE } from "../ui/tone";
 import type { WorkspaceAppProps } from "../workspaceModules/types";
@@ -99,7 +99,9 @@ function GoalsHome({ route, navigate, onOpenPath, userId, displayName, role, fla
 
   return <ModuleHome icon={Target} title="Goals" displayName={displayName} onHome={onHome} onSettings={onSettings} onSignOut={onSignOut}
     primary={canWrite ? { label: "New goal", icon: Plus, onClick: () => setCreating({}) } : undefined}
-    menu={[{ id: "periods", label: "Periods…", icon: CalendarRange, onSelect: () => setPeriodsOpen(true) }]}
+    menu={[{ id: "periods", label: "Periods…", icon: CalendarRange, onSelect: () => setPeriodsOpen(true) },
+      // D1387: the goals this list shows (its period, health, Closed, search, and Mine), as CSV.
+      { id: "export", label: "Export goals (CSV)", icon: Download, onSelect: () => { window.location.href = goalsExportUrl({ period: period === "all" ? null : period, health: health || null, closed: showClosed, q: query, mine: view === "mine" }); } }]}
     sections={{ module: "goals", role, active: view, onSelect: setView }} filters={filters}
     search={view === "insights" ? undefined : { value: query, onChange: setQuery, placeholder: "Search goals", label: "Search goals" }}>
     {error && <p className="ui-field-error" role="alert">{error} <button type="button" className="ui-text-button" onClick={() => setReload((value) => value + 1)}>Retry</button></p>}

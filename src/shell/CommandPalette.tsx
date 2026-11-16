@@ -79,7 +79,7 @@ export function CommandPalette({ entries, searchNotes, search, onRun, onClose, i
         {searching ? <Loader2 className="spin" aria-hidden="true" /> : <Search aria-hidden="true" />}
         <input ref={inputRef} type="text" role="combobox" aria-expanded="true" aria-controls={listId} aria-autocomplete="list"
           aria-activedescendant={current >= 0 ? optionId(current) : undefined} aria-label={search ? "Go to an app or action, or search your work" : "Go to an app, section, or action"}
-          placeholder={search ? "Search apps, actions, and your work…" : "Search apps, sections, and actions…"} value={query} maxLength={200} spellCheck={false} autoComplete="off"
+          placeholder={search ? "Search apps and your work…" : "Search apps, sections, and actions…"} value={query} maxLength={200} spellCheck={false} autoComplete="off"
           onChange={(event) => setQuery(event.target.value)} />
         {/* Escape closes on a keyboard; a phone gets Cancel to tap (the box keeps focus: no tab stop). */}
         <button type="button" className="palette-close" tabIndex={-1} aria-label="Close" onClick={onClose}>

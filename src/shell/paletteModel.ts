@@ -152,7 +152,10 @@ export type PaletteGroup = { id: PaletteGroupId; key?: string; label: string; en
  */
 export function withResults(groups: readonly PaletteGroup[], results: readonly PaletteGroup[]): PaletteGroup[] {
   if (!results.length) return [...groups];
-  return [...groups.filter((group) => group.id !== "search"), ...results, ...groups.filter((group) => group.id === "search")];
+  // An item already listed (a recent one) is not listed again under its app.
+  const listed = new Set(groups.flatMap((group) => group.entries.flatMap((entry) => entry.action.kind === "path" ? [entry.action.href] : [])));
+  const fresh = results.map((group) => ({ ...group, entries: group.entries.filter((entry) => entry.action.kind !== "path" || !listed.has(entry.action.href)) })).filter((group) => group.entries.length > 0);
+  return [...groups.filter((group) => group.id !== "search"), ...fresh, ...groups.filter((group) => group.id === "search")];
 }
 
 export const PALETTE_LIMIT = 60;

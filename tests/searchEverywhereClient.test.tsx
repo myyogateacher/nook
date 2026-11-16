@@ -3,7 +3,7 @@ import "../src/workspaceModules";
 import { installDom, mockApi, reply, render } from "./support/dom";
 import { buildNavTree } from "../src/shell/navModel";
 import { CommandPalette } from "../src/shell/CommandPalette";
-import { filterPalette, flatPalette, paletteEntries, type PaletteEntry } from "../src/shell/paletteModel";
+import { filterPalette, flatPalette, paletteEntries, withResults, type PaletteEntry } from "../src/shell/paletteModel";
 import { appOfKind, clearRecentItems, itemOfPath, RECENT_ITEMS_LIMIT, recordRecentPath, resolveRecentItems } from "../src/shell/recentItems";
 import { FileText, Target } from "lucide-react";
 import { paletteResultRenderers, resultGroups, shownApps } from "../src/shell/paletteSearch";
@@ -187,4 +187,11 @@ test("the palette's Recent leads with opened items of every kind, then boards an
   });
   const recent = flatPalette(filterPalette(entries, "", true)).filter((entry) => entry.group === "recent");
   expect(recent.map((entry) => [entry.label, entry.hint])).toEqual([["Grow MRR", "Goals"], ["Release notes", "Notes"], ["Roadmap", "Tasks"], ["Other note", "Notes"]]);
+  // A search result already listed under Recent is not listed again under its app.
+  const results = [{ id: "results" as const, key: "results:goals", label: "Goals", entries: [
+    { id: "result:goals:goal:g", group: "results" as const, label: "Grow MRR", icon: Target, browse: false, action: { kind: "path" as const, href: "/goals/grow-mrr-3f9x2ab01k" } },
+    { id: "result:goals:goal:h", group: "results" as const, label: "Grow ARR", icon: Target, browse: false, action: { kind: "path" as const, href: "/goals/grow-arr-4f9x2ab01k" } }
+  ] }];
+  const merged = withResults(filterPalette(entries, "grow", true), results);
+  expect(merged.flatMap((group) => group.entries.map((entry) => `${group.label}:${entry.label}`))).toEqual(["Recent:Grow MRR", "Goals:Grow ARR", "Search:Search notes for “grow”"]);
 });

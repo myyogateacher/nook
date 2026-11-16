@@ -12,6 +12,7 @@ import { townhallMigrations } from "./townhall";
 import { timeBudgetAlertsMigration } from "../120_time_budget_alerts";
 import { sidebarPreferencesMigration } from "../122_sidebar_preferences";
 import { cardPriorityMigration } from "../123_card_priority";
+import { moduleShareLogMigration } from "../155_module_share_log";
 
 /**
  * The workspace modules' migrations (docs/plan/WORKSPACE_MODULES.md §0, §B.1), concatenated in id-block
@@ -36,5 +37,7 @@ export const workspaceMigrations: Migration[] = [
   // 122 (left navigation phase 4, D1295: user_preferences.sidebar) needs only 016; last so the ids ascend.
   sidebarPreferencesMigration,
   // 123 (card priority, D1310–D1311: cards.priority, the Urgent flag becomes the Urgent priority) needs only 015.
-  cardPriorityMigration
+  cardPriorityMigration,
+  // 155 (module sharing in the digest, D1366: mail_share_log takes the containers) needs only 028.
+  moduleShareLogMigration
 ];

@@ -12,7 +12,7 @@ export type MailCategory = typeof MAIL_CATEGORIES[number];
 
 export const CATEGORY_LABELS: Record<MailCategory, string> = {
   assignments: "Assigned to you",
-  comments: "Comments on your cards",
+  comments: "Comments on your cards and items",
   sharing: "Shared with you",
   proposals: "Proposals awaiting you",
   sprints: "Sprints",

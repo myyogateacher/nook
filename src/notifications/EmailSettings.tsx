@@ -18,7 +18,7 @@ import { FormError } from "../ui/FormError";
 
 const CATEGORY_ROWS: Array<{ id: EmailCategory; title: string; help: string }> = [
   { id: "assignments", title: "Assigned to you", help: "Someone assigns you a card. Grouped every 10 minutes." },
-  { id: "comments", title: "Comments on your cards", help: "New comments on cards you created or are assigned to." },
+  { id: "comments", title: "Comments on your cards and items", help: "New comments on cards you created or are assigned to, and on goals, deals, bookings, and other items you own, are assigned to, or contribute to; replies to your comments. Grouped every 10 minutes." },
   { id: "mentions", title: "Mentions of you", help: "Someone @mentioned you in a comment, a description, a note, or an answer you can open. Grouped every 10 minutes." },
   { id: "sharing", title: "Shared with you", help: "Notes, files, boards, calendars, and collections shared with you by name." },
   { id: "proposals", title: "Proposals awaiting you", help: "Your MCP keys suggested changes. At most one email every few hours." },
@@ -50,7 +50,7 @@ export function digestTimeOptions(current: string, quietStart: string | null, qu
 
 /** "Overdue and due-soon cards…" plus when the next one goes. */
 export function digestNote(prefs: Pick<Settings["prefs"], "digest" | "nextDigestAt" | "tz">) {
-  const what = "Your overdue and due-soon cards, upcoming events, proposals awaiting you, and new shares. Never sent when there is nothing to say.";
+  const what = "Your overdue and due-soon cards, upcoming events, proposals awaiting you, and new shares (including forms, goals, and other workspace items shared with you), plus, from the workspace apps your Nook has on: today's bookings, goals needing a check-in, contact follow-ups due, and standups you missed. Never sent when there is nothing to say.";
   if (prefs.digest === "off" || !prefs.nextDigestAt) return what;
   const next = new Date(prefs.nextDigestAt).toLocaleString(undefined, { timeZone: prefs.tz, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   return `${what} Next: ${next} (${prefs.tz}).`;

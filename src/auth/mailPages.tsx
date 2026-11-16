@@ -41,7 +41,7 @@ export function initialMailLink() {
 
 export const CATEGORY_LABELS: Record<string, string> = {
   assignments: "Assigned to you",
-  comments: "Comments on your cards",
+  comments: "Comments on your cards and items",
   sharing: "Shared with you",
   proposals: "Proposals awaiting you",
   sprints: "Sprints",

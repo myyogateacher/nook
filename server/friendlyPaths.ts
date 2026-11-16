@@ -50,7 +50,10 @@ function named(kind: Exclude<LinkKind, "board">, sql: string, id: string, fallba
  */
 export function notePath(noteId: string): string {
   const id = uuid(noteId);
-  return named("note", "SELECT short_id, title FROM notes WHERE id = ?", id, `/notes/${id}`);
+  // The slug is the published title when there is one (D1343, T680): `notes.title` follows the
+  // owner's draft, which no reader may see, and this path reaches readers (search, link chips, mail).
+  return named("note", `SELECT n.short_id, COALESCE((SELECT v.title FROM note_versions v WHERE v.note_id = n.id AND v.version_number = n.current_version), n.title) AS title
+    FROM notes n WHERE n.id = ?`, id, `/notes/${id}`);
 }
 
 /** /files/<name-slug>-<shortid>, or /whiteboards/… for a whiteboard. */

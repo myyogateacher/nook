@@ -17,6 +17,15 @@ export type ModuleSearchResult = {
   updatedAt?: string;
 };
 
+/**
+ * What every built-in hit also carries as `ref` (D1342), beside its scope's own fields: the item's
+ * kind and id, its plain title, and its in-app href. Chats are not a work kind (they cannot be linked).
+ */
+export type SearchItemRef = { kind: WorkKind | "chat"; id: string; title: string; href: string };
+
+/** The built-in scopes in the order `scope=all` lists them (reports and chats are not offered to guests). */
+export const BUILTIN_ALL_SCOPES = ["notes", "cards", "events", "files", "whiteboards", "collections", "reports", "chats"] as const;
+
 export type SearchSection = {
   scope: string;
   label: string;

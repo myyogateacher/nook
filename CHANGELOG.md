@@ -10,6 +10,8 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 - These come by email too, under **Comments on your cards and items** (Settings → Notifications → Email), grouped every 10 minutes. The email never contains the comment's text, and is skipped if you can no longer open the item or the comment was deleted.
 - React to item comments with the same emoji as task comments, and attach files to a comment (the paperclip). Files open for the people who can open the item, and only while they can.
 - Deleting a comment shows **Undo**, which brings it back with its reactions and files.
+- A notification or email about a comment on a form, standup, townhall, booking type, or time project opens its Activity panel, and links like `/time/projects/…?tab=activity` and `/bookings/types/…?section=activity` open the right tab or section.
+- Comments no longer leave an empty gap under their text when nobody has reacted yet.
 
 **Sharing workspace items tells people**
 

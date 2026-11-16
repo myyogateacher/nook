@@ -232,3 +232,31 @@ describe("sharing a module item tells the people added (D1366, T692)", () => {
     expect(logged(second.userId)).toEqual([{ kind: "time_project", item_id: id }]);
   });
 });
+
+describe("the dev mail preview covers every template that can be sent (D1368)", () => {
+  test("registered module and core templates render from their fixtures, listed beside the built-in ones", async () => {
+    const { registeredPreviewFixtures, renderFixture } = await import("../server/mail/preview");
+    const { registeredMailTemplateNames } = await import("../server/mail/registry");
+    const ids = registeredPreviewFixtures().map((item) => item.id);
+    for (const name of registeredMailTemplateNames()) expect(ids).toContain(name);
+    for (const name of ["time.update", "goals.update", "crm.update", "core.comment", "core.mention", "sharing.shared.module"]) {
+      const rendered = renderFixture(name);
+      expect({ name, ok: !!rendered && rendered.html.includes("<html") && rendered.subject.length > 3 }).toEqual({ name, ok: true });
+    }
+    expect(renderFixture("sharing.shared.module")!.html).toContain("Website rebuild");
+    expect(renderFixture("no.such_template")).toBeNull();
+  });
+});
+
+describe("comment links open where the comments are (D1367)", () => {
+  test("a comment on a time project notifies its owner with a link to the project's Activity tab", async () => {
+    const lead = await createUser("Link owner");
+    const helper = await createUser("Link helper");
+    const project = await api(lead, "POST", "/time/projects", { name: "Linked project" });
+    const id = project.body.project.id as string;
+    await share(lead, "time_project", id, [{ id: helper.userId, level: "comment" }]);
+    expect((await api(helper, "POST", `/items/time_project/${id}/comments`, { body: "Hours look high" })).status).toBe(201);
+    const row = db.query("SELECT href FROM notifications WHERE user_id = ? AND topic = 'core.comment'").get(lead.userId) as { href: string };
+    expect(row.href).toMatch(/^\/time\/projects\/[a-z0-9-]+\?tab=activity$/);
+  });
+});

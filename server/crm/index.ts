@@ -1,5 +1,7 @@
 import { registerWorkspaceModule } from "../workspaceModules";
 import { registerCrmRoutes } from "./routes";
+import { crmMailTemplates } from "./mail";
+import type { RegisteredMailTemplate } from "../mail/registry";
 import { crmMcpTools, CRM_AGENT_TOOLS } from "./mcpTools";
 import { crmBinProviders, crmDatasets, crmDigestSection, crmProgressSources, crmSearchScope, crmTodayProvider, dealAnchor, dealWorkKind, interactionAnchor } from "./integrations";
 import { fireFollowup } from "./interactions";
@@ -17,6 +19,7 @@ import "../../shared/crm";
 registerWorkspaceModule({
   id: "crm",
   routes: registerCrmRoutes,
+  mailTemplates: crmMailTemplates as unknown as Record<string, RegisteredMailTemplate<never>>,
   mcpTools: crmMcpTools,
   agentTools: CRM_AGENT_TOOLS,
   itemKinds: [{ kind: "deal", anchors: dealAnchor }, { kind: "interaction", anchors: interactionAnchor }],

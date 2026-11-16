@@ -283,7 +283,8 @@ function checkBudget(projectId: string | null, actorId: string) {
     title: threshold === 100 ? `${project.name} is over its budget` : `${project.name} has used 80% of its budget`,
     body: `${Math.round(ratio * 100)}% of the ${project.budget_period === "monthly" ? "monthly " : ""}budget is used.`,
     href: projectHref(project), item: { kind: "time_project", id: project.id }, actor: actorId,
-    dedupeKey: `time.budget:${project.id}:${period}:${threshold}`
+    dedupeKey: `time.budget:${project.id}:${period}:${threshold}`,
+    email: { template: "time.update", payload: { topic: "time.budget", kind: "time_project", id: project.id, threshold }, coalesceKey: `time.budget:${project.id}:${period}:${threshold}` }
   });
 }
 

@@ -1,4 +1,6 @@
 import { registerWorkspaceModule } from "../workspaceModules";
+import { timeMailTemplates } from "./mail";
+import type { RegisteredMailTemplate } from "../mail/registry";
 import { registerTimeRoutes, GUEST_TIME_WRITES } from "./routes";
 import { timeTools, TIME_AGENT_ALLOWED, TIME_AGENT_NEVER } from "./mcpTools";
 import { progressSource, projectBin, scheduleHandlers, searchScope, timeDataset, timeEntryAnchors, timeLogProposal, todayProvider, workKinds } from "./registrations";
@@ -24,6 +26,7 @@ registerWorkspaceModule({
   searchScopes: [searchScope],
   datasets: [timeDataset],
   scheduleHandlers,
+  mailTemplates: timeMailTemplates as unknown as Record<string, RegisteredMailTemplate<never>>,
   progressSources: [{ kind: "time", source: progressSource as never }],
   proposalKinds: [{ kind: "time_log", def: timeLogProposal }],
   readOnlyWrites: GUEST_TIME_WRITES.map((entry) => ({ ...entry, roles: ["guest"] as const, why: "guests log their own time on projects they belong to (§G.1 Q8); the service checks membership" }))

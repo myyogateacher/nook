@@ -11,6 +11,9 @@ import {
 import { afterCursor, compileFilters, sortSql } from "./query";
 import type { ListInput } from "./records";
 
+/** The Contacts email for a deal event (D1370): ids only, read again as the recipient when sent. */
+const dealMail = (topic: string, dealId: string, actorId: string) => ({ template: "crm.update", payload: { topic, kind: "deal", id: dealId, actorId } });
+
 /**
  * Pipelines, stages, and deals (§D.5, D962, D964): a deal's status follows its stage's kind (won and
  * lost stamp `closed_at`); every stage change is a `deal_stage_changes` row (velocity and funnel) and
@@ -386,7 +389,7 @@ export function createDeal(userId: string, input: DealInput, source: "manual" | 
     for (const contactId of bookContacts(book.id, input.contactIds ?? [])) insertContact.run(id, contactId);
     db.query("INSERT INTO deal_stage_changes (id, deal_id, from_stage_id, to_stage_id, value_minor, actor_id, at) VALUES (?, ?, NULL, ?, ?, ?, ?)").run(Bun.randomUUIDv7(), id, stage.id, cleanValue(input.value), userId, timestamp);
     recordItemActivity({ itemKind: "deal", itemId: id, container: { kind: "contact_book", id: book.id }, actorId: userId, kind: "created", payload: { to: { label: title } } });
-    if (ownerId && ownerId !== userId) notifyReaders(book.id, { userIds: [ownerId], module: "crm", topic: "crm.deal_assigned", title: `You own the deal “${title.slice(0, 120)}”`, href: crmDealPath(title, readDealRow(id, userId).short_id), item: { kind: "deal", id }, actor: userId });
+    if (ownerId && ownerId !== userId) notifyReaders(book.id, { userIds: [ownerId], module: "crm", topic: "crm.deal_assigned", title: `You own the deal “${title.slice(0, 120)}”`, href: crmDealPath(title, readDealRow(id, userId).short_id), item: { kind: "deal", id }, actor: userId, email: dealMail("crm.deal_assigned", id, userId) });
     audit(userId, null, "crm.deal_create", { bookId: book.id, dealId: id, source });
     return toDeals([readDealRow(id, userId)])[0]!;
   })();
@@ -466,11 +469,11 @@ export function updateDeal(ref: string, userId: string, patch: DealInput & { pos
       audit(userId, null, "crm.deal_stage", { bookId: book.id, dealId: row.id, fromStageId: row.stage_id, toStageId: moved.id });
       const owner = (db.query("SELECT owner_id FROM deals WHERE id = ?").get(row.id) as { owner_id: string | null }).owner_id;
       if (moved.kind !== "open" && owner && owner !== userId) {
-        notifyReaders(book.id, { userIds: [owner], module: "crm", topic: moved.kind === "won" ? "crm.deal_won" : "crm.deal_lost", title: `“${title.title.slice(0, 120)}” was ${moved.kind}`, href, item: { kind: "deal", id: row.id }, actor: userId });
+        notifyReaders(book.id, { userIds: [owner], module: "crm", topic: moved.kind === "won" ? "crm.deal_won" : "crm.deal_lost", title: `“${title.title.slice(0, 120)}” was ${moved.kind}`, href, item: { kind: "deal", id: row.id }, actor: userId, email: dealMail(moved.kind === "won" ? "crm.deal_won" : "crm.deal_lost", row.id, userId) });
       }
     }
     if (changed.length) recordItemActivity({ itemKind: "deal", itemId: row.id, container: { kind: "contact_book", id: book.id }, actorId: userId, kind: "crm_updated", payload: { extra: { fields: changed.join(", ") } } });
-    if (newOwner && newOwner !== row.owner_id && newOwner !== userId) notifyReaders(book.id, { userIds: [newOwner], module: "crm", topic: "crm.deal_assigned", title: `You own the deal “${title.title.slice(0, 120)}”`, href, item: { kind: "deal", id: row.id }, actor: userId });
+    if (newOwner && newOwner !== row.owner_id && newOwner !== userId) notifyReaders(book.id, { userIds: [newOwner], module: "crm", topic: "crm.deal_assigned", title: `You own the deal “${title.title.slice(0, 120)}”`, href, item: { kind: "deal", id: row.id }, actor: userId, email: dealMail("crm.deal_assigned", row.id, userId) });
     if (changed.length) audit(userId, null, "crm.deal_update", { bookId: book.id, dealId: row.id, fields: changed });
     return toDeals([readDealRow(row.id, userId)])[0]!;
   })();

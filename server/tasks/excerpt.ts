@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { searchText } from "../search";
+import { MENTION_PATTERN } from "../../shared/itemActivity";
 
 /**
  * Card description excerpts (WAVE_13_TASK_CARD_UX.md D111). The board payload
@@ -20,7 +21,8 @@ export const EXCERPT_MAX_CHARS = 160;
  * matches SQLite's `length()` in the 015 CHECK.
  */
 export function descriptionExcerpt(markdown: string) {
-  const text = searchText(markdown).replace(/\s+/g, " ").trim();
+  // @mentions (MENTIONS.md) read as "@Name", not "@ Name" (searchText would split the link markup).
+  const text = searchText(markdown.replace(MENTION_PATTERN, (_match, name: string) => `@${name}`)).replace(/\s+/g, " ").trim();
   const points = Array.from(text);
   return points.length > EXCERPT_MAX_CHARS ? `${points.slice(0, EXCERPT_MAX_CHARS - 1).join("").trimEnd()}…` : text;
 }

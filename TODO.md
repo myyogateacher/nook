@@ -5,14 +5,10 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 - Plans of record: `DEVELOPMENT_PLAN.md`, `docs/plan/research/`, [reports plan](docs/plan/WAVES_45-48_REPORTS.md), [report theme](docs/plan/REPORT_THEME.md), [workspace modules](docs/plan/WORKSPACE_MODULES.md).
 - Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
-**Current state (2026-10-24).**
-- **v0.47.0** is released (2026-10-24): views slice 2 (grouped lanes, swimlanes, pinned views), report filter leftovers, provider and backup leftovers.
-- Migrations: **001–078** are released and immutable (045, 054, 067, 070, 071, 072, 075 unused; 054 reserved for Messages). Next free: **079**.
-- Development happens directly on `main`, pushed as each change passes its gates.
-
-## In flight
-
-- [ ] **Workspace modules** (plan: [docs/plan/WORKSPACE_MODULES.md](docs/plan/WORKSPACE_MODULES.md), branch `feat/workspace-modules`): Wave 1 foundations (W1-CORE, W1-UI; migrations 085–089), then lanes FORMS, TIME, GOALS, CHECKINS, CRM, BOOK in parallel (090–109), then W3-WIRE and W3-REPORTS (110–114). Waiting on the product owner's answers to the plan's open questions (§G) before Wave 1. Migrations 083–084 are reserved for the friendly-URLs lane.
+**Current state (2026-11-16).**
+- **v0.47.0** (2026-10-24) is the latest release. Everything since is in `CHANGELOG.md` under Unreleased: the seven workspace modules (Forms, Time, Goals, Standups, Contacts, Bookings, Townhall; the product owner answered the plan's §G questions and every wave shipped), the left navigation, task priority, @mentions, and the bake fixes.
+- Migrations: **001–078** are released and immutable (045, 054, 067, 070, 071, 072, 075 unused; 054 reserved for Messages). **079–123** and **160** are in Unreleased code; parallel lanes take id blocks (160–164 is one), so check `server/migrations/` and `server/migrations/workspace/index.ts` before picking one.
+- Development lands on `main` through pull requests, each after its gates pass.
 
 ## Leftovers (lane W3-WIRE, D1049)
 

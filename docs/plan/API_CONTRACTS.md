@@ -3328,6 +3328,12 @@ Plan: `docs/plan/MENTIONS.md`. A mention is `@[Name](user:<uuid>)` in any commen
 | POST | `/api/tasks/cards/:k/comments`, PATCH `/api/tasks/comments/:id` | unchanged | the board readers the text newly mentions are notified (never the author, at most 20 a write) and the card records `mentioned` |
 | POST | `/api/tasks/boards/:b/cards`, PATCH `/api/tasks/cards/:k` | unchanged | the same for mentions a `description` adds (compared with the stored description) |
 | POST / PATCH | `/api/items/:kind/:id/comments…` | unchanged | as before (only new mentions on an edit); now shared with cards (`server/activity/mentions.ts`) |
+| POST | `/api/items/:kind/:id/comments` | `{ body?, parentId?, attachmentIds?: uuid[] (≤ 10), confirmed? }` | 201 `{ comment }`; with files the text may be empty; the item's followers and the parent's author are notified (`core.comment`, D1361); `attachmentIds` are the caller's own files (404 otherwise; 409 `CONFIRM_REQUIRED` for a Files item without `confirmed`) |
+| GET | `/api/items/:kind/:id/comments` | — | each comment now has `reactions: ReactionAggregate[]` and `attachments: HostAttachment[]` (empty on a deleted comment); MCP's `list_item_comments` / `comment_on_item` give `fileCount` instead of `attachments` |
+| DELETE | `/api/items/:kind/:id/comments/:cid` | — | `{ undoTicket }`; `POST /api/undo/:ticket` restores the comment with its reactions and file links (D1364) |
+| PUT / DELETE | `/api/reactions/item_comment/:commentId/:emoji` | — | `{ reactions }`; readers of the item see, `comment` and up react (D1362) |
+| POST / DELETE | `/api/attachments/item_comment/:commentId[/:documentId]`, `POST /api/files?attachTo=item_comment` | as for other declared hosts | the comment's author links; the linker, the author, a manager of the item, or the file's owner unlinks (D1363) |
+| PUT | `/api/access/:kind/:id` (workspace containers) | unchanged | people newly added by name get a `core.shared` bell row, the `sharing.shared` mail, and a digest entry (D1366) |
 
 **Notifications**: `kind = 'module'`, topic `core.mention`, module `tasks` for cards (`notify()` now accepts the core modules `tasks` and `notes`, D1325), title "<Author> mentioned you on a card" / "… in a card description" / "… on a <kind>", `href` the item's path, `dedupeKey mention:<kind>:<id>` (one unread row per person and item).
 

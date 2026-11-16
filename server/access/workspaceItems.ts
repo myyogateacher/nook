@@ -11,6 +11,9 @@ import { recordAccessEvent } from "./events";
 import { capByRole, isLevel, LEVEL_RANK, LEVELS, maxLevel, type ItemLevel, type Level } from "./levels";
 import { CONTAINER_MODULE, isWorkspaceModuleId, MODULE_CONTAINER, WORKSPACE_CONTAINER_KINDS, type WorkspaceContainerKind } from "../../shared/workspaceModules";
 import { isShortId } from "../../shared/friendlyUrls";
+import { notify } from "../notify";
+import { mailShared } from "../mail/triggers";
+import { workKindAdapter } from "../links/adapters";
 
 /**
  * Access for the workspace modules' containers (docs/plan/WORKSPACE_MODULES.md §B.9, D803, T511):
@@ -256,12 +259,44 @@ export function writeWorkspaceAccess(kind: WorkspaceContainerKind, ref: string, 
     }
     db.query(`UPDATE ${container.table} SET visibility = ?, share_role = COALESCE(?, share_role), updated_at = ?, revision = revision + 1 WHERE id = ?`)
       .run(body.audience, body.audienceLevel ?? null, timestamp, id);
+    // D1366: people newly added by name hear about it (bell, "Shared with you" mail, digest), as core
+    // sharing does (itemAccess.ts); groups and the everyone audience are not told (§C.11, D239).
+    notifyWorkspaceShared(kind, id, row(kind, id)?.name ?? current.title, userId, current.people.map((person) => person.id), body.audience === "selected" ? people.map((entry) => entry.id) : []);
     const counts = { kind, audience: body.audience, peopleCount: people.length, groupCount: groups.length };
     audit(userId, null, "item.access_changed", { ...counts, itemId: id, ...(current.yourLevel === "manage" ? { asManager: true } : {}) });
     recordAccessEvent({ actorId: userId, via: "web", action: "item.access_changed", resource: { kind: kind as never, id }, meta: counts });
     return readWorkspaceAccess(kind, id, userId);
   })();
 }
+
+const row = (kind: WorkspaceContainerKind, id: string) => containerRow(kind, id);
+
+/**
+ * Tells the people added by name to a container's access list (D1366, T692): a bell notification in
+ * the container's module (topic `core.shared`, naming the sharer and the item, which they can now
+ * open), the `sharing` category's "Shared with you" mail (resolved again as them when it is sent), and
+ * the digest's share log. Never the sharer; only people who can open it after the change. Call
+ * inside the write's transaction.
+ */
+export function notifyWorkspaceShared(kind: WorkspaceContainerKind, id: string, title: string, actorId: string, before: readonly string[], after: readonly string[]) {
+  const had = new Set(before);
+  const added = [...new Set(after)].filter((userId) => userId !== actorId && !had.has(userId) && itemLevel(kind, id, userId) !== "none");
+  if (!added.length) return [];
+  const actor = (db.query("SELECT display_name FROM users WHERE id = ?").get(actorId) as { display_name: string } | null)?.display_name ?? "Someone";
+  const noun = SHARE_NOUNS[kind];
+  const href = kind === "contact_book" ? "/contacts" : workKindAdapter(kind)?.resolve([id], { userId: added[0]! }).get(id)?.href ?? "/notifications";
+  const { notified } = notify({
+    userIds: added, module: CONTAINER_MODULE[kind], topic: "core.shared", actor: actorId,
+    title: `${actor} shared the ${noun} ‘${title}’ with you`, href,
+    item: kind === "contact_book" ? null : { kind, id }, dedupeKey: `shared:${kind}:${id}`
+  });
+  mailShared(actorId, kind, id, [], notified);
+  return notified;
+}
+
+const SHARE_NOUNS: Record<WorkspaceContainerKind, string> = {
+  form: "form", time_project: "time project", goal: "goal", checkin: "standup", contact_book: "contact book", booking_type: "booking type", townhall_session: "townhall"
+};
 
 /** Adds or replaces one member (lanes: "share with the people I picked" on create). Call inside the write's transaction. */
 export function setItemMember(kind: WorkspaceContainerKind, itemId: string, memberId: string, level: Level, addedBy: string | null) {

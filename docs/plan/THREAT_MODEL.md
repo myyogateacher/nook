@@ -771,7 +771,7 @@ Plan: `docs/plan/WORKSPACE_MODULES.md` §D.6 (decisions as built D1009–D1026).
 | T681 | **Search everywhere reveals what the caller cannot open**: titles of cards, events, chats, collections, or another person's chat through `scope=all` or the new scopes | Each scope runs its list endpoint's own predicate inside the query, before `LIMIT` (cards: `readableBoardPredicate`, T95; events: `readableCalendarPredicate`, T61; collections by name: `readableCollectionPredicate`); chats are the caller's own only (owner-scoped in the FTS stage) and nothing for guests or roles that may not chat; guests get no Reports or Chat section and never match `all_users` items. The palette shows a section only for apps in the caller's sidebar (presentation only). `tests/searchEverywhere.test.ts` (owner, member, guest) | Mitigated |
 | T682 | **Recent items outlive access or leak titles at rest**: the palette's recently opened list shows something unshared, or titles sit in localStorage | The list stores kind and reference only (id, short id, card key; per person, at most 12), never a title. Each palette open resolves it through `POST /api/refs/summaries` / `GET /api/refs/resolve`, which apply each kind's read check (T501); hidden or missing items are dropped and forgotten. A short id or key in the list grants nothing (T490). `tests/searchEverywhereClient.test.tsx` | Mitigated |
 
-### Bake fixes (lane bake3, docs/plan/BAKE_MISC.md, D1380–D1387)
+### Bin, AI usage, settings, MCP restore, exports (docs/plan/BAKE_MISC.md, D1380–D1387)
 
 | Id | Threat | Mitigation | Status |
 |---|---|---|---|
@@ -781,6 +781,14 @@ Plan: `docs/plan/WORKSPACE_MODULES.md` §D.6 (decisions as built D1009–D1026).
 | T703 | **An admin turns public forms off believing townhall audience links close too** (D1382) | Townhall audience links have their own switch, named for them, with its own help text; the share sheet's hint and the POLICY_OFF message name it; migration 160 copies the forms value so no workspace's links open or close on upgrade. | Mitigated |
 | T704 | **MCP restore tools restore someone else's item, or confirm it exists** (D1385) | Each restore goes through the module's Bin provider, which applies the REST Bin's rule (owner, or whoever binned it where the module allows) and answers NOT_FOUND for missing, forbidden, and never-binned alike (`restoreResult`, T148); the module's write scope and `bin:write` are both required; chosen-item keys are checked on the item (`access: items`); never offered to chat agents. | Mitigated |
 | T705 | **A Bin item's `href` opens somewhere unexpected** (D1380) | It is built on the server from the item's own title and short id by the module's path helper, always relative; the client opens it only through `nook:open-path`, which accepts only paths the router would open as written (`inAppOpenPath`), behind the Settings hub's leave guard. | Mitigated |
+
+### Comments, notifications and sharing (D1360–D1371)
+
+| Id | Threat | Mitigation | Status |
+|---|---|---|---|
+| T690 | **Item comment files open for someone who cannot read the item** (or reach lists) | The `item_comment` host's read rule is the item's work kind adapter, read fresh per request; its SQL branch is `0`, and the code fallback serves single document reads only (never Files, search, lists, or batch checks). The comment must be live; a deleted comment's links are removed (and restored only by its deleter's Undo). Only the author links, and only their own files (T341); MCP never offers the kind. `tests/itemCommentsBake.test.ts` | Mitigated |
+| T691 | **Comment notifications leak text or reach non-readers, or double up with mentions** | Recipients are the kind's followers and the parent's author, filtered to people who can read the item now; never the commenter; anyone the comment mentions is left out (one notification per person per comment). Titles hold the commenter's name and the kind word only; the `core.comment` mail holds ids only and is re-read as the recipient at send time (lost access or a deleted comment → left out). `tests/itemCommentsBake.test.ts` | Mitigated |
+| T692 | **Sharing notices about module items leak or spam** | Only people newly added by name who can open the container after the change are told (never groups, the everyone audience, or the sharer); one unread bell row per person and item; the mail and the digest read the container again as the recipient (`sharedItem` → null when they lost it). `tests/itemCommentsBake.test.ts` | Mitigated |
 
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 

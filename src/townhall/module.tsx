@@ -86,7 +86,8 @@ export const module: WorkspaceClientModule = {
     townhall_asked: () => "asked a question",
     townhall_moderated: (entry) => `marked it ${entry.payload.to?.label ?? "changed"}`,
     townhall_poll: () => "added a poll",
-    townhall_card: () => "made a card from it"
+    townhall_card: () => "made a card from it",
+    title: (entry) => `renamed it to “${entry.payload.to?.label ?? ""}”`
   },
   searchRenderer: {
     scope: "townhall", label: "Townhall", icon: Presentation,

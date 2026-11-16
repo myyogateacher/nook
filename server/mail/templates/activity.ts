@@ -5,6 +5,7 @@ import { appLink, paths } from "../links";
 import { formatDay, formatInstant, plural } from "../format";
 import { activityFooter, actorsPhrase, itemTitle, LIST_MAX, personName } from "./common";
 import { defineTemplate } from "./types";
+import type { WorkspaceContainerKind } from "../../../shared/workspaceModules";
 
 // --- Assigned to you (#16) ------------------------------------------------------------------
 
@@ -82,12 +83,20 @@ export const commentTemplate = defineTemplate<{ boardId: string; cardId: string;
 // --- Shared with you (#25), one template for every module -------------------------------------
 
 /** `vault` (Wave 26): the vault's name only, never a secret's name or value (D223). */
-export type SharedKind = "note" | "folder" | "file" | "board" | "calendar" | "collection" | "view" | "vault" | "agent" | "chat";
-export type SharedItem = { kind: SharedKind; id: string; title: string; access: "read" | "edit" | null };
+export type SharedKind = "note" | "folder" | "file" | "board" | "calendar" | "collection" | "view" | "vault" | "agent" | "chat" | WorkspaceContainerKind;
+/**
+ * `path`: the workspace modules' items (D1366) link by their friendly path, read as the recipient when
+ * the mail is resolved (a short id and slug the ids alone cannot give).
+ */
+export type SharedItem = { kind: SharedKind; id: string; title: string; access: "read" | "edit" | null; path?: string };
 
-const KIND_LABELS: Record<SharedKind, string> = { note: "Note", folder: "Notes folder", file: "File", board: "Board", calendar: "Calendar", collection: "Collection", view: "Task view", vault: "Vault", agent: "Agent", chat: "Chat" };
+const KIND_LABELS: Record<SharedKind, string> = {
+  note: "Note", folder: "Notes folder", file: "File", board: "Board", calendar: "Calendar", collection: "Collection", view: "Task view", vault: "Vault", agent: "Agent", chat: "Chat",
+  form: "Form", time_project: "Time project", goal: "Goal", checkin: "Standup", contact_book: "Contact book", booking_type: "Booking type", townhall_session: "Townhall"
+};
 
-export function sharedItemPath(item: Pick<SharedItem, "kind" | "id">) {
+export function sharedItemPath(item: Pick<SharedItem, "kind" | "id" | "path">) {
+  if (item.path) return item.path;
   switch (item.kind) {
     case "note": return paths.note(item.id);
     case "folder": return paths.noteFolder(item.id);
@@ -99,6 +108,7 @@ export function sharedItemPath(item: Pick<SharedItem, "kind" | "id">) {
     case "vault": return paths.vault(item.id);
     case "agent": return paths.chatWithAgent(item.id);
     case "chat": return paths.chat(item.id);
+    default: return paths.home();
   }
 }
 

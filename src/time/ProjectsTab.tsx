@@ -17,6 +17,9 @@ import { PROJECT_COLORS, type TimeEntry, type TimeProject } from "../../shared/t
 import { timeApi, type Approval, type ClientOption, type ProjectBody } from "./api";
 import { invalidateProjects, projectDot } from "./fields";
 import { WorkspaceAccess } from "../access/WorkspaceAccess";
+import { ItemTimeline } from "../ui/activity/ItemTimeline";
+import { canCommentAtLevel } from "../ui/activity/activityAccess";
+import { module as timeModule } from "./module";
 import { EntrySheet } from "./EntrySheet";
 import { clock, dayLabel, localDay } from "./format";
 import { errorText, onTimeChanged, timeChanged } from "./timerStore";
@@ -187,7 +190,7 @@ export function ProjectPage({ projectId, initialTab, onBack, onOpen, flashMissin
   const prefs = useUnitPreferences();
   const [project, setProject] = useState<TimeProject | null>(null);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
-  const [tab, setTab] = useState<"entries" | "team" | "approvals">(initialTab === "team" || initialTab === "approvals" ? initialTab : "entries");
+  const [tab, setTab] = useState<"entries" | "team" | "approvals" | "activity">(initialTab === "team" || initialTab === "approvals" || initialTab === "activity" ? initialTab : "entries");
   const [editing, setEditing] = useState(false);
   const [entry, setEntry] = useState<TimeEntry | null>(null);
   const load = useCallback(() => {
@@ -229,6 +232,7 @@ export function ProjectPage({ projectId, initialTab, onBack, onOpen, flashMissin
       <button type="button" aria-pressed={tab === "entries" || (tab === "approvals" && !manager)} onClick={() => setTab("entries")}>Entries</button>
       <button type="button" aria-pressed={tab === "team"} onClick={() => setTab("team")}>Team{manager ? " and rates" : ""}</button>
       {manager && <button type="button" aria-pressed={tab === "approvals"} onClick={() => setTab("approvals")}>Approvals</button>}
+      <button type="button" aria-pressed={tab === "activity"} onClick={() => setTab("activity")}>Activity</button>
     </div>
     {(tab === "entries" || (tab === "approvals" && !manager)) && (entries.length === 0
       ? <EmptyState icon={FolderClock} title="No time on this project yet." compact />
@@ -243,6 +247,8 @@ export function ProjectPage({ projectId, initialTab, onBack, onOpen, flashMissin
       </ul>)}
     {tab === "team" && <TeamPanel project={project} onChanged={load} />}
     {tab === "approvals" && manager && <ApprovalsPanel projectId={project.id} />}
+    {/* The project's history (created, renamed, weeks submitted and decided) and comments (D1375). */}
+    {tab === "activity" && <ItemTimeline kind="time_project" id={project.id} title="Activity" renderers={timeModule.activityRenderers} canComment={canCommentAtLevel(project.level)} refreshKey={String(project.revision)} />}
     {editing && <ProjectSheet project={project} onClose={() => setEditing(false)} onSaved={(saved) => { setProject(saved); setEditing(false); }} />}
     {entry && <EntrySheet entry={entry} onOpen={onOpen} onClose={() => setEntry(null)} />}
   </div>;

@@ -83,7 +83,8 @@ export const module: WorkspaceClientModule = {
   },
   notificationTopics: [
     { id: "goals.checkin_due", label: "Check-in reminders", description: "When a goal you own or contribute to is due a check-in" },
-    { id: "goals.health_changed", label: "Goals at risk", description: "When a goal you follow goes at risk or off track" },
+    { id: "goals.health_changed", label: "Goals at risk", description: "When a goal you own or contribute to, or a goal aligned under one you own, goes at risk or off track" },
+    { id: "goals.assigned", label: "Goals assigned to you", description: "When someone makes you a goal's owner or adds you as a contributor" },
     { id: "goals.source_failing", label: "Automatic progress stopped", description: "When a key result's source can no longer update it" },
     { id: "goals.period_ending", label: "Period ending", description: "A week before a period with your open goals ends" }
   ],

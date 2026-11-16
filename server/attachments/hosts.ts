@@ -31,7 +31,7 @@ import type { ItemKind } from "../keyResources";
  * Adding a host kind is a reviewed change to this file only (the shape checks in 046 need no rebuild).
  */
 
-export const HOST_KINDS = ["event", "note", "chat_message", "whiteboard", "card", "row"] as const;
+export const HOST_KINDS = ["event", "note", "chat_message", "whiteboard", "card", "row", "item_comment"] as const;
 export type HostKind = typeof HOST_KINDS[number];
 export const isHostKind = (value: unknown): value is HostKind => typeof value === "string" && (HOST_KINDS as readonly string[]).includes(value);
 
@@ -70,6 +70,14 @@ export type HostSpec = {
   canLink?: (userId: string, hostId: string, partId: string | null) => LinkRefusal | null;
   /** May `userId` remove this link now? Declared hosts only. */
   canUnlink?: (userId: string, hostId: string, link: LinkRow, documentOwnerId: string) => boolean;
+  /**
+   * A host whose read rule is code, not SQL (item comments, D1363: the item's work kind adapter). Its
+   * `readableSql` is `0`, so the generated SQL branch grants nothing; hostReadable and the single
+   * document reads (server/documentAccess.ts) ask this instead, for single reads only (never lists).
+   */
+  readable?: (hostId: string, userId: string) => boolean;
+  /** False keeps the kind out of the MCP attachment tools (their scope is per module, D402). */
+  mcp?: boolean;
 };
 
 const notFound = (noun: string): LinkRefusal => ({ status: 404, code: "NOT_FOUND", message: `${noun[0]!.toUpperCase()}${noun.slice(1)} not found` });
@@ -202,14 +210,55 @@ const rowHost: HostSpec = {
   title: (hostId) => (db.query("SELECT c.name FROM collection_rows r JOIN collections c ON c.id = r.collection_id WHERE r.id = ?").get(hostId) as { name: string } | null)?.name ?? null,
 };
 
+/**
+ * Item comments (docs/plan/WORKSPACE_MODULES.md §B.5, D1363, T690): files attached through a comment
+ * on any workspace item. Who may read them is the item's readers, now (the work kind adapter's level,
+ * read fresh, so unsharing, binning, or a lost answer-read right ends it at once); the comment must be
+ * live. The rules are code, registered by server/activity/comments.ts (`setItemCommentAccess`) to keep
+ * this file free of the adapters' import graph. Only the comment's author links (with the comment, or
+ * later while they may still comment); the linker, the author, or a manager of the item removes.
+ */
+type ItemCommentAccess = {
+  readable: (commentId: string, userId: string) => boolean;
+  canLink: (userId: string, commentId: string) => LinkRefusal | null;
+  canUnlink: (userId: string, commentId: string, link: LinkRow) => boolean;
+  ownerOf: (commentId: string) => string | null;
+  title: (commentId: string) => string | null;
+};
+let itemCommentAccess: ItemCommentAccess | null = null;
+export function setItemCommentAccess(access: ItemCommentAccess) { itemCommentAccess = access; }
+
+const itemCommentHost: HostSpec = {
+  kind: "item_comment",
+  noun: "comment",
+  store: "attachment_links",
+  linking: "declared",
+  // Never offered to MCP (`mcp: false`); a key's own-file checks treat it as whole-module Files reach.
+  readScope: "files:read",
+  itemKind: null,
+  caps: { perHost: 10 },
+  hasParts: false,
+  readableSql: () => "0",
+  readable: (hostId, userId) => itemCommentAccess?.readable(hostId, userId) ?? false,
+  mcp: false,
+  ownerOf: (hostId) => itemCommentAccess?.ownerOf(hostId) ?? null,
+  title: (hostId) => itemCommentAccess?.title(hostId) ?? null,
+  canLink: (userId, hostId) => itemCommentAccess ? itemCommentAccess.canLink(userId, hostId) : notFound("comment"),
+  canUnlink: (userId, hostId, link) => itemCommentAccess?.canUnlink(userId, hostId, link) ?? false
+};
+
 export const HOSTS: Readonly<Record<HostKind, HostSpec>> = {
   event: eventHost,
   note: noteHost,
   chat_message: chatMessageHost,
   whiteboard: whiteboardHost,
   card: cardHost,
-  row: rowHost
+  row: rowHost,
+  item_comment: itemCommentHost
 };
+
+/** The hosts whose read rule is code (`readable`): checked one by one for single reads. */
+export const CODE_READ_HOSTS: readonly HostSpec[] = HOST_KINDS.map((kind) => HOSTS[kind]).filter((spec) => spec.readable !== undefined);
 
 /** The hosts whose links live in `attachment_links`. */
 export const LINK_TABLE_HOSTS: readonly HostSpec[] = HOST_KINDS.map((kind) => HOSTS[kind]).filter((spec) => spec.store === "attachment_links");
@@ -219,7 +268,7 @@ export const LINK_TABLE_HOSTS: readonly HostSpec[] = HOST_KINDS.map((kind) => HO
  * a live host of a registered kind that `$userId` can read. Links of unknown kinds grant nothing.
  */
 export function attachmentLinkReadBranch(ctx: HostSqlContext) {
-  const hosts = LINK_TABLE_HOSTS.map((spec) => `(al.host_kind = '${spec.kind}' AND ${spec.readableSql("al.host_id", ctx)})`).join("\n      OR ");
+  const hosts = LINK_TABLE_HOSTS.filter((spec) => !spec.readable).map((spec) => `(al.host_kind = '${spec.kind}' AND ${spec.readableSql("al.host_id", ctx)})`).join("\n      OR ");
   return `(d.deleted_at IS NULL AND EXISTS (
     SELECT 1 FROM attachment_links al WHERE al.document_id = d.id AND (
       ${hosts}

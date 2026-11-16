@@ -25,6 +25,30 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 - A card shows the goal it contributes to, with the goal's progress, on its face. Each key result shows a small line of its progress over time.
 - **Export to CSV** for Goals (the list as filtered), Standups (every round's answers you can read), Bookings (Upcoming, Past, or Cancelled), and a board's cards (the download button beside Board settings).
 - Removed two endpoints nothing used: `PUT /api/crm/pipelines/:id/stages` (use `PATCH /api/crm/pipelines/:id`) and `GET /api/crm/search`.
+**Comments on workspace items: notifications, reactions, files, and Undo**
+
+- A comment on a goal, deal, contact, booking, form response, standup answer, townhall question, or one of the new Activity panels now notifies the people the item belongs to (its owner, assignees, and contributors, and the owner of the form, standup, or project it is in), and a reply notifies the person you replied to. You never hear about your own comments, and someone you @mention gets one notification, the mention.
+- These come by email too, under **Comments on your cards and items** (Settings → Notifications → Email), grouped every 10 minutes. The email never contains the comment's text, and is skipped if you can no longer open the item or the comment was deleted.
+- React to item comments with the same emoji as task comments, and attach files to a comment (the paperclip). Files open for the people who can open the item, and only while they can.
+- Deleting a comment shows **Undo**, which brings it back with its reactions and files.
+- A notification or email about a comment on a form, standup, townhall, booking type, or time project opens its Activity panel, and links like `/time/projects/…?tab=activity` and `/bookings/types/…?section=activity` open the right tab or section.
+- Comments no longer leave an empty gap under their text when nobody has reacted yet.
+
+**Sharing workspace items tells people**
+
+- When you share a form, time project, goal, standup, contact book, booking type, or townhall with someone by name, they get a notification and a "Shared with you" email, and it shows in their daily digest.
+- The daily digest description in Settings now lists the workspace sections it can include.
+
+**Activity on forms, standups, townhalls, booking types and time projects**
+
+- A form, a standup, a townhall session and a time project have a new **Activity** tab, and a booking type an **Activity** section at the end of its editor. It lists what changed, who did it and when (published, closed, renamed, rounds opened and closed, weeks submitted and approved, and more), and you can comment there.
+- Anyone who can open the item sees its activity. Respondents who only answer a form, and people who join a townhall from its audience link, don't.
+
+**Email from Time, Goals, and Contacts**
+
+- The Time, Goals, and Contacts switches in Settings → Notifications → Email now send email: a week submitted for your approval, your week approved or returned, a project's budget alerts; a goal at risk or off track, a check-in due, being made a goal's owner or contributor; a follow-up due, a deal you now own, and a deal you own won or lost.
+- The email is checked again when it is sent: if you can no longer open the item, or the moment has passed (the goal recovered, the follow-up is done), nothing is sent. Notes and reasons are never emailed.
+- You hear when someone makes you a goal's owner or adds you as a contributor.
 
 **@mentions**
 

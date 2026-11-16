@@ -251,7 +251,10 @@ export function fireFollowup(followupId: string, nowMs = Date.now()) {
   if (!followup) return;
   notifyReaders(row.book_id, {
     userIds: [row.user_id], module: "crm", topic: "crm.followup_due", title: `Follow up: ${followup.subject.title.slice(0, 160)}`, body: row.note || null,
-    href: followup.subject.href, item: { kind: row.subject_kind, id: row.subject_id }, dedupeKey: `followup:${row.id}`, includeActor: true, nowMs
+    href: followup.subject.href, item: { kind: row.subject_kind, id: row.subject_id }, dedupeKey: `followup:${row.id}`, includeActor: true, nowMs,
+    email: {
+      template: "crm.update",
+      payload: { topic: "crm.followup_due", kind: row.subject_kind, id: row.subject_id, followupId: row.id }, coalesceKey: `crm.followup:${row.id}` }
   });
   db.query("UPDATE crm_followups SET notified_at = ? WHERE id = ?").run(new Date(nowMs).toISOString(), row.id);
 }

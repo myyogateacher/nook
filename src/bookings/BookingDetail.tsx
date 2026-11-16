@@ -10,6 +10,7 @@ const SOURCE_LABEL: Record<Booking["source"], string> = { public: "Booked on you
 import { bookingsApi, dayLabel, durationLabel, timeLabel, viewerZone, type Booking } from "./api";
 import { SlotPicker } from "./SlotPicker";
 import { useUnitPreferences } from "../ui/units";
+import { module as bookingsModule } from "./module";
 import { LOCATION_ICONS, StatusChip } from "./BookingsApp";
 
 /**
@@ -95,7 +96,7 @@ export function BookingDetail({ bookingRef, onBack, onOpenPath, flash, readOnly 
           <h3 id="bk-answers" className="bk-h3">Answers</h3>
           <dl className="bk-answers">{answers.map((question) => <div key={question.id}><dt>{question.title}</dt><dd>{answerText(question, booking.response!.answers[question.id] as never, tz)}</dd></div>)}</dl>
         </section>}
-        <section className="bk-panel"><ItemTimeline kind="booking" id={booking.id} canComment={!readOnly} title="Notes" refreshKey={String(refresh)} /></section>
+        <section className="bk-panel"><ItemTimeline kind="booking" id={booking.id} canComment={!readOnly} title="Notes" renderers={bookingsModule.activityRenderers} refreshKey={String(refresh)} /></section>
       </div>
       <aside className="bk-detail-side">
         <section className="bk-panel"><LinkedItemsPanel item={{ kind: "booking", id: booking.id }} canEdit={!readOnly} onOpen={onOpenPath} title="Linked" /></section>

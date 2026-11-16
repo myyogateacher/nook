@@ -183,6 +183,9 @@ describe("timeline, board, live widgets", () => {
     expect(mergeTimeline(comments, activity, { showActivity: true, order: "asc" }).map((item) => item.id)).toEqual(["a1", "c1", "a2"]);
     expect(mergeTimeline(comments, activity, { showActivity: true, order: "desc" }).map((item) => item.id)).toEqual(["a2", "c1", "a1"]);
     expect(mergeTimeline(comments, activity, { showActivity: false, order: "asc" }).map((item) => item.id)).toEqual(["c1"]);
+    // A "commented" entry is the comment itself (D1364): shown once, as the comment.
+    const commented = { ...entry("a3", "2026-01-02"), kind: "commented" };
+    expect(mergeTimeline(comments, [...activity, commented], { showActivity: true, order: "asc" }).map((item) => item.id)).toEqual(["a1", "c1", "a2"]);
   });
 
   test("a drop lands before the first card whose middle is below the pointer", () => {

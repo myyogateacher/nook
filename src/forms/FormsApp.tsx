@@ -20,6 +20,7 @@ import "./forms.css";
 const FormEditor = lazy(() => import("./FormEditor"));
 const FormResults = lazy(() => import("./FormResults"));
 const FormRespond = lazy(() => import("./FormRespond"));
+const FormActivity = lazy(() => import("./FormActivity"));
 const FormsInsights = lazy(() => import("./FormsInsights"));
 
 /**
@@ -46,15 +47,15 @@ export default function FormsApp(props: WorkspaceAppProps) {
   const fallback = <div className="forms-loading" role="status">Loading…</div>;
   if (!first || (TAB_IDS as readonly string[]).includes(first)) return <FormsHome nav={nav} tab={(first as HomeTab | undefined) ?? "mine"} search={route.search} />;
   return <Suspense fallback={fallback}>
-    {second === "edit" ? <FormEditor nav={nav} formRef={first} /> : second === "results" ? <FormResults nav={nav} formRef={first} search={route.search} /> : <FormRespond nav={nav} formRef={first} />}
+    {second === "edit" ? <FormEditor nav={nav} formRef={first} /> : second === "activity" ? <FormActivity nav={nav} formRef={first} /> : second === "results" ? <FormResults nav={nav} formRef={first} search={route.search} /> : <FormRespond nav={nav} formRef={first} />}
   </Suspense>;
 }
 
 // ---------------------------------------------------------------- the frame of a form's pages
 
-export type FrameView = "respond" | "edit" | "results";
+export type FrameView = "respond" | "edit" | "results" | "activity";
 
-/** A form's page frame: the module home scaffold with the form's title and its three views as tabs. */
+/** A form's page frame: the module home scaffold with the form's title and its views as tabs (Activity for anyone with a level, D1375). */
 export function FormFrame({ nav, form, view, primary, menuExtra = [], children, detail, title }: {
   nav: FormsNav;
   form: Pick<FormDetail, "id" | "title" | "kind" | "href" | "level"> | null;
@@ -73,7 +74,8 @@ export function FormFrame({ nav, form, view, primary, menuExtra = [], children, 
   const tabs = form && reader ? [
     { id: "respond", label: form.kind === "form" ? "Respond" : "Vote" },
     ...(editor ? [{ id: "edit", label: "Edit" }] : []),
-    { id: "results", label: "Results" }
+    { id: "results", label: "Results" },
+    { id: "activity", label: "Activity" }
   ] : undefined;
   const menu = form ? [
     { id: "all", label: "All forms", icon: ClipboardList, onSelect: () => go([]) },

@@ -19,6 +19,9 @@ import { resolveDigest } from "./digest";
 import { resolveNewSignIn, resolveWelcome } from "./signInMail";
 import type { TemplateName } from "./registry";
 import type { AssignedCard, CommentExcerpt, SharedItem, SharedKind } from "./templates/activity";
+import { containerName, itemLevel } from "../access/workspaceItems";
+import { LEVEL_RANK } from "../access/levels";
+import { workKindAdapter } from "../links/adapters";
 import type { AccountEvent, PasswordEvent, TwoFactorEvent } from "./templates/security";
 
 /**
@@ -113,6 +116,15 @@ export function sharedItem(kind: SharedKind, id: string, userId: string): Shared
       const title = sharedTitleFor(kind, id, userId);
       if (title === null) return null;
       return { kind, id, title, access: kind === "agent" && shareLevelById("agent", id, userId) !== "view" ? "edit" : "read" };
+    }
+    case "form": case "time_project": case "goal": case "checkin": case "contact_book": case "booking_type": case "townhall_session": {
+      // D1366: the container's name and friendly path, only while the recipient can open it.
+      const level = itemLevel(kind, id, userId);
+      const title = level === "none" ? null : containerName(kind, id, userId);
+      if (title === null) return null;
+      const path = kind === "contact_book" ? "/contacts" : workKindAdapter(kind)?.resolve([id], { userId }).get(id)?.href;
+      if (!path) return null;
+      return { kind, id, title, access: LEVEL_RANK[level] >= LEVEL_RANK.edit ? "edit" : "read", path };
     }
     case "view": {
       try {

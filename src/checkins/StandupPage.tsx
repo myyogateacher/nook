@@ -14,6 +14,9 @@ import { closeRound, errorCode, errorText, getStandup, listRounds, nudgeRound, r
 import { AnswerCard, answerValue, cadenceText, dateText, Faces, PersonFace, relativeDeadline, StateBadge, timeText } from "./parts";
 import { AnswerSheet } from "./AnswerSheet";
 import { StandupSettings } from "./StandupSettings";
+import { ItemTimeline } from "../ui/activity/ItemTimeline";
+import { canCommentAtLevel } from "../ui/activity/activityAccess";
+import { module as standupsModule } from "./module";
 
 type PageProps = WorkspaceAppProps & { segment: string; sub: string | null; third: string | null; go: (path: string[], options?: { replace?: boolean }) => void };
 
@@ -43,7 +46,7 @@ export function StandupPage(props: PageProps) {
   }, [segment, reload]);
 
   const date = sub && DATE.test(sub) ? sub : null;
-  const tab = sub === "insights" ? "insights" : sub === "settings" ? "settings" : "round";
+  const tab = sub === "insights" ? "insights" : sub === "settings" ? "settings" : sub === "activity" ? "activity" : "round";
   useEffect(() => {
     if (!detail || tab !== "round") return;
     let live = true;
@@ -92,12 +95,15 @@ export function StandupPage(props: PageProps) {
   return <ModuleHome icon={Sunrise} title="Standups" heading={detail.name} displayName={props.displayName} onHome={props.onHome} onSettings={props.onSettings} onSignOut={props.onSignOut}
     primary={due ? { label: "Answer", icon: PenLine, onClick: openAnswer, shortcut: false } : canEdit && tab === "round" && roundState === "none" ? { label: "Start a round", icon: Play, onClick: () => void start(), shortcut: false } : undefined}
     menu={menu}
-    tabs={[{ id: "round", label: "Rounds" }, { id: "insights", label: "Insights" }, { id: "settings", label: "Settings" }]} activeTab={tab}
+    tabs={[{ id: "round", label: "Rounds" }, { id: "insights", label: "Insights" }, { id: "activity", label: "Activity" }, { id: "settings", label: "Settings" }]} activeTab={tab}
     tabsInSidebar={{ label: detail.name, hrefFor: (id) => formatWorkspaceRoute({ app: "checkins", path: id === "round" ? [segmentNow] : [segmentNow, id], search: "" }) }}
     onTab={(id) => go(id === "round" ? [segmentNow] : [segmentNow, id])}
     filters={<p className="standup-subline"><button type="button" className="ui-text-button" onClick={() => go([])}><ChevronLeft aria-hidden="true" />All standups</button><span className="standup-muted">{cadenceText(detail.schedule)}{detail.status === "paused" ? " · Paused" : ""}</span>{detail.anonymous && <span className="standup-state tone-info"><Lock aria-hidden="true" />Anonymous</span>}</p>}>
     {tab === "round" && <RoundTab {...props} detail={detail} round={round} state={roundState} view={view} setView={setView} segmentNow={segmentNow} canEdit={canEdit} onStart={() => void start()} onSkipped={refresh} />}
     {tab === "insights" && <Insights detail={detail} />}
+    {/* The standup's history (rounds opened and closed, settings, questions, who takes part) and comments (D1375). */}
+    {tab === "activity" && <div className="standup-activity"><ItemTimeline kind="checkin" id={detail.id} title="Activity" renderers={standupsModule.activityRenderers}
+      canComment={canCommentAtLevel(detail.level) && (props.role === "admin" || props.role === "member")} refreshKey={String(reload)} /></div>}
     {tab === "settings" && <StandupSettings {...props} detail={detail} canEdit={canEdit} onChanged={(next) => { if (next) setDetail(next); else refresh(); }} onDeleted={() => go([])} />}
   </ModuleHome>;
 }

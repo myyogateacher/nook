@@ -12,6 +12,7 @@ import { townhallMigrations } from "./townhall";
 import { timeBudgetAlertsMigration } from "../120_time_budget_alerts";
 import { sidebarPreferencesMigration } from "../122_sidebar_preferences";
 import { cardPriorityMigration } from "../123_card_priority";
+import { moduleShareLogMigration } from "../155_module_share_log";
 import { publicTownhallSettingMigration } from "../160_public_townhall_setting";
 
 /**
@@ -38,6 +39,8 @@ export const workspaceMigrations: Migration[] = [
   sidebarPreferencesMigration,
   // 123 (card priority, D1310–D1311: cards.priority, the Urgent flag becomes the Urgent priority) needs only 015.
   cardPriorityMigration,
+  // 155 (module sharing in the digest, D1366: mail_share_log takes the containers) needs only 028.
+  moduleShareLogMigration,
   // 160 (D1382: team_settings key public_townhall, seeded from public_forms) needs 025 and 085; 160–164 are the bake3 block.
   publicTownhallSettingMigration
 ];

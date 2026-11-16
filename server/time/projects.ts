@@ -5,6 +5,7 @@ import { readableBoard, boardLevel } from "../tasks/access";
 import { ensureClientsBook, readableBookIds } from "../people/contacts";
 import { recordItemActivity, registerActivityKinds } from "../activity/service";
 import { notify } from "../notify";
+import { WINDOW_MS } from "../mail/outbox";
 import { readWorkspaceSettings } from "../workspaceSettings";
 import { newShortId } from "../../shared/friendlyUrls";
 import { isCurrency } from "../../shared/money";
@@ -304,7 +305,8 @@ export function submitWeek(userId: string, projectRef: string, weekStart: string
     else db.query("INSERT INTO time_approvals (id, project_id, user_id, week_start, status, note, created_at, updated_at) VALUES (?, ?, ?, ?, 'submitted', ?, ?, ?)").run(Bun.randomUUIDv7(), project.id, userId, weekStart, note ?? null, timestamp, timestamp);
     const author = (db.query("SELECT display_name FROM users WHERE id = ?").get(userId) as { display_name: string } | null)?.display_name ?? "Someone";
     notify({ userIds: managersOf(project), module: "time", topic: "time.approval", title: `${author} submitted the week of ${weekStart}`, body: `Time on ${project.name} is waiting for approval.`,
-      href: `${projectHref(project)}?tab=approvals`, item: { kind: "time_project", id: project.id }, actor: userId, dedupeKey: `time.approval:${project.id}:${userId}:${weekStart}` });
+      href: `${projectHref(project)}?tab=approvals`, item: { kind: "time_project", id: project.id }, actor: userId, dedupeKey: `time.approval:${project.id}:${userId}:${weekStart}`,
+      email: { template: "time.update", payload: { topic: "time.approval", kind: "time_project", id: project.id, actorId: userId, weekStart }, coalesceKey: `time.approval:${project.id}:${userId}:${weekStart}`, windowMs: WINDOW_MS.activity } });
     recordItemActivity({ itemKind: "time_project", itemId: project.id, actorId: userId, kind: "time_week_submitted", payload: { extra: { weekStart } } });
     audit(userId, null, "time.approval_submit", { projectId: project.id, weekStart });
     return db.query("SELECT * FROM time_approvals WHERE project_id = ? AND user_id = ? AND week_start = ?").get(project.id, userId, weekStart) as ApprovalRow;
@@ -333,7 +335,8 @@ export function decideWeek(managerId: string, approvalId: string, decision: "app
     }
     const words = { approve: "approved", reject: "returned", unlock: "unlocked" } as const;
     notify({ userIds: [approval.user_id], module: "time", topic: "time.approval_decided", title: `Your week of ${approval.week_start} was ${words[decision]}`,
-      body: `${project.name}${note ? `: ${note.slice(0, 200)}` : ""}`, href: `/time/timesheet?week=${approval.week_start}`, item: { kind: "time_project", id: project.id }, actor: managerId });
+      body: `${project.name}${note ? `: ${note.slice(0, 200)}` : ""}`, href: `/time/timesheet?week=${approval.week_start}`, item: { kind: "time_project", id: project.id }, actor: managerId,
+      email: { template: "time.update", payload: { topic: "time.approval_decided", kind: "time_project", id: project.id, actorId: managerId, weekStart: approval.week_start, decision }, coalesceKey: `time.decided:${approval.id}`, windowMs: WINDOW_MS.activity } });
     recordItemActivity({ itemKind: "time_project", itemId: project.id, actorId: managerId, kind: decision === "approve" ? "time_week_approved" : decision === "reject" ? "time_week_rejected" : "time_week_unlocked", payload: { extra: { weekStart: approval.week_start } } });
     audit(managerId, null, `time.approval_${decision}`, { projectId: project.id, approvalId: approval.id, memberId: approval.user_id, entries: ids.length });
     return { status: decision === "unlock" ? null : decision === "approve" ? "approved" : "rejected", entries: ids.length };

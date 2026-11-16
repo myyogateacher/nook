@@ -2,7 +2,7 @@ import { audit, db, now } from "../db";
 import { SWEEP_BATCH_SIZE, SWEEP_RESUME_BATCH_SIZE, type BinItem, type BinProvider, type BinSweepCounts, type PurgeOutcome, type PurgeReason, type RestoreOutcome } from "../bin";
 import { withResourceLock } from "../storage";
 import { recordItemActivity } from "../activity/service";
-import { checkinRow, type CheckinRow } from "./store";
+import { checkinHref, checkinRow, type CheckinRow } from "./store";
 import { rearm } from "./rounds";
 
 /**
@@ -33,7 +33,7 @@ const mayManageBinned = (row: CheckinRow, userId: string) => row.owner_id === us
 export const binProvider: BinProvider = {
   list(userId) {
     const rows = db.query("SELECT * FROM checkins WHERE (owner_id = ? OR deleted_by = ?) AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id LIMIT 500").all(userId, userId) as CheckinRow[];
-    return rows.map((row): BinItem => ({ type: "checkin", id: row.id, title: row.name, folder_id: null, folder_name: FOLDER, deleted_at: row.deleted_at!, purge_after: row.purge_after!, purging: row.purge_started_at !== null, ...providedDefaults, can_purge: row.owner_id === userId }));
+    return rows.map((row): BinItem => ({ type: "checkin", id: row.id, title: row.name, folder_id: null, folder_name: FOLDER, deleted_at: row.deleted_at!, purge_after: row.purge_after!, purging: row.purge_started_at !== null, ...providedDefaults, can_purge: row.owner_id === userId, href: checkinHref(row) }));
   },
   restore(id, userId) {
     return withResourceLock(`checkins:${id}`, async (): Promise<RestoreOutcome> => {

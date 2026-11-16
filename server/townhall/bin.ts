@@ -3,6 +3,7 @@ import { audit, db, now } from "../db";
 import { withResourceLock } from "../storage";
 import { logger } from "../log";
 import { sessionChanged } from "./live";
+import { townhallPath } from "../../shared/townhall";
 
 const slog = logger("townhall");
 
@@ -14,8 +15,8 @@ const slog = logger("townhall");
  */
 
 const defaults = { folder_id: null, folder_name: "Townhall", size_bytes: null, board_id: null, board_name: null, attachment: false, attachment_of: null, attachment_kind: null } as const;
-type Binned = { id: string; owner_id: string; title: string; deleted_at: string | null; deleted_by: string | null; purge_after: string | null; purge_started_at: string | null; visibility: "private" | "selected" | "all_users" };
-const select = "SELECT id, owner_id, title, deleted_at, deleted_by, purge_after, purge_started_at, visibility FROM townhall_sessions";
+type Binned = { id: string; owner_id: string; title: string; short_id: string; deleted_at: string | null; deleted_by: string | null; purge_after: string | null; purge_started_at: string | null; visibility: "private" | "selected" | "all_users" };
+const select = "SELECT id, owner_id, title, short_id, deleted_at, deleted_by, purge_after, purge_started_at, visibility FROM townhall_sessions";
 
 function purgeNow(id: string, options: { reason: PurgeReason; actorId: string | null; dueBy?: string }): PurgeOutcome {
   return db.transaction((): PurgeOutcome => {
@@ -49,7 +50,7 @@ async function sweep(cutoff: string): Promise<BinSweepCounts> {
 export const townhallBinProvider: BinProvider = {
   list(userId) {
     const rows = db.query(`${select} WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id LIMIT 500`).all(userId) as Binned[];
-    return rows.map((row): BinItem => ({ type: "townhall_session", id: row.id, title: row.title, deleted_at: row.deleted_at!, purge_after: row.purge_after!, purging: row.purge_started_at !== null, ...defaults, can_purge: true }));
+    return rows.map((row): BinItem => ({ type: "townhall_session", id: row.id, title: row.title, deleted_at: row.deleted_at!, purge_after: row.purge_after!, purging: row.purge_started_at !== null, ...defaults, can_purge: true, href: townhallPath(row.title, row.short_id) }));
   },
   restore(id, userId) {
     return withResourceLock(`townhall:${id}`, async (): Promise<RestoreOutcome> => {

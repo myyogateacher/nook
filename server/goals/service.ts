@@ -1138,7 +1138,7 @@ export function goalsOfItem(userId: string, kind: string, id: string): GoalSumma
 // Bin (§B.13): the owner restores and purges; purge detaches children (parent SET NULL).
 
 export function goalsInBin(userId: string) {
-  return db.query("SELECT id, title, deleted_at, purge_after, purge_started_at FROM goals WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 500").all(userId) as Array<{ id: string; title: string; deleted_at: string; purge_after: string; purge_started_at: string | null }>;
+  return db.query("SELECT id, title, short_id, deleted_at, purge_after, purge_started_at FROM goals WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 500").all(userId) as Array<{ id: string; title: string; short_id: string; deleted_at: string; purge_after: string; purge_started_at: string | null }>;
 }
 
 export function restoreGoal(userId: string, id: string) {

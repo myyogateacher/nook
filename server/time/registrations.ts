@@ -70,7 +70,7 @@ export const workKinds: WorkKindAdapter[] = [
 // The Bin: time projects (the owner restores and purges; entries stay, T533)
 
 const binDefaults = { size_bytes: null, board_id: null, board_name: null, attachment: false, attachment_of: null, attachment_kind: null } as const;
-type Binned = { id: string; owner_id: string; name: string; deleted_at: string | null; purge_after: string | null; purge_started_at: string | null; visibility: "private" | "selected" | "all_users" };
+type Binned = { id: string; owner_id: string; name: string; short_id: string; deleted_at: string | null; purge_after: string | null; purge_started_at: string | null; visibility: "private" | "selected" | "all_users" };
 
 function purgeProject(id: string, options: { reason: PurgeReason; actorId: string | null; dueBy?: string }): PurgeOutcome {
   return db.transaction((): PurgeOutcome => {
@@ -97,12 +97,12 @@ async function sweepProjects(cutoff: string): Promise<BinSweepCounts> {
   return counts;
 }
 
-const binSelect = "SELECT id, owner_id, name, deleted_at, purge_after, purge_started_at, visibility FROM time_projects";
+const binSelect = "SELECT id, owner_id, name, short_id, deleted_at, purge_after, purge_started_at, visibility FROM time_projects";
 
 export const projectBin: BinProvider = {
   list(userId) {
     const rows = db.query(`${binSelect} WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id LIMIT 500`).all(userId) as Binned[];
-    return rows.map((row): BinItem => ({ type: "time_project", id: row.id, title: row.name, folder_id: null, folder_name: "Time", deleted_at: row.deleted_at!, purge_after: row.purge_after!, purging: row.purge_started_at !== null, ...binDefaults, can_purge: true }));
+    return rows.map((row): BinItem => ({ type: "time_project", id: row.id, title: row.name, folder_id: null, folder_name: "Time", deleted_at: row.deleted_at!, purge_after: row.purge_after!, purging: row.purge_started_at !== null, ...binDefaults, can_purge: true, href: projectHref(row) }));
   },
   restore(id, userId) {
     return withResourceLock(`time_project:${id}`, async (): Promise<RestoreOutcome> => {

@@ -3182,7 +3182,7 @@ All JSON under `/api/crm`, behind the session, CSRF, and role write gates; error
 | GET | `/contacts/:id/vcard` | — | `text/vcard` |
 | GET / POST, GET / PATCH / DELETE, POST merge | `/companies[/:id][/merge]` | as contacts; 409 `EXISTS` with `companyId` on a taken domain | |
 | GET / POST | `/pipelines?book=` | `{ bookId, name, currency?, stages? }` | `{ pipelines }` / 201 `{ pipeline }` (managers) |
-| PATCH / PUT stages / DELETE | `/pipelines/:id`, `/pipelines/:id/stages` | `{ name?, currency?, stages?: [{ id?, name, kind, probability, rotDays?, color? }], moveDealsTo? }` | `{ pipeline }`; 409 `STAGE_IN_USE`, `PIPELINE_IN_USE`, `LAST_PIPELINE` |
+| PATCH / DELETE | `/pipelines/:id` | `{ name?, currency?, stages?: [{ id?, name, kind, probability, rotDays?, color? }], moveDealsTo? }` | `{ pipeline }`; 409 `STAGE_IN_USE`, `PIPELINE_IN_USE`, `LAST_PIPELINE`. D1386: `PUT /pipelines/:id/stages`, a duplicate of PATCH that nothing called, is gone (405/404) |
 | GET | `/pipelines/:id/board?owner=me&q=` | — | `{ board: { pipeline, currency, columns: [{ stage, count, sum, weighted, deals ≤ 200 }], totals } }` |
 | GET / POST | `/deals` | `?book=&pipeline=&stage=&owner=&status=&company=&list=&q=&filter=&sort=&cursor=` / `{ bookId \| pipelineId, stageId \| stageName, title, value (minor units), currency?, expectedCloseOn?, ownerId?, companyId?, contactIds?, nextStep?, nextStepOn?, tags?, custom? }` | `{ items, nextCursor }` / 201 `{ deal }` |
 | GET / PATCH / DELETE | `/deals/:id` | partial fields, `stageId \| stageName`, `position` (index in the stage), `lostReason`, `expectedRevision?` | `{ deal }` |

@@ -11,6 +11,7 @@ import type { Route } from "../router";
 import { pickAndEmbed } from "../ui/embeds/openEmbedPicker";
 import type { EmbedCardProps } from "../editor/moduleEmbedRegistry";
 import { listGoals } from "./goalsApi";
+import { CardGoalBadge } from "./CardGoalBadge";
 
 const LiveGoalEmbed = lazy(() => import("./GoalEmbed"));
 function GoalEmbedCard(props: EmbedCardProps) {
@@ -64,6 +65,8 @@ export const module: WorkspaceClientModule = {
   },
   quickActions: [{ id: "goals.checkin", label: "Check in on a goal", icon: TrendingUp, href: "/goals?view=mine", hiddenFor: ["viewer", "guest"] }],
   cardSections: [{ id: "goals.card", area: "side", order: 20, component: GoalCardSection }],
+  // D1386: the goal a card contributes to, on its face (one batched read for the board).
+  cardFaceBadges: [{ id: "goals.card-badge", order: 20, component: CardGoalBadge }],
   boardHeaderItems: [{ id: "goals.board", order: 10, component: BoardGoalChip }],
   embedRenderers: [{ kind: "goal", component: GoalEmbedCard }],
   slashItems: [{

@@ -132,9 +132,11 @@ export type WorkspaceClientModule = {
   quickActions?: readonly QuickActionDef[];
   /** An item in every app header's account row (the running timer chip, §B.1). */
   topBarItem?: ComponentType;
-  /** Settings sections it adds (rendered by the module, listed under its name). */
-  settingsSections?: ReadonlyArray<{ id: string; label: string; component: LazyExoticComponent<ComponentType> }>;
   notificationTopics?: readonly NotificationTopicDef[];
+  /**
+   * Icons and labels of its work kinds. D1386: declared by Time, Contacts, Bookings, and Townhall but
+   * not read yet; the link chips (src/ui/links) are to take their icon and label from here.
+   */
   workKindRenderers?: Readonly<Record<string, WorkKindRendererDef>>;
   embedRenderers?: readonly EmbedKindDef[];
   slashItems?: readonly SlashItemDef[];

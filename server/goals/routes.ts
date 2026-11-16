@@ -6,7 +6,7 @@ import { parseJson } from "../validation";
 import { LinkError, linksOf } from "../links/service";
 import {
   addKeyResult, checkIn, checkinTargets, closeGoal, closePeriod, createGoal, createPeriod, deleteGoal, deleteKeyResult, deletePeriod, ensureSweep, getGoal, goalHistory, goalsOfItem,
-  GoalError, krHistory, listCheckins, listGoals, listPeriods, previewSource, progressSources, reopenGoal, requireGoal, updateGoal, updateKeyResult, updatePeriod
+  GoalError, goalsOfCards, krHistory, MAX_BADGE_CARDS, listCheckins, listGoals, listPeriods, previewSource, progressSources, reopenGoal, requireGoal, updateGoal, updateKeyResult, updatePeriod
 } from "./service";
 import { checkinSchema, closeSchema, goalInputSchema, goalPatchSchema, krInputSchema, krPatchSchema, periodPatchSchema, periodSchema, sourceSchema } from "./schemas";
 import { isWorkKind } from "../../shared/workRefs";
@@ -41,6 +41,12 @@ export function registerGoalRoutes(router: ModuleRouter) {
   router.get("/api/goals/sources", handle(() => ({ sources: progressSources() })));
   // Goals you can check in on from a standup answer (§C5, D1043).
   router.get("/api/goals/checkin-targets", handle((_c, userId) => ({ goals: checkinTargets(userId) })));
+  // D1386: the card face's goal badge, for every card on screen in one read.
+  router.get("/api/goals/for-cards", handle((c, userId) => {
+    const ids = (c.req.query("ids") ?? "").split(",").map((id) => id.trim().toLowerCase()).filter((id) => /^[0-9a-f-]{36}$/.test(id));
+    if (ids.length > MAX_BADGE_CARDS) return c.json({ error: `Ask for at most ${MAX_BADGE_CARDS} cards at a time`, code: "INVALID" }, 400);
+    return { cards: goalsOfCards(userId, ids) };
+  }));
   router.get("/api/goals/for-item", handle((c, userId) => {
     const kind = c.req.query("kind") ?? "";
     const id = (c.req.query("id") ?? "").toLowerCase();

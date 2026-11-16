@@ -144,3 +144,9 @@
   .goals-board-chip { min-height: 44px; max-width: none; padding: 0 12px; }
   .goals-board-chip-title, .goals-board-chip-more { display: none; }
 }
+/* D1386: a key result's progress over time, beside its percentage. */
+.goals-kr-spark { flex: none; color: #f5cf79; overflow: visible; }
+/* D1386: the card face goal badge; health tones as the goal chips. */
+.goals-card-badge.health-at_risk { color: #f5cf79; }
+.goals-card-badge.health-off_track { color: #f08a8a; }
+.goals-card-badge.health-on_track { color: #8fd19e; }

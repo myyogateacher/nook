@@ -17,7 +17,7 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 ## Leftovers (lane W3-WIRE, D1049)
 
 - [ ] `scripts/workspaceAgentEval.ts` (scripted provider: log time from a summary, check in on a goal, update a deal, answer a standup, all as proposals) and its real-model run.
-- [ ] A time-entry change hook for the Goals `time` source (it refreshes on reads and the 5-minute sweep today); a card face goal badge (needs a batched read).
+- [ ] A time-entry change hook for the Goals `time` source (it refreshes on reads and the 5-minute sweep today).
 - [ ] Standup answer suggestions from the calendar (D936, deferred by D1194): the answer sheet suggests cards you finished, logged time on, or have due, and last round's plan, but not the day's events from your calendars (Time's "From your day" query, D890, could be shared).
 
 ## Waiting on the operator

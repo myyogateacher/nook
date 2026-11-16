@@ -12,7 +12,7 @@ import { afterCursor, compileFilters, sortSql } from "./query";
 import type { ListInput } from "./records";
 
 /** The Contacts email for a deal event (D1370): ids only, read again as the recipient when sent. */
-const dealMail = (topic: string, dealId: string, actorId: string) => ({ template: "crm.update", payload: { topic, kind: "deal", id: dealId, actorId } });
+const dealMail = (event: string, dealId: string, actorId: string) => ({ template: "crm.update", payload: { topic: event, kind: "deal", id: dealId, actorId } });
 
 /**
  * Pipelines, stages, and deals (§D.5, D962, D964): a deal's status follows its stage's kind (won and

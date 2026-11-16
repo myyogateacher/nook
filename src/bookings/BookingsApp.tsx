@@ -73,7 +73,8 @@ export default function BookingsApp(props: WorkspaceAppProps) {
 
   if (segment === "b" && second) return home(<BookingDetail bookingRef={second} onBack={() => window.history.length > 1 ? window.history.back() : go([])} onOpenPath={props.onOpenPath} flash={flash} readOnly={readOnly} />, null, false);
   if (segment === "types" && second) return home(<TypeEditor typeRef={second} onBack={() => go(["types"])} flash={flash} readOnly={readOnly} userId={props.userId}
-    onReplace={(href) => navigate({ app: "bookings", path: href.split("/").filter(Boolean).slice(1), search: "" } as Route, { replace: true })} />, "types", false);
+    initialSection={new URLSearchParams(route.search).get("section")}
+    onReplace={(href) => navigate({ app: "bookings", path: href.split("/").filter(Boolean).slice(1), search: route.search ?? "" } as Route, { replace: true })} />, "types", false);
   return home(<>
     {(tab === "upcoming" || tab === "past" || tab === "cancelled") && <BookingList view={tab} query={query} onOpen={(booking) => go(["b", booking.shortId])} flash={flash} readOnly={readOnly} onNewType={() => go(["types"])} />}
     {tab === "types" && <TypesView query={query} onOpen={(type) => go(["types", type.href.split("/").pop()!])} onCreate={() => void createType()} flash={flash} readOnly={readOnly} />}

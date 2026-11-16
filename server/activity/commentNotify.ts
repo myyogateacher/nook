@@ -11,6 +11,7 @@ import { activityFooter, actorsPhrase, itemTitle, personName } from "../mail/tem
 import { appLink } from "../mail/links";
 import { mentionNotifyModule, mentionReaders } from "./mentions";
 import { WORK_KIND_LABELS, isWorkKind, type WorkKind } from "../../shared/workRefs";
+import { commentsPath } from "../../shared/itemActivity";
 
 /**
  * Item comment notifications (docs/plan/WORKSPACE_MODULES.md §B.5, D1360–D1362, T691): a new comment
@@ -99,7 +100,7 @@ export function notifyComment(input: { kind: WorkKind; itemId: string; commentId
     const summary = adapter.resolve([input.itemId], { userId: userIds[0]! }).get(input.itemId);
     const result = notify({
       userIds, module, topic: COMMENT_TOPIC, actor: input.authorId, title,
-      href: summary?.href ?? "/notifications", item: { kind: input.kind, id: input.itemId }, dedupeKey: `${reply ? "comment-reply" : "comment"}:${input.kind}:${input.itemId}`
+      href: summary ? commentsPath(input.kind, summary.href) : "/notifications", item: { kind: input.kind, id: input.itemId }, dedupeKey: `${reply ? "comment-reply" : "comment"}:${input.kind}:${input.itemId}`
     });
     mailComments(result.notified, { kind: input.kind, id: input.itemId, commentId: input.commentId, actorId: input.authorId, reply });
     notified.push(...result.notified);
@@ -171,7 +172,7 @@ registerMailTemplate(COMMENT_MAIL_TEMPLATE, {
       const summary = adapter.resolve([ref.id], { userId: recipient.id }).get(ref.id);
       if (!summary) continue;
       const actor = (db.query("SELECT display_name FROM users WHERE id = ?").get(ref.actorId) as { display_name: string } | null)?.display_name ?? "Someone";
-      comments.push({ actor, title: summary.title, kindLabel: WORK_KIND_LABELS[ref.kind], href: appLink(summary.href), reply: ref.reply === true });
+      comments.push({ actor, title: summary.title, kindLabel: WORK_KIND_LABELS[ref.kind], href: appLink(commentsPath(ref.kind, summary.href)), reply: ref.reply === true });
     }
     return comments.length ? { data: { comments: comments.reverse(), total: comments.length } } : { skip: "access_lost" };
   }

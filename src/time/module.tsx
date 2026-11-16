@@ -24,10 +24,11 @@ export function parseTimeRoute(segments: string[], search: string): WorkspaceRou
     const week = params.get("week");
     return { path: ["timesheet"], search: week && /^\d{4}-\d{2}-\d{2}$/.test(week) ? `?week=${week}` : "" };
   }
-  // A project's view rides in `?tab=` (the week-approval notification opens `?tab=approvals`, D1190).
+  // A project's view rides in `?tab=` (the week-approval notification opens `?tab=approvals`, D1190;
+  // `?tab=activity` the project's history and comments, D1367).
   if (first === "projects" && second && segments.length === 2) {
     const view = params.get("tab");
-    return view === "team" || view === "approvals" ? { path: ["projects", second], search: `?tab=${view}` } : { path: ["projects", second] };
+    return view === "team" || view === "approvals" || view === "activity" ? { path: ["projects", second], search: `?tab=${view}` } : { path: ["projects", second] };
   }
   if (first && TABS.has(first) && segments.length === 1) return { path: [first] };
   const entry = params.get("entry");

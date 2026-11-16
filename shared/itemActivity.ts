@@ -153,3 +153,18 @@ export type ItemCommentAttachment =
 
 /** Files one comment may carry (D1363). */
 export const ITEM_COMMENT_FILES_MAX = 10;
+
+/**
+ * Where an item's comments are on screen (D1367): a container's sit in its Activity tab or section, so a
+ * comment notification or email about a form, standup, townhall, booking type, or time project opens
+ * there; everything else shows its comments on its own page.
+ */
+export function commentsPath(kind: WorkKind, href: string): string {
+  if (href.includes("?") || href.includes("#")) return href;
+  switch (kind) {
+    case "form": case "checkin": return `${href}/activity`;
+    case "townhall_session": case "time_project": return `${href}?tab=activity`;
+    case "booking_type": return `${href}?section=activity`;
+    default: return href;
+  }
+}

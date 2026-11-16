@@ -11,6 +11,9 @@ import { api } from "../api";
 import type { EmbedCardProps } from "../editor/moduleEmbedRegistry";
 import { bookTimeMemberAction } from "./TeamBookTime";
 
+/** The booking type editor's sections a link may open (TypeEditor.tsx SECTIONS). */
+export const TYPE_EDITOR_SECTIONS: readonly string[] = ["general", "when", "where", "hosts", "calendars", "intake", "after", "sharing", "activity"];
+
 /**
  * Bookings (lane BOOK, docs/plan/WORKSPACE_MODULES.md §D.6): the client module. The app is its own
  * lazy chunk; the public pages (`/p/book/…`) another, loaded without the session code (D831).
@@ -68,7 +71,12 @@ export const module: WorkspaceClientModule = {
   app: BookingsApp,
   launcher: true,
   sections: BOOKINGS_SECTIONS,
-  parseRoute: (segments) => ({ path: segments.slice(0, 2).map((segment) => decodeURIComponent(segment)) }),
+  // A booking type's editor section rides in `?section=` (D1367: `?section=activity` opens its history and comments).
+  parseRoute: (segments, search) => {
+    const path = segments.slice(0, 2).map((segment) => decodeURIComponent(segment));
+    const section = new URLSearchParams(search).get("section");
+    return path[0] === "types" && path[1] && section && TYPE_EDITOR_SECTIONS.includes(section) ? { path, search: `?section=${section}` } : { path };
+  },
   todaySections: {
     bookingsToday: {
       title: "Bookings", group: "today", empty: "no bookings today or tomorrow", app: "Bookings",

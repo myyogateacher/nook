@@ -32,7 +32,7 @@ const DURATION_CHOICES = [15, 20, 30, 45, 60, 90, 120];
 type Draft = BookingType;
 type Option = { id: string; name: string };
 
-export function TypeEditor({ typeRef, onBack, flash, readOnly, userId, onReplace }: { typeRef: string; onBack: () => void; flash: (message: string) => void; readOnly: boolean; userId: string; onReplace: (href: string) => void }) {
+export function TypeEditor({ typeRef, onBack, flash, readOnly, userId, onReplace, initialSection = null }: { typeRef: string; onBack: () => void; flash: (message: string) => void; readOnly: boolean; userId: string; onReplace: (href: string) => void; /** `?section=` (D1367): opened once the type has loaded. */ initialSection?: string | null }) {
   const [saved, setSaved] = useState<BookingType | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +48,17 @@ export function TypeEditor({ typeRef, onBack, flash, readOnly, userId, onReplace
   const [publishing, setPublishing] = useState(false);
   const [hosts, setHosts] = useState<PersonSummary[]>([]);
   const questionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A link to one section (`?section=activity` from a notification or an email) scrolls to it once drawn.
+  const openedSection = useRef(false);
+  const loaded = draft !== null;
+  useEffect(() => {
+    if (!loaded || openedSection.current) return;
+    openedSection.current = true;
+    const target = SECTIONS.find((item) => item.id === initialSection);
+    if (!target || target.id === "general") return;
+    setSection(target.id);
+    requestAnimationFrame(() => document.getElementById(`bk-sec-${target.id}`)?.scrollIntoView({ block: "start" }));
+  }, [loaded, initialSection]);
 
   useEffect(() => {
     let live = true;

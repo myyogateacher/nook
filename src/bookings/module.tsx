@@ -82,6 +82,14 @@ export const module: WorkspaceClientModule = {
   ],
   workKindRenderers: { booking: { icon: CalendarCheck2, label: "Booking" }, booking_type: { icon: CalendarPlus, label: "Booking type" } },
   embedRenderers: [{ kind: "booking_type", component: BookingLinkEmbed }],
+  // A booking type's and a booking's history (D1375): the kinds server/bookings/index.ts registers.
+  activityRenderers: {
+    type_renamed: (entry) => `renamed it to “${entry.payload.to?.label ?? ""}”`,
+    type_updated: () => "changed the settings",
+    booking_status: (entry) => `marked it ${(entry.payload.to?.label ?? "changed").toLowerCase()}`,
+    booking_rescheduled: () => "rescheduled it",
+    meeting_booked: (entry) => `booked ${entry.payload.item?.label ?? "a meeting"}`
+  },
   slashItems: [{
     label: "Booking link", hint: "Embed one of your booking types", keywords: "booking book meeting schedule calendly link",
     // A picker of your active public types (D1059; D1025 embedded the first one).

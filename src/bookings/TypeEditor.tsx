@@ -10,17 +10,21 @@ import type { PersonSummary } from "../../shared/people";
 import { bookingsApi, durationLabel, timeLabel, viewerZone, type BookingType, type Schedule, type SlotDays } from "./api";
 import { LOCATION_ICONS } from "./BookingsApp";
 import { WorkspaceAccess } from "../access/WorkspaceAccess";
+import { ItemTimeline } from "../ui/activity/ItemTimeline";
+import { canCommentAtLevel } from "../ui/activity/activityAccess";
+import { module as bookingsModule } from "./module";
 
 /**
  * The booking type editor (§D.6 UI, §E.4 editors): sections General, When, Where, Hosts, Calendars,
- * Intake, After booking, and Sharing, with a left section list on desktop and a section strip on
+ * Intake, After booking, Sharing, and Activity (its history and comments, D1375), with a left section list on desktop and a section strip on
  * phones; Save sends only what changed with the type's revision (409 when someone else saved).
  * A live preview of the next free times sits at the right on wide screens.
  */
 
 const SECTIONS = [
   { id: "general", label: "General" }, { id: "when", label: "When" }, { id: "where", label: "Where" }, { id: "hosts", label: "Hosts" },
-  { id: "calendars", label: "Calendars" }, { id: "intake", label: "Intake" }, { id: "after", label: "After booking" }, { id: "sharing", label: "Sharing" }
+  { id: "calendars", label: "Calendars" }, { id: "intake", label: "Intake" }, { id: "after", label: "After booking" }, { id: "sharing", label: "Sharing" },
+  { id: "activity", label: "Activity" }
 ] as const;
 const COLORS = ["#f6c453", "#60a5fa", "#34d399", "#f472b6", "#a78bfa", "#fb923c", "#94a3b8"];
 const DURATION_CHOICES = [15, 20, 30, 45, 60, 90, 120];
@@ -235,6 +239,9 @@ export function TypeEditor({ typeRef, onBack, flash, readOnly, userId, onReplace
           {manage && <div className="bk-access"><strong>Who in the workspace can see or edit it</strong>
             <WorkspaceAccess kind="booking_type" id={saved.id} title={saved.title} canManage onSaved={() => flash("Access saved")} /></div>}
         </fieldset>
+        <section id="bk-sec-activity" className="bk-panel" aria-label="Activity">
+          <ItemTimeline kind="booking_type" id={saved.id} title="Activity" renderers={bookingsModule.activityRenderers} canComment={!readOnly && canCommentAtLevel(saved.level)} refreshKey={String(saved.revision)} />
+        </section>
       </div>
       <SlotPreview type={saved} />
     </div>

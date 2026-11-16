@@ -21,10 +21,13 @@ import { PollView } from "./PollView";
 import { Presenter } from "./Presenter";
 import { CardsSheet, CommentsSheet, MergeSheet, PollSheet, SessionSheet, ShareSheet } from "./Sheets";
 import { formatWhen, StateChip } from "./common";
+import { ItemTimeline } from "../ui/activity/ItemTimeline";
+import { canCommentAtLevel } from "../ui/activity/activityAccess";
+import { module as townhallModule } from "./module";
 
 const AccessSheet = lazy(() => import("../access/AccessSheet").then((module) => ({ default: module.AccessSheet })));
 
-type Tab = "qa" | "polls" | "recap";
+type Tab = "qa" | "polls" | "recap" | "activity";
 type Filter = "all" | "review" | "answered" | "starred" | "mine" | "hidden";
 type Sheet = { kind: "edit" } | { kind: "poll" } | { kind: "comments"; questionId: string } | { kind: "merge"; questionId: string } | { kind: "cards"; questionIds: string[] } | { kind: "share" } | { kind: "access" } | null;
 
@@ -37,7 +40,7 @@ const toQa = (question: TownhallQuestionView): QaQuestion => ({
 export function SessionPage(props: WorkspaceAppProps & { segment: string; present: boolean }) {
   const { segment, present, navigate, flash } = props;
   const search = new URLSearchParams(props.route.search);
-  const tab: Tab = (["qa", "polls", "recap"] as const).find((value) => value === search.get("tab")) ?? "qa";
+  const tab: Tab = (["qa", "polls", "recap", "activity"] as const).find((value) => value === search.get("tab")) ?? "qa";
   const [filter, setFilter] = useState<Filter>(search.get("filter") === "review" ? "review" : "all");
   const [sort, setSort] = useState<"top" | "recent">("top");
   const [query, setQuery] = useState("");
@@ -48,6 +51,8 @@ export function SessionPage(props: WorkspaceAppProps & { segment: string; presen
   const session = state?.session ?? null;
   const you = state?.you ?? null;
   const host = Boolean(you?.canModerate);
+  // Someone with a level on the session (not an audience-link participant) sees its Activity (D1375).
+  const member = Boolean(you && you.level !== "public" && you.level !== "none");
 
   const go = useCallback((next: { tab?: Tab; present?: boolean; replace?: boolean }) => {
     const params = new URLSearchParams();
@@ -155,7 +160,7 @@ export function SessionPage(props: WorkspaceAppProps & { segment: string; presen
     className="th-session"
     primary={host ? { label: stateAction.label, icon: stateAction.icon, onClick: () => { void changeState(); }, shortcut: false } : { label: "Present", icon: Presentation, onClick: () => go({ present: true }), shortcut: false }}
     menu={menu}
-    tabs={[{ id: "qa", label: "Q&A", count: state.stats.questions }, { id: "polls", label: "Polls", count: state.polls.length }, { id: "recap", label: "Recap" }]}
+    tabs={[{ id: "qa", label: "Q&A", count: state.stats.questions }, { id: "polls", label: "Polls", count: state.polls.length }, { id: "recap", label: "Recap" }, ...(member ? [{ id: "activity", label: "Activity" }] : [])]}
     activeTab={tab} onTab={(id) => go({ tab: id as Tab })}
     filters={filters}
     search={tab === "qa" ? { value: query, onChange: setQuery, placeholder: "Find a question", label: "Find a question" } : undefined}>
@@ -219,6 +224,10 @@ export function SessionPage(props: WorkspaceAppProps & { segment: string; presen
 
     {tab === "recap" && <RecapTab sessionId={session.id} host={host} revision={`${session.revision}:${state.stats.questions}:${state.stats.answered}:${state.polls.length}`}
       onCards={(ids) => setSheet({ kind: "cards", questionIds: ids })} onOpenPath={props.onOpenPath} recapNote={session.recapNote} />}
+
+    {/* The session's history and comments (D1375): members with a level only, never the audience link. */}
+    {tab === "activity" && member && <div className="th-activity"><ItemTimeline kind="townhall_session" id={session.id} canComment={canCommentAtLevel(you.level)} title="Activity"
+      renderers={townhallModule.activityRenderers} refreshKey={`${session.revision}:${state.stats.questions}:${state.polls.length}`} /></div>}
 
     {sheet?.kind === "edit" && <SessionSheet session={session} onClose={() => setSheet(null)} onSaved={() => { void live.refresh(); flash("Session saved"); }} />}
     {sheet?.kind === "poll" && <PollSheet sessionId={session.id} live={session.state === "live"} onClose={() => { setSheet(null); void live.refresh(); }} />}

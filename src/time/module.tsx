@@ -66,6 +66,15 @@ export const module: WorkspaceClientModule = {
     time_entry: { icon: Clock, label: "Time entry" },
     time_project: { icon: FolderClock, label: "Time project" }
   },
+  // A project's history (D1375): the kinds server/time/projects.ts registers.
+  activityRenderers: {
+    time_project_created: () => "created this project",
+    time_project_changed: (entry) => `renamed it to “${entry.payload.to?.label ?? ""}”`,
+    time_week_submitted: (entry) => `submitted the week of ${entry.payload.extra?.weekStart ?? ""}`.trim(),
+    time_week_approved: (entry) => `approved the week of ${entry.payload.extra?.weekStart ?? ""}`.trim(),
+    time_week_rejected: (entry) => `returned the week of ${entry.payload.extra?.weekStart ?? ""}`.trim(),
+    time_week_unlocked: (entry) => `unlocked the week of ${entry.payload.extra?.weekStart ?? ""}`.trim()
+  },
   searchRenderer: {
     scope: "time", label: "Time", icon: Clock,
     row: (result) => ({ key: `${String(result.kind)}:${String(result.id)}`, title: String(result.title ?? ""), meta: typeof result.snippet === "string" ? result.snippet : undefined, href: String(result.href ?? "/time") })

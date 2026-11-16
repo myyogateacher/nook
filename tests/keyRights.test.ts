@@ -59,7 +59,8 @@ function setPolicies(actorId: string, patch: Partial<Policies>) {
 }
 
 // Uploads everywhere U0 (D402): the generic attachment reads come with every host module's read scope.
-const NOTES_READ = ["list_attachments", "list_folders", "list_notes", "read_attachment_text", "read_note", "search_notes"];
+// find_people_to_mention (docs/plan/MENTIONS.md D1331) comes with every read scope that has items to mention on.
+const NOTES_READ = ["find_people_to_mention", "list_attachments", "list_folders", "list_notes", "read_attachment_text", "read_note", "search_notes"];
 
 describe("Nook key rights", () => {
   test("tools/list follows grants: notes:read plus tasks:write over all boards shows exactly those tools", async () => {

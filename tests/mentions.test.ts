@@ -51,19 +51,21 @@ beforeAll(async () => {
 
 describe("GET /api/people/mentionable (D1323, T660, T661)", () => {
   test("readers first; members see non-readers marked canRead false; never the caller; no emails", async () => {
+    // Other files' people may match "mention" too (the suite shares one database): look at this file's rows.
     const found = await api(owner, "GET", `/people/mentionable?kind=card&id=${cardId}&q=mention&limit=20`);
     expect(found.status).toBe(200);
     const people = found.body.people as Array<{ id: string; displayName: string; canRead: boolean; avatarUrl: string | null }>;
     expect(people.map((person) => person.id)).not.toContain(owner.userId);
-    const readerRow = people.find((person) => person.id === reader.userId)!;
-    const outsiderRow = people.find((person) => person.id === outsider.userId)!;
-    expect(readerRow).toMatchObject({ displayName: "Mention Reader", canRead: true });
-    expect(outsiderRow).toMatchObject({ displayName: "Mention Outsider", canRead: false });
-    expect(people.indexOf(readerRow)).toBeLessThan(people.indexOf(outsiderRow));
+    // Readers first: the board's two readers lead, whoever else matches.
+    expect(people.slice(0, 2).map((person) => person.id).sort()).toEqual([reader.userId, guest.userId].sort());
+    expect(people.find((person) => person.id === reader.userId)).toMatchObject({ displayName: "Mention Reader", canRead: true });
+    const outsiderRows = (await api(owner, "GET", `/people/mentionable?kind=card&id=${cardId}&q=mention%20outsider`)).body.people as typeof people;
+    expect(outsiderRows.find((person) => person.id === outsider.userId)).toMatchObject({ displayName: "Mention Outsider", canRead: false });
     expect(JSON.stringify(people)).not.toContain("@");
     // The query filters by name.
-    const filtered = (await api(owner, "GET", `/people/mentionable?kind=card&id=${cardId}&q=reader`)).body.people as Array<{ id: string }>;
-    expect(filtered.map((person) => person.id)).toEqual([reader.userId]);
+    const filtered = (await api(owner, "GET", `/people/mentionable?kind=card&id=${cardId}&q=mention%20reader`)).body.people as Array<{ id: string }>;
+    expect(filtered.map((person) => person.id)).toContain(reader.userId);
+    expect(filtered.map((person) => person.id)).not.toContain(outsider.userId);
   });
 
   test("a guest gets readers only; someone who cannot read the item gets 404; bad input is refused", async () => {

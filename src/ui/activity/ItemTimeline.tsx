@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { ArrowDownWideNarrow, ArrowUpNarrowWide, History, Link2, MessageSquare, Pencil, Trash2 } from "lucide-react";
 import { relativeTime } from "../../files/format";
 import { Avatar } from "../Avatar";
 import { errorText } from "../notify";
 import { addItemComment, deleteItemComment, editItemComment, itemActivity, itemComments } from "../workspaceApi";
 import { ITEM_COMMENT_MAX, type ItemActivityEntry, type ItemComment } from "../../../shared/itemActivity";
-import type { WorkKind } from "../../../shared/workRefs";
+import { WORK_KIND_LABELS, type WorkKind } from "../../../shared/workRefs";
+import { MentionTextarea } from "../mentions/MentionTextarea";
+import { MentionText } from "../mentions/Mentions";
+import type { MentionTarget } from "../mentions/mentionsApi";
 import "../workspace.css";
 
 /**
@@ -63,7 +66,7 @@ function ActivityLine({ entry, renderers }: { entry: ItemActivityEntry; renderer
   </li>;
 }
 
-function CommentBox({ initial = "", label, submitLabel, onSubmit, onCancel, autoFocus = false }: { initial?: string; label: string; submitLabel: string; onSubmit: (body: string) => Promise<void>; onCancel?: () => void; autoFocus?: boolean }) {
+function CommentBox({ initial = "", label, submitLabel, onSubmit, onCancel, autoFocus = false, target }: { initial?: string; label: string; submitLabel: string; onSubmit: (body: string) => Promise<void>; onCancel?: () => void; autoFocus?: boolean; target: MentionTarget }) {
   const [body, setBody] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,8 +79,8 @@ function CommentBox({ initial = "", label, submitLabel, onSubmit, onCancel, auto
     finally { setBusy(false); }
   };
   return <div className="ui-comment-box">
-    <textarea aria-label={label} value={body} maxLength={ITEM_COMMENT_MAX} rows={2} autoFocus={autoFocus} placeholder="Write a comment… (⌘ Enter to send)" disabled={busy}
-      onChange={(event) => setBody(event.target.value)}
+    <MentionTextarea target={target} noun={WORK_KIND_LABELS[target.kind].toLowerCase()} aria-label={label} value={body} maxLength={ITEM_COMMENT_MAX} rows={2} autoFocus={autoFocus} placeholder="Write a comment… @ to mention, ⌘ Enter to send" disabled={busy}
+      onValueChange={setBody}
       onKeyDown={(event) => {
         if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submit(); }
         if (event.key === "Escape" && onCancel) { event.preventDefault(); event.stopPropagation(); onCancel(); }
@@ -90,7 +93,7 @@ function CommentBox({ initial = "", label, submitLabel, onSubmit, onCancel, auto
   </div>;
 }
 
-function CommentItem({ comment, replies, canComment, onReply, onEdit, onDelete }: { comment: ItemComment; replies: readonly ItemComment[]; canComment: boolean; onReply?: (body: string) => Promise<void>; onEdit: (comment: ItemComment, body: string) => Promise<void>; onDelete: (comment: ItemComment) => Promise<void> }) {
+function CommentItem({ comment, replies, canComment, onReply, onEdit, onDelete, target }: { comment: ItemComment; replies: readonly ItemComment[]; canComment: boolean; onReply?: (body: string) => Promise<void>; onEdit: (comment: ItemComment, body: string) => Promise<void>; onDelete: (comment: ItemComment) => Promise<void>; target: MentionTarget }) {
   const [editing, setEditing] = useState(false);
   const [replying, setReplying] = useState(false);
   return <li className="ui-comment">
@@ -105,13 +108,13 @@ function CommentItem({ comment, replies, canComment, onReply, onEdit, onDelete }
       </span>}
     </header>
     {editing
-      ? <CommentBox initial={comment.body} label="Edit comment" submitLabel="Save" autoFocus onCancel={() => setEditing(false)} onSubmit={async (body) => { await onEdit(comment, body); setEditing(false); }} />
-      : !comment.deleted && <p className="ui-comment-body">{comment.body}</p>}
+      ? <CommentBox target={target} initial={comment.body} label="Edit comment" submitLabel="Save" autoFocus onCancel={() => setEditing(false)} onSubmit={async (body) => { await onEdit(comment, body); setEditing(false); }} />
+      : !comment.deleted && <p className="ui-comment-body"><MentionText text={comment.body} /></p>}
     {replies.length > 0 && <ol className="ui-comment-replies" aria-label="Replies">
-      {replies.map((reply) => <CommentItem key={reply.id} comment={reply} replies={[]} canComment={false} onEdit={onEdit} onDelete={onDelete} />)}
+      {replies.map((reply) => <CommentItem key={reply.id} comment={reply} replies={[]} canComment={false} onEdit={onEdit} onDelete={onDelete} target={target} />)}
     </ol>}
     {onReply && canComment && !comment.deleted && (replying
-      ? <CommentBox label="Reply" submitLabel="Reply" autoFocus onCancel={() => setReplying(false)} onSubmit={async (body) => { await onReply(body); setReplying(false); }} />
+      ? <CommentBox target={target} label="Reply" submitLabel="Reply" autoFocus onCancel={() => setReplying(false)} onSubmit={async (body) => { await onReply(body); setReplying(false); }} />
       : <button type="button" className="ui-text-button" onClick={() => setReplying(true)}>Reply</button>)}
   </li>;
 }
@@ -171,7 +174,8 @@ export function ItemTimeline({ kind, id, canComment, renderers = {}, title = "Co
   const items = mergeTimeline(comments ?? [], activity, { ...prefs, showActivity });
   const repliesOf = (parentId: string) => (comments ?? []).filter((comment) => comment.parentId === parentId);
   const newest = prefs.order === "desc";
-  const composer = canComment && <CommentBox label="Add a comment" submitLabel="Comment" onSubmit={(body) => add(body)} />;
+  const target = useMemo<MentionTarget>(() => ({ kind, id }), [kind, id]);
+  const composer = canComment && <CommentBox target={target} label="Add a comment" submitLabel="Comment" onSubmit={(body) => add(body)} />;
 
   return <section className="ui-timeline" aria-labelledby={headingId} aria-busy={comments === null || undefined}>
     <header className="ui-panel-header">
@@ -192,7 +196,7 @@ export function ItemTimeline({ kind, id, canComment, renderers = {}, title = "Co
       : <ol className="ui-timeline-list" aria-label={showActivity ? "Comments and activity" : "Comments"}>
         {items.map((item) => item.type === "activity"
           ? <ActivityLine key={item.id} entry={item.entry} renderers={renderers} />
-          : <CommentItem key={item.id} comment={item.comment} replies={repliesOf(item.id)} canComment={canComment} onReply={(body) => add(body, item.id)} onEdit={edit} onDelete={remove} />)}
+          : <CommentItem key={item.id} comment={item.comment} replies={repliesOf(item.id)} canComment={canComment} onReply={(body) => add(body, item.id)} onEdit={edit} onDelete={remove} target={target} />)}
         {items.length === 0 && <li className="ui-timeline-empty">{canComment ? "No comments yet. Start the conversation below." : "No comments yet."}</li>}
       </ol>}
     {showActivity && cursor && <button type="button" className="ui-text-button" onClick={() => { void olderActivity().catch(() => undefined); }}>Load earlier activity</button>}

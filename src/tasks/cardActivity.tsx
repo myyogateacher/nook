@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Archive, ArchiveRestore, ArrowDownWideNarrow, Clock, OctagonAlert, Target, ArrowRight, ArrowRightLeft, ArrowUpNarrowWide, CalendarClock, CalendarPlus, Flag, FlagOff, Gauge, IterationCw, Layers, Link2, Network,
-  Paperclip, Plus, SignalHigh, Tag, TextAlignStart, Trash2, Type, Unlink, UserMinus, UserPlus, type LucideIcon
+  Paperclip, Plus, SignalHigh, Tag, TextAlignStart, Trash2, Type, Unlink, UserMinus, UserPlus, type LucideIcon, AtSign
 } from "lucide-react";
 import { relativeTime, formatDateTime } from "../files/format";
 import { appName } from "../appName";
@@ -100,7 +100,9 @@ export const ACTIVITY_RENDERERS: Record<CardActivityKind, Renderer> = {
   time_logged: item("logged", Clock),
   goal_linked: item("linked this to the goal", Target),
   goal_unlinked: item("unlinked this from the goal", Target),
-  blocked_by_checkin: item("flagged this as blocked in", OctagonAlert)
+  blocked_by_checkin: item("flagged this as blocked in", OctagonAlert),
+  // @mentions (docs/plan/MENTIONS.md D1332): one row per person notified.
+  mentioned: item("mentioned", AtSign)
 };
 
 const VIA_LABELS: Record<string, string> = { mcp: "via MCP", rest: "via the API", agent: "via an agent", proposal: "via an approved proposal" };

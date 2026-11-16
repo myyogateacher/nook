@@ -12,6 +12,7 @@ import TableCell from "@tiptap/extension-table-cell";
 import { WhiteboardEmbed } from "./whiteboardEmbed";
 import { FileChip } from "./fileChip";
 import { ModuleEmbed } from "./moduleEmbed";
+import { Mention } from "./mention";
 
 // Options for the marked lexer used by @tiptap/markdown. GFM enables pipe tables and task lists.
 export const markdownOptions = { gfm: true, breaks: false };
@@ -46,6 +47,8 @@ export function noteContentExtensions(): AnyExtension[] {
     FileChip,
     // A module embed (D835): `[Poll](/forms/<slug>-<shortid> "nook-embed")` alone in its paragraph,
     // only for paths a registered kind claims; anything else stays a link.
-    ModuleEmbed
+    ModuleEmbed,
+    // An @mention (docs/plan/MENTIONS.md D1320): `@[Name](user:<uuid>)`, drawn as a chip.
+    Mention
   ];
 }

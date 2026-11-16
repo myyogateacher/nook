@@ -11,6 +11,8 @@ import {
   Strikethrough, TableColumnsSplit, TableRowsSplit, type LucideIcon
 } from "lucide-react";
 import { SlashCommands } from "./slash";
+import { MentionSuggestion } from "./mention";
+import type { MentionTarget } from "../ui/mentions/mentionsApi";
 import { markdownOptions, noteContentExtensions } from "./extensions";
 import { ImageInsert } from "./imageInsert";
 import { IMAGE_REJECTED_MESSAGE, isInsertableImageType, uploadNoteImage } from "./imageUpload";
@@ -83,12 +85,19 @@ type Props = {
   onUploadsChange?: (count: number) => void;
   /** U4: filled with the editor's upload control, so the host can cancel every upload before leaving. */
   uploadControl?: { current: NoteUploadControl | null };
+  /**
+   * The item this text belongs to: typing "@" lists the people who can read it (docs/plan/MENTIONS.md).
+   * Without it, mentions already in the text still show as chips, but none can be added.
+   */
+  mentionTarget?: MentionTarget | null;
+  /** The item's kind word for people who cannot read it ("Can't see this card"). */
+  mentionNoun?: string;
 };
 
 /** What the note's host may do with the editor's uploads (leaving mid-upload). */
 export type NoteUploadControl = { count: () => number; cancelAll: () => void };
 
-export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice, uploadImage, attachHost, onFileConfirmed, label = "Note content", placeholder = "Start writing… Type / for commands", autoFocus = false, onUploadsChange, uploadControl }: Props) {
+export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice, uploadImage, attachHost, onFileConfirmed, label = "Note content", placeholder = "Start writing… Type / for commands", autoFocus = false, onUploadsChange, uploadControl, mentionTarget = null, mentionNoun = "item" }: Props) {
   // The editor is created once, so the upload handler reads the latest props through a ref.
   const latest = useRef({ folderId, onNotice, uploadImage, attachHost, onFileConfirmed, onUploadsChange });
   latest.current = { folderId, onNotice, uploadImage, attachHost, onFileConfirmed, onUploadsChange };
@@ -285,7 +294,9 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
       ImageInsert.configure({ onFiles: (activeEditor, files) => { void (latest.current.attachHost ? attachFiles(activeEditor, files) : insertImages(activeEditor, files)); } }),
       ...(attachHost ? [NoteAttach.configure({ onOpen: (activeEditor: Editor, what: "sheet" | "files") => setAttachLayer({ editor: activeEditor, what }) })] : []),
       ...(whiteboards ? [WhiteboardEmbedPicker.configure({ onOpenPicker: (activeEditor: Editor) => setBoardPicker(activeEditor) })] : []),
-      SlashCommands
+      SlashCommands,
+      // The editor is created once: the target it starts with is the one it keeps.
+      MentionSuggestion.configure({ target: mentionTarget, noun: mentionNoun })
     ],
     content: markdown,
     contentType: "markdown",

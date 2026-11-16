@@ -1,4 +1,6 @@
 import { useId, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { MentionTextarea } from "../mentions/MentionTextarea";
+import type { MentionTarget } from "../mentions/mentionsApi";
 import { ArrowDown, ArrowUp, Heart, Star } from "lucide-react";
 import { Select } from "../Select";
 import { YES_NO_OPTIONS, type AnswerValue, type ContactAnswer, type MultiChoiceAnswer, type Question, type QuestionOption, type SlotVote } from "../../../shared/questions";
@@ -23,6 +25,12 @@ export type QuestionInputProps = {
   memberField?: (question: Question, value: AnswerValue | undefined, onChange: (value: AnswerValue | undefined) => void) => ReactNode;
   /** The respondent's time zone, for time slots (public pages pass the browser's). */
   timeZone?: string;
+  /**
+   * Long text answers to a members-only host (a standup round) can @mention the people who can read it
+   * (docs/plan/MENTIONS.md, phase B). Never on public pages.
+   */
+  mentionTarget?: MentionTarget | null;
+  mentionNoun?: string;
 };
 
 export const optionsOf = (question: Question): readonly QuestionOption[] => question.type === "yes_no" ? YES_NO_OPTIONS : question.options ?? [];
@@ -207,7 +215,9 @@ export function QuestionInput(props: QuestionInputProps) {
   switch (question.type) {
     case "statement": case "hidden": return null;
     case "short_text": return <input className="ui-q-text" type="text" value={text} maxLength={question.validation?.maxLength ?? 500} onChange={(event) => setText(event.target.value)} {...common} />;
-    case "long_text": return <textarea className="ui-q-text" value={text} rows={4} maxLength={question.validation?.maxLength ?? 10_000} onKeyDown={stopEnter} onChange={(event) => setText(event.target.value)} {...common} />;
+    case "long_text": return props.mentionTarget
+      ? <MentionTextarea className="ui-q-text" target={props.mentionTarget} noun={props.mentionNoun} value={text} rows={4} maxLength={question.validation?.maxLength ?? 10_000} onKeyDown={stopEnter} onValueChange={setText} {...common} />
+      : <textarea className="ui-q-text" value={text} rows={4} maxLength={question.validation?.maxLength ?? 10_000} onKeyDown={stopEnter} onChange={(event) => setText(event.target.value)} {...common} />;
     case "email": return <input className="ui-q-text" type="email" autoComplete="email" value={text} maxLength={254} onChange={(event) => setText(event.target.value)} {...common} />;
     case "phone": return <input className="ui-q-text" type="tel" autoComplete="tel" value={text} maxLength={40} onChange={(event) => setText(event.target.value)} {...common} />;
     case "url": return <input className="ui-q-text" type="url" inputMode="url" value={text} maxLength={2048} placeholder="https://" onChange={(event) => setText(event.target.value)} {...common} />;

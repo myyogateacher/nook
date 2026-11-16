@@ -27,7 +27,7 @@ export type EmailPrefs = {
 };
 
 export const DEFAULT_CATEGORIES: Record<MailCategory, boolean> = {
-  assignments: true, comments: true, sharing: true, proposals: true, sprints: false, bin: false, reminders: true,
+  assignments: true, comments: true, sharing: true, proposals: true, sprints: false, bin: false, reminders: true, mentions: true,
   // Workspace modules (D809): on by default, like the activity categories.
   ...Object.fromEntries(WORKSPACE_MAIL_CATEGORIES.map((id) => [id, true])) as Record<typeof WORKSPACE_MAIL_CATEGORIES[number], boolean>
 };
@@ -60,7 +60,7 @@ const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a 24-hour time 
 export const emailPrefsPutSchema = z.object({
   enabled: z.boolean(),
   // The workspace modules' categories are optional (an older client sends the original seven; a missing one keeps its stored value).
-  categories: z.object(Object.fromEntries(MAIL_CATEGORIES.map((category) => [category, (WORKSPACE_MAIL_CATEGORIES as readonly string[]).includes(category) ? z.boolean().optional() : z.boolean()])) as Record<MailCategory, z.ZodBoolean>).strict(),
+  categories: z.object(Object.fromEntries(MAIL_CATEGORIES.map((category) => [category, (category === "mentions" || (WORKSPACE_MAIL_CATEGORIES as readonly string[]).includes(category)) ? z.boolean().optional() : z.boolean()])) as Record<MailCategory, z.ZodBoolean>).strict(),
   /** Off (D248 default), daily, or weekly on Mondays, at digestLocalTime in tz. */
   digest: z.enum(["off", "daily", "weekly"]),
   digestLocalTime: clock,

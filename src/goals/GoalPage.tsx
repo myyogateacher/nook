@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { MentionText } from "../ui/mentions/Mentions";
 import { ArrowLeft, CheckSquare, CircleCheck, GitBranch, Link2, ListChecks, Lock, MessageSquareText, Pencil, Plus, RotateCcw, Share2, Square, Target, Trash2, TrendingUp, Zap } from "lucide-react";
 import { PageHeader } from "../shell/PageHeader";
 import { ReadOnlyBanner } from "../team/roleAccess";
@@ -167,7 +168,7 @@ export default function GoalPage({ segment, navigate, onOpenPath, userId, displa
               ? <EmptyState compact as="h3" icon={TrendingUp} title="No check-ins yet" action={goal.canEdit && !isClosed ? { label: "Check in", onClick: () => setSheet({ kind: "checkin" }) } : undefined}>A check-in records progress, health, and a note.</EmptyState>
               : <ol className="goals-checkins">{checkins.map((checkin) => <li key={checkin.id} className="goals-checkin">
                 <header><GoalHealthChip health={checkin.health} /><strong>{checkin.author?.name ?? "Someone"}</strong><span>{relativeTime(checkin.createdAt)}</span><span>· {percent(checkin.progress)}</span>{checkin.confidence && <span>· confidence {checkin.confidence}/10</span>}{checkin.via !== "web" && <span>· via {checkin.via.toUpperCase()}</span>}</header>
-                {checkin.note && <p>{checkin.note}</p>}
+                {checkin.note && <p><MentionText text={checkin.note} /></p>}
               </li>)}</ol>}
           </section>
           <ItemTimeline kind="goal" id={goal.id} canComment={goal.canComment} renderers={goalActivityRenderers} refreshKey={`${goal.revision}`} />

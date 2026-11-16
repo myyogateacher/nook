@@ -1,4 +1,5 @@
 import { editableNote, ownedNote } from "./access";
+import { notifyMentions } from "./activity/mentions";
 import { purgeAfterFrom, purgeLocked } from "./bin";
 import { audit, db, ensureDefaultFolder, now, type NoteRow } from "./db";
 import { config } from "./config";
@@ -244,6 +245,8 @@ export async function publishDraftLocked(userId: string, noteId: string, revisio
   const nextVersion = note.current_version + 1;
   const stagedMetadata = db.query("SELECT id FROM note_versions WHERE note_id = ? AND version_number = ?").get(noteId, nextVersion);
   if (stagedMetadata) throw new Error("Next version is already committed");
+  // @mentions (docs/plan/MENTIONS.md D1335): only people this version newly mentions, against the published text.
+  const previous = note.current_version > 0 ? await storage.readVersion(noteId, note.current_version).catch(() => "") : "";
   await storage.stageVersion(noteId, nextVersion, markdown, true);
   const timestamp = now();
   const versionId = crypto.randomUUID();
@@ -262,6 +265,8 @@ export async function publishDraftLocked(userId: string, noteId: string, revisio
     // Only the publisher's own documents the policy allows are added; links already there stay
     // (T350). A file that became unconfirmed since the check above is skipped, never linked.
     links = syncNoteLinks(noteId, userId, markdown, policy);
+    // Readers of the note it now mentions hear about it once, on publish, never on draft saves.
+    notifyMentions({ kind: "note", itemId: noteId, authorId: userId, text: markdown, before: previous, where: "in a note" });
   })();
   await storage.finalizePublished(noteId, markdown).catch((error) => slog.error(`Could not refresh current Markdown mirror for note ${noteId}`, error));
   audit(userId, noteId, "note.publish", { version: nextVersion, ...(note.owner_id !== userId ? { editor: true } : {}) });

@@ -24,9 +24,14 @@ export { registerDigestSection, type DigestSection, type DigestSectionRow } from
  *
  * Call inside the action's transaction; push delivery runs after commit (queueMicrotask).
  */
+/** Core apps that notify through here too (docs/plan/MENTIONS.md D1325): a mention on a card or a note. */
+export const CORE_NOTIFY_MODULES = ["tasks", "notes"] as const;
+export type NotifyModule = WorkspaceModuleId | typeof CORE_NOTIFY_MODULES[number];
+const isNotifyModule = (value: unknown): value is NotifyModule => isWorkspaceModuleId(value) || (CORE_NOTIFY_MODULES as readonly unknown[]).includes(value);
+
 export type NotifyInput = {
   userIds: readonly string[];
-  module: WorkspaceModuleId;
+  module: NotifyModule;
   topic: string;
   title: string;
   body?: string | null;
@@ -45,7 +50,7 @@ export type NotifyInput = {
 export class NotifyError extends Error {}
 
 export function notify(input: NotifyInput): { notified: string[] } {
-  if (!isWorkspaceModuleId(input.module)) throw new NotifyError(`Unknown module ${input.module}`);
+  if (!isNotifyModule(input.module)) throw new NotifyError(`Unknown module ${input.module}`);
   if (!NOTIFY_TOPIC_PATTERN.test(input.topic)) throw new NotifyError(`Invalid topic ${input.topic}`);
   if (!isSafeAppHref(input.href)) throw new NotifyError("A notification href must be a relative in-app path");
   const title = input.title.trim().slice(0, NOTIFY_TITLE_MAX);

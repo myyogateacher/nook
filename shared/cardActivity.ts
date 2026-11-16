@@ -85,7 +85,9 @@ export const CARD_ACTIVITY_KINDS = {
   time_logged: { shape: "item", coalesce: false },
   goal_linked: { shape: "item", coalesce: false },
   goal_unlinked: { shape: "item", coalesce: false },
-  blocked_by_checkin: { shape: "item", coalesce: false }
+  blocked_by_checkin: { shape: "item", coalesce: false },
+  /** Someone was @mentioned in a comment or the description and notified (docs/plan/MENTIONS.md D1332); `item` is the person. */
+  mentioned: { shape: "item", coalesce: false }
 } as const satisfies Record<string, { shape: ActivityShape; coalesce: boolean }>;
 
 export type CardActivityKind = keyof typeof CARD_ACTIVITY_KINDS;

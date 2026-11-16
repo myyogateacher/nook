@@ -58,6 +58,8 @@ import { appName } from "../appName";
 import { FormError } from "../ui/FormError";
 import { CardHeaderActionsOutlet, CardSectionsOutlet } from "../ui/CardSlotOutlets";
 import { ActivityRow, TimelineControls, useCardTimeline } from "./cardActivity";
+import { MentionTextarea } from "../ui/mentions/MentionTextarea";
+import { MentionText } from "../ui/mentions/Mentions";
 import { activityRefreshKey, buildTimeline } from "./cardActivityModel";
 
 type CardDialogProps = {
@@ -760,8 +762,10 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
                   onChange={setDraft}
                   onNotice={notify}
                   label="Card description"
-                  placeholder="Describe the work… Type / for commands"
+                  placeholder="Describe the work… Type / for commands, @ to mention someone"
                   uploadImage={uploadDescriptionImage}
+                  mentionTarget={{ kind: "card", id: card.id }}
+                  mentionNoun="card"
                 />
                 {conflict && <div className="task-conflict" role="alert">
                   <p>Someone else changed this card while you were editing. Reload shows their version and replaces your text.</p>
@@ -817,7 +821,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
                 </header>
                 {!commentReadOnly && editingComment?.id === comment.id
                   ? <div className="task-comment-edit" data-attach-zone="edit">
-                    <textarea value={editingComment.body} onChange={(event) => setEditingComment({ id: comment.id, body: event.target.value })} onKeyDown={(event) => {
+                    <MentionTextarea target={{ kind: "card", id: card.id }} noun="card" value={editingComment.body} onValueChange={(body) => setEditingComment({ id: comment.id, body })} onKeyDown={(event) => {
                       if (event.key === "Escape") { event.preventDefault(); cancelEditingComment(); }
                       composerKey(event, () => { void saveComment(); });
                     }} aria-label="Edit comment" placeholder={commentFiles.length ? "Add text, or leave it empty to show only the files" : undefined} autoFocus rows={3} />
@@ -829,7 +833,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
                       <button className="primary-button task-small-button" onClick={() => { void saveComment(); }} disabled={editUploads.busy}>Save</button>
                     </span>
                   </div>
-                  : !filesOnly && <p className="task-comment-body">{comment.body}</p>}
+                  : !filesOnly && <p className="task-comment-body"><MentionText text={comment.body} /></p>}
                 {attachmentList(commentFiles, filesOnly ? "Files in this comment" : "Files on this comment")}
                 <CommentReactions commentId={comment.id} reactions={comment.reactions ?? []} readOnly={commentReadOnly} onUpdate={updateReactions} notify={notify} />
               </li>;
@@ -840,7 +844,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
             {commentReadOnly
               ? <p className="task-comment-empty" role="note">{roleReadOnly ? "View only: your Team role can read comments but not post them." : "View only: you can read this board's comments but not post them."}</p>
               : <div className="task-comment-composer" data-attach-zone="comment">
-              <textarea value={composer} onChange={(event) => setComposer(event.target.value)} onKeyDown={(event) => composerKey(event, () => { void post(); })} placeholder={pendingFiles.length ? "Add a comment, or post the files alone" : "Write a comment"} aria-label="Write a comment" rows={2} disabled={posting} />
+              <MentionTextarea target={{ kind: "card", id: card.id }} noun="card" value={composer} onValueChange={setComposer} onKeyDown={(event) => composerKey(event, () => { void post(); })} placeholder={pendingFiles.length ? "Add a comment, or post the files alone" : "Write a comment… Type @ to mention someone"} aria-label="Write a comment" rows={2} disabled={posting} />
               {stagedList(pendingFiles, unstage(setPendingFiles))}
               <UploadRows rows={commentUploads.rows} label="Uploading for your comment" />
               <span className="task-composer-actions">

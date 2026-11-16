@@ -172,6 +172,8 @@ svg.task-column-status.done { color: #6fbf85; }
    While editing it grows as you type and scrolls inside itself past 60vh. */
 .task-description-view .editor-surface, .task-description-editor .editor-surface { min-height: 0; }
 .task-description-view .note-prose, .task-description-editor .note-prose { min-height: calc(3 * 1.78em + 16px); padding: 8px 0; font-size: .92rem; }
+/* A card description reads in the app's sans font (notes keep their serif); pre-existing since D44, fixed with mentions (MENTIONS.md §13). */
+.task-description-view .note-prose, .task-description-editor .note-prose { font-family: inherit; line-height: 1.6; }
 .task-description-editor .note-prose { max-height: 60vh; overflow-y: auto; }
 .task-description-editor { display: grid; gap: 10px; }
 /* The editor is a focus target like any field: a visible ring while typing in it. */

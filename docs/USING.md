@@ -213,6 +213,16 @@ Tasks holds kanban boards. **New board** asks for a name and a template: **Simpl
 - **Moving a tree to the Bin.** Moving a card to the Bin also moves the cards under it, and the Bin shows one item with "+ N subitems". **Undo** or **Restore** brings them all back in their columns. A subtask you binned on its own before keeps its own Bin entry; restoring it while its parent is still in the Bin brings it back without a parent.
 - **Limits.** 50 boards per owner, 20 columns and 1000 cards per board (archived cards don't count; a board keeps at most 10,000 cards in all, archived ones included), three levels and 100 direct subtasks per card, 500 comments and 50 attachments per card, 10 attachments per comment.
 
+## Mentioning people
+
+Type **@** in a card's comment or description (also while creating a card), a note, a standup answer, a note on a contact, a goal check-in, or a comment on a goal, deal, contact, standup answer, booking or form response, and a list of people appears. Keep typing to narrow it, use ↑ and ↓ to choose, and press Enter or Tab to add the person (Esc closes the list). The mention shows as a chip with their name; click it to open their profile in Team.
+
+- **Who hears about it.** Each person you mention who can open the card or item gets a notification in the bell and on their phone, and an email (Settings → Notifications → Email → **Mentions of you**, on by default; several mentions within 10 minutes come as one email). They are told once: editing your comment or description again does not notify them again unless you add someone new. You never notify yourself.
+- **Notes** tell people when you **publish**, not while you write the draft. Mentions in an anonymous standup notify no one.
+- **People who can't see it.** People who can't open the card are shown greyed out with "Can't see this card" and can't be picked. A mention never shares anything: share the board (or the item) with them first.
+- **Your mentions.** Notifications → **Mentions** lists only the times someone mentioned you.
+- **Agents.** Over MCP, `find_people_to_mention` gives the text to write (`@[Name](user:…)`) for anyone who can read the item; `comment_on_card`, `create_card` and `comment_on_item` notify the same way.
+
 ## Collections
 
 Collections are typed tables for anything you track: a home inventory, subscriptions, expenses, recipes, contacts. Open them from the **Collections** link on Today, or at `/collections`. The Collections page lists your collections and those shared with you; on your own, the buttons next to the name **Rename**, **Share**, or **Move to Bin** it, as on the Tasks board list.

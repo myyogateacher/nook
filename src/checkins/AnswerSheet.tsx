@@ -153,7 +153,8 @@ export function AnswerSheet({ detail, date, onDone, onCancel, onOpenPath }: Work
         <span><strong>{question.title}</strong>{question.required && <span className="standup-required" aria-label="required">*</span>}</span>
       </label>
       {question.help && <p className="standup-muted" id={`${labelId}-help`}>{question.help}</p>}
-      <QuestionInput question={question} value={answers[question.id]} onChange={(value) => update(question, value)} labelId={labelId} describedBy={question.help ? `${labelId}-help` : undefined} invalid={Boolean(errors[question.id])} />
+      <QuestionInput question={question} value={answers[question.id]} onChange={(value) => update(question, value)} labelId={labelId} describedBy={question.help ? `${labelId}-help` : undefined} invalid={Boolean(errors[question.id])}
+        mentionTarget={!detail.anonymous && round ? { kind: "checkin_round", id: round.round.id } : null} mentionNoun="standup" />
       {errors[question.id] && <p className="ui-field-error" role="alert">{errors[question.id]}</p>}
       {helpers(question)}
     </div>;

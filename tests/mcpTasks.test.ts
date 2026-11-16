@@ -71,7 +71,8 @@ const auditRows = (actorId: string, eventType: string) => (db.query("SELECT meta
 
 // Uploads everywhere U0 (D402): the generic attachment reads come with every host module's read scope.
 const ATTACHMENT_READS = ["list_attachments", "read_attachment_text"];
-const TASK_READ_TOOLS = ["get_card", "get_card_activity", "list_boards", "list_cards", "list_children", "list_sprints", "list_views", "query_cards", "search_cards"];
+// find_people_to_mention: the @mention people lookup (docs/plan/MENTIONS.md D1331).
+const TASK_READ_TOOLS = ["find_people_to_mention", "get_card", "get_card_activity", "list_boards", "list_cards", "list_children", "list_sprints", "list_views", "query_cards", "search_cards"];
 // archive_card and unarchive_card (D627) hide and restore; neither deletes.
 const TASK_WRITE_TOOLS = ["archive_card", "comment_on_card", "create_card", "create_sprint", "link_attachment", "link_cards", "manage_tags", "move_card", "move_card_to_board", "save_view", "set_wip_limit", "start_sprint", "unarchive_card", "update_card"];
 
@@ -84,7 +85,8 @@ describe("MCP task tools", () => {
     expect(writer.some((name) => /delete|remove|purge|share|column|rename|unlink/.test(name))).toBe(false);
     const notesOnly = makeKey(user, ["notes:read", "notes:write-draft", "files:read"]);
     const notesTools = await toolNames(notesOnly);
-    for (const name of [...TASK_READ_TOOLS, ...TASK_WRITE_TOOLS]) expect(notesTools).not.toContain(name);
+    // find_people_to_mention is cross-module: a notes key has it for notes (it still needs tasks:read for a card).
+    for (const name of [...TASK_READ_TOOLS, ...TASK_WRITE_TOOLS].filter((name) => name !== "find_people_to_mention")) expect(notesTools).not.toContain(name);
     expect((await callTool(notesOnly, "list_boards")).isError).toBe(true);
 
     const reader = makeKey(user, ["tasks:read"]);

@@ -1,6 +1,6 @@
 # Nook
 
-**A private, self-hosted workspace for a household or a small trusted team: notes, files, tasks, collections, and calendars in one small Docker container.**
+**A private, self-hosted workspace for a household or a small trusted team: notes, files, tasks, calendars, forms, time, goals, contacts, bookings, reports, and AI chat in one Docker container.**
 
 Everything stays on storage you control. Notes are portable Markdown files with immutable version history, files keep their bytes, and nothing is shared until you share it. Built with Bun, Hono, SQLite, React, and Tiptap.
 
@@ -31,12 +31,10 @@ The home screen shows what needs you now: cards due soon and assigned to you, re
 
 ### Tasks
 
-- **Boards** with drag and drop, columns with To do / In progress / Done states, and **WIP limits**.
-- **Cards** with due dates and times, multiple assignees, colour **tags**, a **priority** (urgent, high, medium, low), **flags** (blocked, needs review, on hold), **relations** (depends on, relates to, duplicates), comments, and attachments.
-- A full-screen **card composer** that sets everything in one step, and a full-page card view.
-- **Views**: columns, a sortable table, a grouped list, and a calendar with drag-to-reschedule. A filter bar (assignee, tag, flag, due, column, level, sprint, relations) keeps its state in the URL, so filtered views are shareable links.
-- **Hierarchy**: Task › Subtask, Epic › Story › Subtask, or your own level names, with subtask checklists, progress, and parent chips.
-- **Sprints**: plan, start, and complete sprints, with a sprint switcher, a progress strip, and a carry-over choice for unfinished cards.
+- **Boards** with drag and drop, columns with To do / In progress / Done states, **WIP limits**, and a short **board code**: every card gets a key like `WEB-12` and a short link (`/tasks/WEB-12`) that keeps working after a rename or a move.
+- **Cards** with start and due dates (with optional times), multiple assignees, colour **tags**, a **priority** (urgent, high, medium, low), **flags** (blocked, needs review, on hold), **estimates** in points or hours, **relations** (depends on, relates to, duplicates), comments with reactions and @mentions, attachments, and an **activity history** of every change. Cards move between boards.
+- **Views**: columns, a sortable table, a grouped list, a calendar with drag-to-reschedule, and a **Timeline** (Gantt) with drag-to-reschedule bars. A filter bar keeps its state in the URL; lanes can be grouped by assignee, tag, or sprint; a board's owner can pin views for everyone.
+- **Hierarchy and sprints**: Task › Subtask, Epic › Story › Subtask, or your own level names; plan, start, and complete sprints with carry-over.
 - **Templates**: Simple kanban, Personal to-do, Task checklist, Scrum sprint board, Epic › Story › Subtask, Bug triage, and Content pipeline.
 - **Tasks home**: **My work** lists everything assigned to you across boards; **saved views** keep a cross-board filter and layout, shared privately, with chosen people, or with everyone, and always evaluated as the viewer.
 
@@ -57,9 +55,39 @@ Calendars with agenda and month views, repeating events, links to notes, cards, 
 
 Sketches, diagrams, and floor plans with the Excalidraw editor, saved as `.excalidraw` files in your Files folders. Boards save as you draw (a conflict between two devices never overwrites silently), work offline for a moment, pinch-zoom on phones, export PNG and SVG, and share view-only through the same Access sheet as files. Place pictures from Files (or upload, drop, or paste them; they are stored as files and shown only to people who can open them), link shapes to notes, files, cards, boards, and events, restore earlier versions from History, duplicate boards, import `.excalidraw` files, show a board as a card in a note, and find boards by their text in search. The editor loads only when you open a board and makes no requests outside your Nook.
 
+### Workspace modules
+
+Seven modules built on shared foundations (people, links between items, comments, activity, schedules, and public pages), each with its own sections in the sidebar, search, MCP tools, and Bin support:
+
+- **Forms & Polls**: every question type, logic, quick polls with live results, find-a-time polls that create an event, results with charts and CSV, and public forms.
+- **Time**: a one-click timer in the sidebar and on cards, manual entries, a keyboard timesheet with weekly approval, projects with rates and budgets, and reports.
+- **Goals**: company, team, and personal OKRs whose key results update from tasks, time, deals, forms, and standups, with check-ins and tree, list, and timeline views.
+- **Standups**: standup, retro, and pulse templates on schedules in each person's time zone, with a feed and insights.
+- **Contacts**: people, companies, and deals on pipelines with a drag board, CSV import with duplicate merge, interactions, and follow-ups.
+- **Bookings**: booking types, availability, busy time from your calendars, and public booking pages with confirmation mail.
+- **Townhall**: named or anonymous Q&A with upvotes and moderation, live polls, word clouds, a presenter view, and a public audience link.
+
+They connect: standup answers update goals, form responses can create deals, finished tasks log on contacts, and time shows on goals, deals, and bookings. Public pages (`/p/…`) are on by default and each can be turned off by an admin.
+
+<p align="center">
+  <img src="docs/images/goals-dark.png" alt="Goals with key results and check-ins" width="49%" />
+  <img src="docs/images/contacts-deals-dark.png" alt="Contacts deals on a pipeline board" width="49%" />
+</p>
+
+### Reports
+
+Analytics reports over **ClickHouse**: an admin adds a data source with an allowlist of tables, and the AI writes SQL and charts from your docs (notes, files, PDFs, or docs behind a tool server), checking its numbers by running queries. Every query is a single guarded read-only `SELECT`; reports have filters, saved views, refresh schedules, versions, folders, and sharing. A **This workspace** source reports on Nook's own modules, computed with each reader's access.
+
+### Chat and AI
+
+- **Chat** with **agents** you make in Settings → Agents (a prompt, a model, and a step limit) on **model providers an admin configures** (OpenAI-compatible, Anthropic, or Voyage AI). Replies render Markdown and images; you can attach pictures for vision models. Every message goes to that provider.
+- **Tools**: agents can use Nook itself and outside MCP tool servers, with an audit log.
+- **Knowledge bases**: notes and files indexed with embeddings from a provider or a local model, for agents to search.
+- **Inbox and routines**: changes agents propose (drafts, cards, time, goal check-ins) wait in the Inbox for your approval, and routines run agents on a schedule.
+
 ### Vault
 
-Team secrets per environment (dev, staging, prod, or your own): values, logins, and notes with encrypted comments, a secrets × environments grid on a computer and one environment's cards on a phone, reveal that hides again after 30 seconds, copy that clears the clipboard, a password and token generator in the browser, 20 versions per value, and the Bin. **Encrypted at rest; anyone with the server and its key can read every secret**, so it is for your services' credentials, not a replacement for a personal password manager. Off until `VAULT_ENCRYPTION_KEY` is set; see [docs/OPERATIONS.md](docs/OPERATIONS.md#vault). In this release each vault is its owner's alone; sharing, API keys, and MCP tools come later.
+Team secrets per environment (dev, staging, prod, or your own): values, logins, and notes with encrypted comments, a secrets × environments grid on a computer and one environment's cards on a phone, reveal that hides again after 30 seconds, copy that clears the clipboard, a password generator, 20 versions per value, and the Bin. Vaults are shared with people or groups at a level per environment; **protected** environments (prod) ask you to confirm it's you before revealing. Vault keys give scripts, CI, and AI clients access to chosen vaults and environments. **Encrypted at rest; anyone with the server and its key can read every secret**, so it is for your services' credentials, not a personal password manager. Off until `VAULT_ENCRYPTION_KEY` is set; see [docs/OPERATIONS.md](docs/OPERATIONS.md#vault).
 
 ### Team
 
@@ -72,11 +100,15 @@ Team secrets per environment (dev, staging, prod, or your own): values, logins, 
 
 ### Everywhere
 
-- **Shared Bin**: deleted notes, files, cards, boards, collections, rows, calendars, and events wait 30 days with their history and sharing, then are removed for good. A card moves to the Bin with its subtasks. The Bin is in **Settings → Bin** (`/settings/bin`).
+- **Sidebar and ⌘K**: one collapsible sidebar on every app with each app's sections, folder trees, pinning, and a layout that follows you across devices; **⌘K** (Ctrl+K) searches every app as you type and runs commands, and **?** shows the shortcuts.
+- **@mentions** in comments, descriptions, notes, and answers notify the people who can read the item, on the bell, by push, and by email.
+- **Attachments everywhere**: events, cards, comments, rows, notes, whiteboards, and chat take files (Take photo on phones, Choose files, or From Files); they live in your private **Files › Attachments** folder, photo locations are removed, and removing one offers Undo.
+- **Friendly URLs**: boards, cards, notes, files, whiteboards, collections, and reports have short, readable links; sensitive items keep opaque ones.
+- **Shared Bin**: deleted items from every app wait 30 days with their history and sharing, with Undo right after a delete and **Settings → Bin** for the rest.
 - **Settings → Modules**: turn apps on or off for your account on every device. Nothing is deleted and sharing is unchanged.
 - **Mobile first**: every app, item, and view has its own URL, phones get focused single-column screens, and browser Back and Forward work everywhere (Back closes an open dialog or sheet first).
-- **MCP server**: a Streamable HTTP endpoint for trusted AI clients with revocable API keys and per-key permissions across notes (read, write drafts), files (read), tasks (read, write), collections (read, write), calendar (read, write), Today, and team (admins). Agents write drafts; publishing always stays with you.
-- **REST API and scoped keys**: the same tools over plain HTTPS at `/api/v1` for scripts and CI, opt-in per key. A key can be limited to chosen folders, notes, files, boards, saved views, collections, calendars, routines, or whiteboards (lists, search, and Today then show only those), and to IP addresses behind a configured reverse proxy.
+- **MCP server and REST API**: Streamable HTTP for trusted AI clients and `/api/v1` for scripts, with revocable keys scoped per module and down to chosen items and IP addresses. Agents write drafts and proposals; publishing stays with you.
+- **Storage**: files on local disk or in an S3-compatible bucket (`STORAGE_BACKEND=s3`), with per-file limits, per-user quotas, and a free-disk floor.
 
 <p align="center">
   <img src="docs/images/notes-editor-dark.png" alt="The Notes editor with a folder rail, note list, checklist, and table" width="49%" />
@@ -90,7 +122,8 @@ Team secrets per environment (dev, staging, prod, or your own): values, logins, 
 - Private by default: the server authorises every read, and search, previews, Today, feeds, and MCP only see what the user may open.
 - Hashed API keys and feed tokens, rate limits on sign-in, search, and MCP, and payload-less Web Push to allowlisted push services only.
 - A hardened container: non-root user, read-only root filesystem, dropped capabilities, and `no-new-privileges`.
-- Online backups while Nook runs (a consistent SQLite snapshot and the data directory, checked by SHA-256), kept on disk or in S3, optional Litestream point-in-time replication, and restore drills (Settings → Backups).
+- Online backups while Nook runs (a consistent SQLite snapshot and the data directory, checked by SHA-256, including S3-stored files), kept on disk or in S3, optional Litestream point-in-time replication, one-command restore, and restore drills (Settings → Backups).
+- Confirming it's you (password, Google, or two-factor) before sensitive actions such as API keys, protected vault values, and two-factor changes.
 
 Nook is designed for one host on a trusted network. Prefer HTTPS through Tailscale Serve or a reverse proxy.
 
@@ -123,7 +156,7 @@ Release notes for every version are in [CHANGELOG.md](CHANGELOG.md) and on the [
 ## Documentation
 
 - [Documentation site](https://pankajsoni19.github.io/nook/): every app, configuration, security, backups, and upgrades.
-- [docs/USING.md](docs/USING.md): the user guide for every app, the Bin, Team, Modules, and MCP keys.
+- [docs/USING.md](docs/USING.md): the user guide for every app and module, the sidebar, the Bin, Team, Chat, and MCP keys.
 - [docs/OPERATIONS.md](docs/OPERATIONS.md): configuration reference, storage, backup and restore, upgrades, and development setup.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the server, storage, and client fit together.
 - [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md), [docs/plan/](docs/plan/), and [TODO.md](TODO.md): plan, API contracts, threat model, and tracker.

@@ -56,6 +56,10 @@ const relationText = (verb: string) => ({ item: value }: CardActivityPayload) =>
   // A work link names the other item's kind before its title when the reader can open it (D1390).
   return <>{verb} {linkedItemNoun(value)}{value ? b(value.label) : "a card"}{type ? <> ({type})</> : null}</>;
 };
+/** "linked this to the goal Q3 plan"; "linked this to a goal" when the reader can't open it (no id, D1390). */
+const goalText = (verb: string, icon: LucideIcon): Renderer => ({
+  icon, text: ({ item: value }) => value?.id ? <>{verb} the goal {b(value.label)}</> : <>{verb} a goal</>
+});
 /** A board the card moved from or to (D716): "Roadmap (ROA-2)", the key it had there. */
 const boardLabel: Format = (value) => value.detail ? `${value.label} (${value.detail})` : value.label;
 const subtasks = (count: number | undefined, verb: string) => count ? ` with ${count === 1 ? "1 subtask" : `${count} subtasks`}${verb}` : "";
@@ -100,8 +104,8 @@ export const ACTIVITY_RENDERERS: Record<CardActivityKind, Renderer> = {
   attachment_removed: item("removed the file", Paperclip),
   // Workspace modules (W1-CORE, shared/cardActivity.ts): time, goals, and standup blockers.
   time_logged: item("logged", Clock),
-  goal_linked: item("linked this to the goal", Target),
-  goal_unlinked: item("unlinked this from the goal", Target),
+  goal_linked: goalText("linked this to", Target),
+  goal_unlinked: goalText("unlinked this from", Target),
   blocked_by_checkin: item("flagged this as blocked in", OctagonAlert),
   // @mentions (docs/plan/MENTIONS.md D1332): one row per person notified.
   mentioned: item("mentioned", AtSign)

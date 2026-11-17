@@ -7,7 +7,7 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 
 **Current state (2026-11-17).**
 - **v0.48.0** (2026-11-17) is the latest release: PRs #3–#12 (workspace modules, left sidebar, ⌘K search everywhere, @mentions, Tasks keys/timeline/priority, friendly URLs). Every merged PR from now on gets a GitHub release.
-- Migrations: **001–123, 155, 160** are released and immutable (v0.48.0); earlier: **001–078** (045, 054, 067, 070, 071, 072, 075 unused; 054 reserved for Messages). **079–123** and **160** are in Unreleased code; parallel lanes take id blocks (160–164 is one), so check `server/migrations/` and `server/migrations/workspace/index.ts` before picking one.
+- Migrations: **001–123, 155, 160** are released and immutable (v0.48.0); earlier: **001–078** (045, 054, 067, 070, 071, 072, 075 unused; 054 reserved for Messages). New ids continue after 160; parallel lanes take id blocks (160–164 is one), so check `server/migrations/` and `server/migrations/workspace/index.ts` before picking one.
 - Development lands on `main` through pull requests, each after its gates pass.
 
 ## Release blockers (v0.48.1)

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { ItemActivityEntry } from "../../shared/itemActivity";
 import { interactionLogged } from "../../shared/crm";
+import { linkedItemNoun } from "../../shared/workRefs";
 
 /** How Contacts' activity reads after the actor's name (ItemTimeline and the record timeline). */
 const value = (entry: ItemActivityEntry, key: "from" | "to") => entry.payload[key]?.label ?? "—";
@@ -20,6 +21,13 @@ export const CRM_ACTIVITY_RENDERERS: Readonly<Record<string, (entry: ItemActivit
   restored: () => <>restored it</>
 };
 
+/** A linked item: "the goal Q3 plan" when the reader can open it (D1390), else "a goal". */
+const linkedPlain = (entry: ItemActivityEntry) => {
+  const item = entry.payload.item;
+  const noun = linkedItemNoun(item);
+  return noun ? `${noun}${item!.label}` : `a ${item?.label?.toLowerCase() ?? "item"}`;
+};
+
 /** Plain text of an entry (record timeline rows). */
 export function activityPlain(entry: ItemActivityEntry): string {
   switch (entry.kind) {
@@ -32,8 +40,8 @@ export function activityPlain(entry: ItemActivityEntry): string {
     case "contact_created": return "added this contact";
     case "contact_filled": return `filled in ${String(entry.payload.extra?.fields ?? "details")}`;
     case "company_created": return "added this company";
-    case "linked": return `linked a ${entry.payload.item?.label?.toLowerCase() ?? "item"}`;
-    case "unlinked": return `unlinked a ${entry.payload.item?.label?.toLowerCase() ?? "item"}`;
+    case "linked": return `linked ${linkedPlain(entry)}`;
+    case "unlinked": return `unlinked ${linkedPlain(entry)}`;
     case "commented": return "commented";
     case "binned": return "moved it to the Bin";
     case "restored": return "restored it";

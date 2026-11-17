@@ -13,6 +13,7 @@ import type { ActivityValue, CardActivityEntry, CardActivityKind, CardActivityPa
 import { HISTORY_FLAG_LABELS } from "./cardTags";
 import { priorityLabel } from "./priority";
 import { RELATION_LABELS } from "./relationsModel";
+import { linkedItemNoun } from "../../shared/workRefs";
 import type { RelationType } from "./tasksApi";
 import { listCardActivity, mergeActivityPage, readTimelinePrefs, writeTimelinePrefs, type ActivityPage, type TimelinePrefs } from "./cardActivityModel";
 
@@ -52,7 +53,8 @@ const flagLabel: Format = (value) => (value.id ? HISTORY_FLAG_LABELS[value.id] :
 const priorityWords: Format = (value) => value.id ? priorityLabel(value.id) : value.label;
 const relationText = (verb: string) => ({ item: value }: CardActivityPayload) => {
   const type = value?.detail ? RELATION_LABELS[value.detail as RelationType]?.toLowerCase() : null;
-  return <>{verb} {value ? b(value.label) : "a card"}{type ? <> ({type})</> : null}</>;
+  // A work link names the other item's kind before its title when the reader can open it (D1390).
+  return <>{verb} {linkedItemNoun(value)}{value ? b(value.label) : "a card"}{type ? <> ({type})</> : null}</>;
 };
 /** A board the card moved from or to (D716): "Roadmap (ROA-2)", the key it had there. */
 const boardLabel: Format = (value) => value.detail ? `${value.label} (${value.detail})` : value.label;

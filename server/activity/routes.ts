@@ -29,7 +29,7 @@ export function registerItemActivityRoutes(app: Hono<AppEnv>) {
     const item = readable(c);
     if (!item) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
     const limit = Number(c.req.query("limit") ?? "50");
-    return c.json(listItemActivity(item.kind, item.id, { order: c.req.query("order") === "asc" ? "asc" : "desc", cursor: c.req.query("cursor") ?? null, limit: Number.isFinite(limit) ? limit : 50 }));
+    return c.json(listItemActivity(item.kind, item.id, { viewer: { userId: c.get("user").id }, order: c.req.query("order") === "asc" ? "asc" : "desc", cursor: c.req.query("cursor") ?? null, limit: Number.isFinite(limit) ? limit : 50 }));
   });
   app.get("/api/items/:kind/:id/comments", (c) => {
     try {

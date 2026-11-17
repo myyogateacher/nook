@@ -4,6 +4,8 @@ import { boardStructure } from "./hierarchy";
 import { reportCardChange } from "./cardEvents";
 import { notifyMentions } from "../activity/mentions";
 import { estimateBadge, type EstimateKind } from "../../shared/estimates";
+import { isWorkKind, type WorkRef } from "../../shared/workRefs";
+import { linkedActivityRef, linkedActivityResolver } from "../links/resolve";
 import {
   ACTIVITY_COALESCE_MS,
   ACTIVITY_LABEL_MAX,
@@ -67,7 +69,7 @@ function cleanPayload(payload: CardActivityPayload): CardActivityPayload {
   return {
     ...(payload.from !== undefined ? { from: cleanValue(payload.from) } : {}),
     ...(payload.to !== undefined ? { to: cleanValue(payload.to) } : {}),
-    ...(payload.item ? { item: cleanValue(payload.item)! } : {}),
+    ...(payload.item ? { item: { ...cleanValue(payload.item)!, ...(isWorkKind(payload.item.kind) ? { kind: payload.item.kind } : {}) } } : {}),
     ...(payload.count !== undefined ? { count: payload.count } : {})
   };
 }
@@ -218,6 +220,18 @@ export function decodeActivityCursor(value: string): ActivityCursor | null {
   }
 }
 
+/**
+ * The other item when an entry was recorded by a work link (server/links/service.ts): every
+ * `goal_linked`/`goal_unlinked` (a goal), and a `relation_added`/`relation_removed` that stores the
+ * kind, or (older rows) has no relation type and a kind word as its label. Card relations always
+ * store their type in `detail`, so they keep the T90 path below.
+ */
+function workLinkedRef(kind: string, payload: CardActivityPayload): WorkRef | null {
+  if (kind === "goal_linked" || kind === "goal_unlinked") return linkedActivityRef(payload.item, "goal");
+  if ((kind === "relation_added" || kind === "relation_removed") && (payload.item?.kind || !payload.item?.detail)) return linkedActivityRef(payload.item);
+  return null;
+}
+
 type ListedRow = StoredRow & { card_id: string; actor_label: string; current_name: string | null; actor_kind: string | null };
 
 /**
@@ -226,6 +240,8 @@ type ListedRow = StoredRow & { card_id: string; actor_label: string; current_nam
  */
 export function listCardActivity(userId: string, cardId: string, options: {
   order?: ActivityOrder; limit: number; cursor?: ActivityCursor | null; mayRead?: (cardId: string) => boolean; mayReadBoard?: (boardId: string) => boolean;
+  /** Narrows which work-linked items (any kind) show their title, for keys over chosen items (T203). */
+  mayReadRef?: (ref: WorkRef) => boolean;
 }) {
   const order = options.order ?? "desc";
   const keyset = options.cursor
@@ -250,10 +266,19 @@ export function listCardActivity(userId: string, cardId: string, options: {
   };
   // A board the card moved from (or to) that the reader cannot open shows neither its name nor the key there.
   const boardSide = (value: ActivityValue | null | undefined) => value?.id && !canOpenBoard(value.id) ? { label: "a board you can't open" } : value ?? null;
-  const activity: CardActivityEntry[] = page.filter((row) => isCardActivityKind(row.kind)).map((row) => {
-    let payload = JSON.parse(row.payload) as CardActivityPayload;
+  const listed = page.filter((row) => isCardActivityKind(row.kind)).map((row) => {
+    const payload = JSON.parse(row.payload) as CardActivityPayload;
+    return { row, payload, linked: workLinkedRef(row.kind, payload) };
+  });
+  // A work link's other side (a goal, a note, another card): its title for a reader who can open it,
+  // else its kind word only (D1390, T706). One batched resolve per page.
+  const resolveLinked = linkedActivityResolver(listed.flatMap((entry) => entry.linked ? [entry.linked] : []), { userId },
+    (ref) => (options.mayReadRef?.(ref) ?? true) && (ref.kind !== "card" || (options.mayRead?.(ref.id) ?? true)));
+  const activity: CardActivityEntry[] = listed.map(({ row, payload: stored, linked }) => {
+    let payload = stored;
+    if (linked && payload.item) payload = { ...payload, item: resolveLinked(linked, payload.item) };
     // A related card the reader cannot open shows only that it exists (T90).
-    if ((row.kind === "relation_added" || row.kind === "relation_removed") && payload.item?.id && !canOpen(payload.item.id)) {
+    else if ((row.kind === "relation_added" || row.kind === "relation_removed") && payload.item?.id && !canOpen(payload.item.id)) {
       payload = { ...payload, item: { label: "a card you can't open", ...(payload.item.detail ? { detail: payload.item.detail } : {}) } };
     }
     if (row.kind === "board_move") payload = { ...payload, from: boardSide(payload.from), to: boardSide(payload.to) };

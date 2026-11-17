@@ -5,9 +5,11 @@ import { recordCardActivity } from "../tasks/activity";
 import { recordItemActivity } from "../activity/service";
 import { canWriteContent } from "../team/userRole";
 import { workKindAdapter, type Viewer } from "./adapters";
+import { resolveRefs } from "./resolve";
 import { isLinkRelation, isWorkKind, parseWorkRef, WORK_KIND_LABELS, workRefKey, type HiddenWorkSummary, type LinkRelation, type WorkKind, type WorkLinkView, type WorkRef, type WorkSummary } from "../../shared/workRefs";
 
 export { registerWorkKind, workKindAdapter, type WorkKindAdapter, type Viewer } from "./adapters";
+export { resolveRefs } from "./resolve";
 export { parseWorkRef, type WorkRef, type WorkSummary } from "../../shared/workRefs";
 
 /**
@@ -20,7 +22,8 @@ export { parseWorkRef, type WorkRef, type WorkSummary } from "../../shared/workR
  *   href, and id never reach them (T501). Missing, unreadable, and unknown are the same NOT_FOUND.
  * - Every change records activity on both sides (cards: their own history, `goal_linked` for goals
  *   and `relation_added` otherwise; other kinds: `linked` / `unlinked`), with the neutral kind word as
- *   the label, never the other side's title (readers of one side may not read the other).
+ *   the label and the other side's kind, never its title (readers of one side may not read the other).
+ *   The history resolves the title per reader when it is listed (server/links/resolve.ts, D1390).
  */
 
 export class LinkError extends Error {
@@ -41,19 +44,6 @@ export function resolveRef(text: string, viewer: Viewer): { ref: WorkRef; summar
   if (!id) return null;
   const summary = adapter.resolve([id], viewer).get(id) ?? null;
   return summary ? { ref: { kind: parsed.kind, id }, summary } : null;
-}
-
-/** Summaries for many refs at once, grouped by kind; null for unreadable or unknown ones (T501). */
-export function resolveRefs(refs: readonly WorkRef[], viewer: Viewer): Map<string, WorkSummary | null> {
-  const result = new Map<string, WorkSummary | null>();
-  const byKind = new Map<WorkKind, string[]>();
-  for (const ref of refs) byKind.set(ref.kind, [...(byKind.get(ref.kind) ?? []), ref.id]);
-  for (const [kind, ids] of byKind) {
-    const adapter = workKindAdapter(kind);
-    const resolved = adapter ? adapter.resolve([...new Set(ids)], viewer) : new Map<string, WorkSummary | null>();
-    for (const id of ids) result.set(workRefKey({ kind, id }), resolved.get(id) ?? null);
-  }
-  return result;
 }
 
 const levelOf = (ref: WorkRef, viewer: Viewer) => workKindAdapter(ref.kind)?.level(ref.id, viewer) ?? "none";
@@ -84,7 +74,7 @@ function recordLinkActivity(side: WorkRef, other: WorkRef, relation: LinkRelatio
     const boardId = (db.query("SELECT board_id FROM cards WHERE id = ?").get(side.id) as { board_id: string } | null)?.board_id;
     if (!boardId) return;
     const kind = other.kind === "goal" ? (added ? "goal_linked" : "goal_unlinked") : added ? "relation_added" : "relation_removed";
-    recordCardActivity({ cardId: side.id, boardId, actorId, kind, payload: { item: { id: other.id, label } } });
+    recordCardActivity({ cardId: side.id, boardId, actorId, kind, payload: { item: { id: other.id, label, kind: other.kind } } });
     return;
   }
   // The older modules' items keep their own histories (or none); every workspace kind records item activity.

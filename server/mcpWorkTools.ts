@@ -5,6 +5,7 @@ import { anchorsOf, keyReach, reachCovers } from "./keyResources";
 import { workKindAdapter } from "./links/adapters";
 import { createLink, deleteLink, LinkError, linksOf, refFrom, resolveRef } from "./links/service";
 import { listItemActivity } from "./activity/service";
+import { keyReachesRef } from "./links/keyReach";
 import { addComment, CommentError, listComments } from "./activity/comments";
 import { datasetAllowed, datasetDef, DatasetError, listDatasets, runDatasetQuery } from "./datasets/registry";
 import { structuredQuerySchema } from "./datasets/routes";
@@ -119,14 +120,8 @@ export const workTools: McpToolSpec[] = [
       const ref = toRef(item, key);
       keyItem(key, ref, "read");
       // A key over chosen items sees only links whose other side it reaches too (T203).
-      const keyAllows = (other: WorkRef) => {
-        const adapter = workKindAdapter(other.kind);
-        if (!adapter) return false;
-        const reach = keyReach(key, adapter.scopes.read);
-        return reachCovers(reach, adapter.itemKind ? anchorsOf(adapter.itemKind, other.id) : reach === "all" ? [] : null);
-      };
       try {
-        return { links: linksOf(ref, { userId: key.userId }, { keyAllows }) };
+        return { links: linksOf(ref, { userId: key.userId }, { keyAllows: keyReachesRef(key) }) };
       } catch (error) {
         return mapLinkError(error);
       }
@@ -189,7 +184,8 @@ export const workTools: McpToolSpec[] = [
     handler: ({ item, cursor, limit }, key) => {
       const ref = toRef(item, key);
       keyItem(key, ref, "read");
-      return listItemActivity(ref.kind, ref.id, { cursor: cursor ?? null, limit: limit ?? 50 });
+      // A linked item's title only when the person can read it and the key reaches it (D1390, T203).
+      return listItemActivity(ref.kind, ref.id, { viewer: { userId: key.userId }, mayReadRef: keyReachesRef(key), cursor: cursor ?? null, limit: limit ?? 50 });
     }
   }),
   defineTool({

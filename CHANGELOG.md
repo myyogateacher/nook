@@ -4,6 +4,10 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 
 ## Unreleased
 
+**Link history names what was linked**
+
+- A card's Activity and an item's Activity tab now name the goal, note, card, or other item that was linked or unlinked ("linked the goal Q3 plan"), with its current name, when you can open it. If you can't, it still says only what kind of item it was.
+
 **Search everything from ⌘K**
 
 - The command palette (`⌘K`, `Ctrl+K`) now searches your work in every app as you type: notes, cards, calendar events, files, whiteboards, collections, reports, your own chats, contacts, goals, forms, bookings, standups, time, and townhall. Results are grouped under each app, and the arrow keys move through all of them. **Search notes for "…"** is still the last line.

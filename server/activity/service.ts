@@ -3,7 +3,9 @@ import {
   ACTIVITY_COALESCE_MS, ACTIVITY_LABEL_MAX, ACTIVITY_PAGE_DEFAULT, ACTIVITY_PAGE_MAX, activityKindDef, sameActivityValue,
   type ActivityValue, type ItemActivityEntry, type ItemActivityPayload
 } from "../../shared/itemActivity";
-import type { WorkKind } from "../../shared/workRefs";
+import type { WorkKind, WorkRef } from "../../shared/workRefs";
+import type { Viewer } from "../links/adapters";
+import { linkedActivityRef, linkedActivityResolver } from "../links/resolve";
 
 export { registerActivityKinds } from "../../shared/itemActivity";
 
@@ -98,7 +100,12 @@ function decode(value: string | null | undefined): Cursor | null {
 }
 
 /** One page of an item's history. The caller has checked the reader may read the item. */
-export function listItemActivity(itemKind: string, itemId: string, options: { order?: "asc" | "desc"; cursor?: string | null; limit?: number } = {}): { entries: ItemActivityEntry[]; nextCursor: string | null } {
+export function listItemActivity(itemKind: string, itemId: string, options: {
+  /** Who reads: a linked item's title shows only to a viewer who can read it (D1390). */
+  viewer: Viewer; order?: "asc" | "desc"; cursor?: string | null; limit?: number;
+  /** Narrows which linked items show their title, for keys over chosen items (T203). */
+  mayReadRef?: (ref: WorkRef) => boolean;
+}): { entries: ItemActivityEntry[]; nextCursor: string | null } {
   const order = options.order === "asc" ? "asc" : "desc";
   const limit = Math.min(Math.max(1, options.limit ?? ACTIVITY_PAGE_DEFAULT), ACTIVITY_PAGE_MAX);
   const cursor = decode(options.cursor);
@@ -113,10 +120,17 @@ export function listItemActivity(itemKind: string, itemId: string, options: { or
     }>;
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
+  const parsed = page.map((row) => {
+    const payload = JSON.parse(row.payload) as ItemActivityPayload;
+    return { row, payload, linked: row.kind === "linked" || row.kind === "unlinked" ? linkedActivityRef(payload.item) : null };
+  });
+  // The other side of a link: its title for a viewer who can read it, else the kind word (D1390, T706).
+  const resolveLinked = linkedActivityResolver(parsed.flatMap((entry) => entry.linked ? [entry.linked] : []), options.viewer, options.mayReadRef);
   return {
-    entries: page.map((row) => ({
+    entries: parsed.map(({ row, payload, linked }) => ({
       id: row.id, itemKind: row.item_kind, itemId: row.item_id, kind: row.kind, actorId: row.actor_id, actorName: row.actor_name,
-      ...(row.integration ? { actorIsIntegration: true } : {}), via: row.via, payload: JSON.parse(row.payload) as ItemActivityPayload, createdAt: row.created_at
+      ...(row.integration ? { actorIsIntegration: true } : {}), via: row.via,
+      payload: linked && payload.item ? { ...payload, item: resolveLinked(linked, payload.item) } : payload, createdAt: row.created_at
     })),
     nextCursor: rows.length > limit && last ? encode({ at: last.created_at, id: last.id }) : null
   };

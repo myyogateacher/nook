@@ -8,7 +8,7 @@ import { AttachmentList, AttachmentPreview, unlinkFromHost, uploadForHost } from
 import { CommentReactions } from "../../tasks/CommentReactions";
 import { ITEM_COMMENT_FILES_MAX, ITEM_COMMENT_MAX, type ItemActivityEntry, type ItemComment } from "../../../shared/itemActivity";
 import type { ReactionAggregate } from "../../../shared/reactions";
-import { WORK_KIND_LABELS, type WorkKind } from "../../../shared/workRefs";
+import { linkedItemNoun, WORK_KIND_LABELS, type WorkKind } from "../../../shared/workRefs";
 import { MentionTextarea } from "../mentions/MentionTextarea";
 import { MentionText } from "../mentions/Mentions";
 import type { MentionTarget } from "../mentions/mentionsApi";
@@ -38,8 +38,8 @@ export type ActivityRenderers = Readonly<Record<string, (entry: ItemActivityEntr
 /** The built-in kinds every item has (shared/itemActivity.ts GENERIC_ACTIVITY_KINDS). */
 const GENERIC: ActivityRenderers = {
   created: () => <>created this</>,
-  linked: (entry) => <>linked <span className="ui-activity-value">{entry.payload.item?.label ?? "an item"}</span></>,
-  unlinked: (entry) => <>unlinked <span className="ui-activity-value">{entry.payload.item?.label ?? "an item"}</span></>,
+  linked: (entry) => <>linked {linkedItemNoun(entry.payload.item)}<span className="ui-activity-value">{entry.payload.item?.label ?? "an item"}</span></>,
+  unlinked: (entry) => <>unlinked {linkedItemNoun(entry.payload.item)}<span className="ui-activity-value">{entry.payload.item?.label ?? "an item"}</span></>,
   binned: () => <>moved this to the Bin</>,
   restored: () => <>restored this from the Bin</>
 };

@@ -27,6 +27,8 @@
  * Added at integration: `start` (start date and time, D720), `estimate` (D750), and `board_move`
  * (moved to another board, D716).
  */
+import type { WorkKind } from "./workRefs";
+
 export type ActivityShape = "change" | "item" | "event";
 
 export const CARD_ACTIVITY_KINDS = {
@@ -100,7 +102,11 @@ export type ActivityValue = { id?: string; label: string; detail?: string };
 export type CardActivityPayload = {
   from?: ActivityValue | null;
   to?: ActivityValue | null;
-  item?: ActivityValue;
+  /**
+   * `kind` is set on a work link's other side (goal_linked, relation_added from a link; D1390): the
+   * stored label is then the kind word, and the list serves the title to readers who can open it.
+   */
+  item?: ActivityValue & { kind?: WorkKind };
   /** `binned`: how many subtasks went to the Bin with it. `restored`: how many came back. */
   count?: number;
 };

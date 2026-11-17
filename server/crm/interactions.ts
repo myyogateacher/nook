@@ -280,7 +280,7 @@ export function recordTimeline(kind: CrmEntity, ref: string, userId: string, cur
   const interactions = listInteractions(userId, { subject: { kind, id: record.id }, cursor, limit: 50 });
   return {
     interactions: interactions.items, nextCursor: interactions.nextCursor,
-    activity: cursor ? [] : listItemActivity(kind, record.id, { limit: 50 }).entries,
+    activity: cursor ? [] : listItemActivity(kind, record.id, { viewer: { userId }, limit: 50 }).entries,
     links: cursor ? [] : linksOf({ kind, id: record.id }, { userId }),
     followups: cursor ? [] : listFollowups(userId, { subject: { kind, id: record.id }, includeDone: false })
   };

@@ -2,6 +2,14 @@
 
 Release notes for Nook, newest first. Upgrade steps for each release are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
+## v0.48.1 — 2026-11-17
+
+- **Removing an outside calendar feed in Bookings** no longer says "Calendar not found": the feed was removed, but its busy times were counted as extra deleted rows.
+- **Cancelling standup and other schedules** reports the right number cancelled.
+- **Tasks cards with Time on** no longer draw an empty footer line when no time is logged (D888).
+- The full test suite and the Docker verify build pass again; seven tests that leaked shared state between files are fixed.
+- No migration and no new settings.
+
 ## v0.48.0 — 2026-11-17
 
 **Link history names what was linked**

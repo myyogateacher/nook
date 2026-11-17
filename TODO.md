@@ -6,13 +6,16 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 - Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
 **Current state (2026-11-17).**
-- **v0.48.0** (2026-11-17) is the latest release: PRs #3–#12 (workspace modules, left sidebar, ⌘K search everywhere, @mentions, Tasks keys/timeline/priority, friendly URLs). Every merged PR from now on gets a GitHub release.
+- **v0.48.1** (2026-11-17, fixes) on **v0.48.0**: PRs #3–#12 (workspace modules, left sidebar, ⌘K search everywhere, @mentions, Tasks keys/timeline/priority, friendly URLs). Every merged PR from now on gets a GitHub release.
 - Migrations: **001–123, 155, 160** are released and immutable (v0.48.0); earlier: **001–078** (045, 054, 067, 070, 071, 072, 075 unused; 054 reserved for Messages). New ids continue after 160; parallel lanes take id blocks (160–164 is one), so check `server/migrations/` and `server/migrations/workspace/index.ts` before picking one.
 - Development lands on `main` through pull requests, each after its gates pass.
 
-## Release blockers (v0.48.1)
+## Leftovers (test fixes, v0.48.1)
 
-- [ ] 10 tests fail on main (Docker verify is red since PRs #3–#12). Always failing: `tests/bookings.test.ts` "an outside ICS feed (through the egress guard) blocks slots", `tests/schedules.test.ts` "dispatcher (T504) > each occurrence runs once" (cancelSchedules returns 3, expected 1). Failing only in the full run (pass alone, so shared state or ordering): `tests/workspaceRegistry.test.ts` datasets, `tests/team.test.ts` reading, `tests/tasksCardFace.test.tsx` (3 face tests), `tests/publicPages.test.ts` email verification, `tests/goals.test.ts` search/datasets/Today, `tests/calendarApi.test.ts` Personal calendar.
+- [ ] Audit the ~80 `changes === 1` / `!== 1` checks in `server/`: in Bun 1.4.2 `.run().changes` also counts rows removed by `ON DELETE CASCADE` and triggers, so any such check on a table with children or FTS/search triggers wrongly reports not-found or conflict. Use `RETURNING id` (done for `removeFeed` and `cancelSchedules`).
+- [ ] `tests/today.test.ts` "notes and drafts: the share matrix…" timed out once (5 s) under Docker load; watch it.
+- [ ] Test accounts pile up (782 active by `team.test.ts`; the Team list stops at 500). Use `retireUsersAfterFile` in the heavy files.
+- [ ] "every sort the server takes opens as saved…" failed once in a 67-file subset run (passes in full runs); not investigated.
 
 ## Leftovers (lane W3-WIRE, D1049)
 

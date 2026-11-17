@@ -404,7 +404,7 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
     const recovery = String(form.get("recoveryCode") ?? "").trim();
     return recovery ? { recoveryCode: recovery } : { code: form.get("code") };
   };
-  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.48.0", gitSha: "development" });
+  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.48.1", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");

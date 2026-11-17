@@ -67,6 +67,7 @@ import { AppFrame } from "./shell/AppFrame";
 import { buildNavTree, type NavItem } from "./shell/navModel";
 import { announceShellRoute, splitHref, useLocationHref } from "./shell/locationSignal";
 import { useRecents } from "./shell/recents";
+import { useFolderRename } from "./shell/folderRename";
 import { PALETTE_RECENT_NOTES } from "./shell/paletteModel";
 import { useLocalLayout, useSidebarSync } from "./shell/sidebarPrefs";
 import { visibleQuickActions } from "./today/QuickActions";
@@ -130,7 +131,7 @@ type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean }
 type SecurityForm = "setup" | "verify" | "view" | "regenerate" | "disable";
 // `preferences` comes with /api/auth/me only (not with sign-in); see usePreferences.
 // `notices` (Wave 35 review N2c) comes with /api/auth/me only.
-type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown; notices?: { googleReset?: GoogleResetNotice | null }; features?: { vault?: boolean; agents?: boolean; chatRoleOff?: boolean; reports?: boolean; time?: boolean; crm?: boolean; bookings?: boolean }; app?: { name?: string } };
+type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown; notices?: { googleReset?: GoogleResetNotice | null }; features?: { vault?: boolean; agents?: boolean; chatRoleOff?: boolean; chatAudit?: boolean; reports?: boolean; time?: boolean; crm?: boolean; bookings?: boolean }; app?: { name?: string } };
 type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void; role?: Role; unavailable?: readonly ModuleId[] };
 
 
@@ -1400,6 +1401,10 @@ export function App() {
   }, []);
   useHistoryDialogGuard(movingNote, closeMoveNote);
 
+  // D1302: a folder renamed in the sidebar, the drawer, or the phone's Folders panel (optimistic).
+  const renameFolderInList = useFolderRename<Folder>(setFolders);
+  const renameFolder = useCallback((folder: Folder, name: string) => { void renameFolderInList(folder, name); }, [renameFolderInList]);
+
   async function createFolder(name: string) {
     const { folder } = await api<{ folder: { id: string; name: string } }>("/folders", { method: "POST", body: JSON.stringify({ name, parentId: null }) });
     await loadNavigation();
@@ -2390,7 +2395,7 @@ export function App() {
   // Viewers and guests read notes; create, edit, share, and delete controls are hidden (Wave 15).
   const canWrite = canWriteContent(session.user.role);
   // Phase 3 (LEFT_NAV.md §5): Notes renders in src/notes/NotesApp.tsx; its state and moves stay here.
-  const notesApp: NotesAppProps = { activeSearchHit, activeSearchIndex, askDeleteNote, binnedFiles, boardFacetAvailable, boardSearch, boardsFacet, canWrite, clearSearch, closeMoveNote, closeNewFolder, confirmedFilesRef, createFolder, createNote, deleteNote, deletingNote, discard, downloadPdf, draftBadge, draggingNoteId, dropFolderId, editorLocked, fileFacetAvailable, fileSearch, filesFacet, focusAfterDeleteConfirm, folders, hasPublishableDelta, loadNavigation, loadNote, markdown, mobileActions, mobileBack, mobilePanel, moveNote, movingNote, newFolderOpen, note, noteSort, noteUploadControl, notes, onSearchKeyDown, openContentPath, openFileHit, openMoveNote, openNewFolder, openSearchHit, panel, publish, query, saveState, search, searchAll, searchEnabled, searchInputRef, selectFolder, selectNote, selectedFolder, selectedNoteId, sessionEditedRef, setActiveSearchIndex, setBinnedFiles, setDeletingNote, setDraggingNoteId, setDropFolderId, setMarkdown, setMobileActions, setNoteSort, setNoteUploads, setPanel, setQuery, setSearchAll, setSearchKind, setSharingFolder, setSortOpen, sharingFolder, showMobilePanel, showingBoards, showingFacet, showingFiles, showingSearchResults, sortOpen, toastStatus, visibleNotes };
+  const notesApp: NotesAppProps = { activeSearchHit, activeSearchIndex, askDeleteNote, binnedFiles, boardFacetAvailable, boardSearch, boardsFacet, canWrite, clearSearch, closeMoveNote, closeNewFolder, confirmedFilesRef, createFolder, createNote, deleteNote, deletingNote, discard, downloadPdf, draftBadge, draggingNoteId, dropFolderId, editorLocked, fileFacetAvailable, fileSearch, filesFacet, focusAfterDeleteConfirm, folders, hasPublishableDelta, loadNavigation, loadNote, markdown, mobileActions, mobileBack, mobilePanel, moveNote, movingNote, newFolderOpen, note, noteSort, noteUploadControl, notes, onSearchKeyDown, openContentPath, openFileHit, openMoveNote, openNewFolder, openSearchHit, panel, publish, query, renameFolder, saveState, search, searchAll, searchEnabled, searchInputRef, selectFolder, selectNote, selectedFolder, selectedNoteId, sessionEditedRef, setActiveSearchIndex, setBinnedFiles, setDeletingNote, setDraggingNoteId, setDropFolderId, setMarkdown, setMobileActions, setNoteSort, setNoteUploads, setPanel, setQuery, setSearchAll, setSearchKind, setSharingFolder, setSortOpen, sharingFolder, showMobilePanel, showingBoards, showingFacet, showingFiles, showingSearchResults, sortOpen, toastStatus, visibleNotes };
   return (
     <ModulesContext.Provider value={disabledModules}>
     <RoleContext.Provider value={session.user.role}>

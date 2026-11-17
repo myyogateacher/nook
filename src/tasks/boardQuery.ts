@@ -5,7 +5,9 @@
 // Grouping and the filter bar run through two registries, GROUP_DIMENSIONS and FILTER_FIELDS. The
 // hierarchy wave (migration 019) adds `parent` and `sprint` entries to both (and to BOARD_GROUPS
 // in boardUrl.ts); the router, the filter bar, and the views need no rework.
-import { cardFilterFromQuery, foldText, matchesQuery, queryCards, sortCards, TASK_FLAGS, validateQuery, type CardSortKey, type FilterKey, type FilterTerm, type MemoryQueryContext, type QueryCard, type TaskFlag, type TaskQuery, type TaskState } from "../../shared/taskQuery";
+import type { ReactNode } from "react";
+import { priorityIconFor, priorityLabel } from "./priority";
+import { cardFilterFromQuery, foldText, LEGACY_URGENT_FLAG, matchesQuery, priorityRank, queryCards, sortCards, TASK_FLAGS, TASK_PRIORITIES, validateQuery, type CardSortKey, type FilterKey, type FilterTerm, type MemoryQueryContext, type QueryCard, type TaskFlag, type TaskQuery, type TaskState } from "../../shared/taskQuery";
 import { byPosition } from "./boardOrder";
 import type { BoardGroupId, BoardQuery, BoardSort } from "./boardUrl";
 import { cardAssignees } from "./taskActions";
@@ -49,6 +51,7 @@ export function boardData(detail: Pick<BoardDetail, "columns" | "cards"> & { tag
       description_excerpt: card.description_excerpt ?? "",
       tag_ids: card.tag_ids ?? [],
       flags: card.flags ?? [],
+      priority: card.priority ?? null,
       assignees: cardAssignees(card) as CardAssignee[],
       child_count: rollups.get(card.id)?.total ?? 0,
       done_child_count: rollups.get(card.id)?.done ?? 0
@@ -63,7 +66,7 @@ const hasLevelsData = (board: BoardData) => structureOfData(board).levels.length
 export const parentTitleOf = (card: Pick<CardSummary, "parent_card_id">, board: BoardData) =>
   card.parent_card_id ? board.cards.find((item) => item.id === card.parent_card_id)?.title ?? null : null;
 
-export const FLAG_LABELS: Record<TaskFlag, string> = { urgent: "Urgent", blocked: "Blocked", needs_review: "Needs review", on_hold: "On hold" };
+export const FLAG_LABELS: Record<TaskFlag, string> = { blocked: "Blocked", needs_review: "Needs review", on_hold: "On hold" };
 export const DUE_GROUP_LABELS: Record<string, string> = { overdue: "Overdue", today: "Today", week: "Next 7 days", later: "Later", none: "No date" };
 export const UNKNOWN_TAG = "Unknown tag";
 export const UNKNOWN_PERSON = "Unknown person";
@@ -91,7 +94,8 @@ export function tagLabel(value: string, board: BoardData) {
   return tag?.name ?? UNKNOWN_TAG;
 }
 
-export const flagLabel = (value: string) => value === "none" ? "No flag" : FLAG_LABELS[value as TaskFlag] ?? value;
+/** A `flag:` value in words; the legacy `urgent` (a link from before priorities, D1313) reads as the priority it means. */
+export const flagLabel = (value: string) => value === "none" ? "No flag" : value === LEGACY_URGENT_FLAG ? "Urgent priority" : FLAG_LABELS[value as TaskFlag] ?? value;
 
 /** The context `matchesQuery` needs for this board and viewer. */
 export function memoryContext(board: BoardData, context: BoardContext): MemoryQueryContext {
@@ -151,6 +155,13 @@ export const GROUP_DIMENSIONS: Record<BoardGroupId, GroupDimension> = {
     labelFor: (key, board) => tagLabel(key, board),
     order: (keys, board) => [...keys].sort(noneLast((a, b) => byName(tagLabel(a, board), tagLabel(b, board))))
   },
+  priority: {
+    // D1316: Urgent, High, Medium, Low, then No priority.
+    label: "Priority",
+    keysFor: (card) => [card.priority ?? "none"],
+    labelFor: (key) => priorityLabel(key),
+    order: (keys) => [...keys].sort((a, b) => priorityRank(a === "none" ? null : a) - priorityRank(b === "none" ? null : b))
+  },
   flag: {
     label: "Flag",
     keysFor: (card) => card.flags.length ? card.flags : ["none"],
@@ -178,7 +189,8 @@ export const GROUP_DIMENSIONS: Record<BoardGroupId, GroupDimension> = {
   }
 };
 
-export type FilterOption = { value: string; label: string; swatch?: string };
+/** `icon`: a value's own icon in the list (a priority's flame or bars, D1315). */
+export type FilterOption = { value: string; label: string; swatch?: string; icon?: ReactNode };
 
 /**
  * A field of the filter bar: one grammar key, edited as one positive term whose values OR
@@ -235,6 +247,13 @@ export const FILTER_FIELDS: Record<string, FilterField> = {
     key: "tag",
     optionsFor: (board) => [...[...board.tags].sort((a, b) => byName(a.name, b.name)).map((tag) => ({ value: tag.id, label: tag.name, swatch: tag.color })), { value: "none", label: "No tag" }],
     labelFor: (value, board) => tagLabel(value, board)
+  },
+  priority: {
+    // D1315: several priorities OR together, as every other field's values do.
+    label: "Priority",
+    key: "priority",
+    optionsFor: () => [...TASK_PRIORITIES.map((priority) => ({ value: priority, label: priorityLabel(priority), icon: priorityIconFor(priority) })), { value: "none", label: "No priority", icon: priorityIconFor("none") }],
+    labelFor: (value) => priorityLabel(value)
   },
   flag: {
     label: "Flag",
@@ -364,7 +383,7 @@ const compareText = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 /** Sorts by a table column. `title`, `due`, `created`, and `updated` are the shared sort; the rest tie-break on board order. */
 export function sortBoardCards(cards: readonly BoardCard[], board: BoardData, sort: BoardSort | null): BoardCard[] {
   if (!sort) return sortCards(cards, board.columns);
-  const shared: Partial<Record<BoardSort["field"], CardSortKey>> = { title: "title", due: "due", created: "created", updated: "updated", column: "board" };
+  const shared: Partial<Record<BoardSort["field"], CardSortKey>> = { title: "title", due: "due", created: "created", updated: "updated", column: "board", priority: "priority" };
   const key = shared[sort.field];
   if (key) return sortCards(cards, board.columns, { key, direction: sort.direction });
   const inBoardOrder = sortCards(cards, board.columns);

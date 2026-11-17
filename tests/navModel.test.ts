@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import "../src/workspaceModules";
 import { buildNavTree, navItemForSection, navItems } from "../src/shell/navModel";
 import { MODULES, normalizeDisabledModules, unavailableModules, type ModuleId } from "../src/modules";
-import { enabledTodayApps } from "../src/today/todayApps";
+import { arrangedTodayApps, enabledTodayApps } from "../src/today/todayApps";
+import { DEFAULT_APP_ORDER } from "../src/shell/sidebarPrefs";
 import { WORKSPACE_MODULE_IDS } from "../shared/workspaceModules";
 import type { Role } from "../src/team/teamRoles";
 
@@ -15,7 +16,7 @@ import type { Role } from "../src/team/teamRoles";
 const appIds = (tree: ReturnType<typeof buildNavTree>) => tree.apps.map((item) => item.id);
 /** What Home's launcher shows for the same person (App.tsx's disabledModules: preferences plus unavailable). */
 const launcher = (disabled: readonly ModuleId[], features?: Parameters<typeof unavailableModules>[0]) =>
-  enabledTodayApps(normalizeDisabledModules([...disabled, ...unavailableModules(features)])).map((app) => app.section);
+  arrangedTodayApps(enabledTodayApps(normalizeDisabledModules([...disabled, ...unavailableModules(features)])), null).map((app) => app.section);
 
 const SERVER_FEATURES = {
   // An admin on a server with every optional feature.
@@ -27,7 +28,7 @@ const SERVER_FEATURES = {
   guest: { vault: false, agents: false, reports: false, time: false, crm: false, bookings: false }
 } as const;
 
-test("every role sees exactly the apps Home's launcher shows, in MODULES order", () => {
+test("every role sees exactly the apps Home's launcher shows, A–Z by name (D1305)", () => {
   const sets: ModuleId[][] = [[], ["notes", "files"], ["tasks", "calendar", "forms", "townhall"], ["whiteboards", "vault", "agents", "reports", "crm"], [...WORKSPACE_MODULE_IDS]];
   for (const role of ["admin", "member", "viewer", "guest"] as Role[]) {
     for (const disabled of sets) {
@@ -37,8 +38,8 @@ test("every role sees exactly the apps Home's launcher shows, in MODULES order",
     }
   }
   const all = buildNavTree({ disabledModules: [], features: SERVER_FEATURES.admin, role: "admin", active: "home" });
-  expect(appIds(all)).toEqual(MODULES.flatMap((module) => module.launcher ? [module.launcher.section] : []));
-  expect(appIds(all)).toEqual(["notes", "files", "tasks", "collections", "calendar", "whiteboards", "vault", "chat", "reports", ...WORKSPACE_MODULE_IDS]);
+  expect(appIds(all)).toEqual([...DEFAULT_APP_ORDER]);
+  expect(appIds(all)).toEqual(["bookings", "calendar", "chat", "collections", "crm", "files", "forms", "goals", "notes", "reports", "checkins", "tasks", "time", "townhall", "vault", "whiteboards"]);
 });
 
 test("guests never see Vault, Chat, Reports, Contacts, Bookings, or the Inbox; Time once on a time project", () => {

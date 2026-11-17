@@ -350,8 +350,10 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
         <section className="task-card-section" aria-labelledby={`${baseId}-description`}>
           <header><h3 id={`${baseId}-description`}>Description</h3></header>
           <div className="task-description-editor" data-attach-zone="editor">
-            <NoteEditor key={round} markdown={draft.description} editable={!creating} onNotice={notify} label="Card description" placeholder="Describe the work… Type / for commands"
-              onChange={(description) => update((current) => ({ ...current, description }))} uploadImage={uploadDescriptionImage} />
+            <NoteEditor key={round} markdown={draft.description} editable={!creating} onNotice={notify} label="Card description" placeholder="Describe the work… Type / for commands, @ to mention someone"
+              onChange={(description) => update((current) => ({ ...current, description }))} uploadImage={uploadDescriptionImage}
+              // The card does not exist yet: its board's readers are its readers (MENTIONS.md, phase B). Mentions notify once it is created.
+              mentionTarget={{ kind: "board", id: boardId }} mentionNoun="board" />
           </div>
         </section>
 

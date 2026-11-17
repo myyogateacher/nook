@@ -8,7 +8,7 @@ import { CommandPalette } from "../src/shell/CommandPalette";
 import { CustomizeSidebar } from "../src/shell/ShellSheets";
 import { filterPalette, flatPalette, fuzzyWordScore, paletteEntries, paletteScore, type PaletteEntry } from "../src/shell/paletteModel";
 import { shortcutGroups, shortcutKeys } from "../src/shell/shortcuts";
-import { arrangeApps, arrangeIds, moveApp, readLocalLayout, reconcileSidebarLayout, setAppPinned, SIDEBAR_APPS_KEY, SIDEBAR_DIRTY_KEY, stepApp, useSidebarSync, writeLocalLayout } from "../src/shell/sidebarPrefs";
+import { alphabeticalIds, alphabeticalLayout, arrangeApps, arrangeIds, compareLabels, DEFAULT_APP_ORDER, isAlphabetical, moveApp, readLocalLayout, reconcileSidebarLayout, setAppPinned, SIDEBAR_APPS_KEY, SIDEBAR_DIRTY_KEY, stepApp, useSidebarSync, writeLocalLayout } from "../src/shell/sidebarPrefs";
 import { SIDEBAR_EXPANDED_KEY, SIDEBAR_STORAGE_KEY } from "../src/shell/useSidebarState";
 import { arrangedTodayApps, enabledTodayApps } from "../src/today/todayApps";
 import { visibleQuickActions } from "../src/today/QuickActions";
@@ -50,17 +50,33 @@ test("order and pins arrange the tree; apps it does not list keep their default 
   // An app added later (not in the saved order) lands right after its default neighbour.
   expect(arrangeIds(["a", "b", "c", "d"], ["c", "b", "a"])).toEqual(["c", "d", "b", "a"]);
   expect(arrangeIds(["a", "b"], ["zz", "b", "a"])).toEqual(["b", "a"]);
-  const order = moveApp({}, SIDEBAR_APP_IDS, "crm", 0, false).order;
-  expect(order.slice(0, 3)).toEqual(["crm", "notes", "files"]);
-  const tree = buildNavTree({ disabledModules: [], features, role: "member", active: "home", layout: { order, pinned: ["calendar", "tasks"] } });
-  // Pinned in the person's order (tasks comes before calendar by default, and order does not move them).
-  expect(ids(tree.pinned)).toEqual(["tasks", "calendar"]);
-  expect(ids(tree.apps).slice(0, 4)).toEqual(["crm", "notes", "files", "collections"]);
+  const order = moveApp({}, DEFAULT_APP_ORDER, "crm", 0, false).order;
+  expect(order.slice(0, 3)).toEqual(["crm", "bookings", "calendar"]);
+  const tree = buildNavTree({ disabledModules: [], features, role: "member", active: "home", layout: { order, pinned: ["tasks", "calendar"] } });
+  // Pinned in the person's order (calendar comes before tasks there, A–Z, and order does not move them).
+  expect(ids(tree.pinned)).toEqual(["calendar", "tasks"]);
+  expect(ids(tree.apps).slice(0, 4)).toEqual(["crm", "bookings", "chat", "collections"]);
   expect(ids(tree.apps)).not.toContain("tasks");
-  // Without a layout: MODULES order, nothing pinned.
+  // Without a layout: A–Z by the names people see (D1305), nothing pinned.
   const plain = buildNavTree({ disabledModules: [], features, role: "member", active: "home" });
   expect(plain.pinned).toEqual([]);
-  expect(ids(plain.apps)).toEqual([...SIDEBAR_APP_IDS]);
+  expect(ids(plain.apps)).toEqual([...DEFAULT_APP_ORDER]);
+  expect(plain.apps.map((item) => item.label)).toEqual(["Bookings", "Calendar", "Chat", "Collections", "Contacts", "Files", "Forms", "Goals", "Notes", "Reports", "Standups", "Tasks", "Time", "Townhall", "Vault", "Whiteboards"]);
+});
+
+test("D1305: A–Z is by the shown name, case-insensitive; Reset to A–Z drops the custom order and keeps the pins in their order", () => {
+  expect(alphabeticalIds(["notes", "chat", "crm", "checkins", "bookings"])).toEqual(["bookings", "chat", "crm", "notes", "checkins"]);
+  expect(compareLabels("apple", "Banana")).toBeLessThan(0);
+  expect(compareLabels("Écrit", "Zeta")).toBeLessThan(0);
+  expect(isAlphabetical({})).toBe(true);
+  const custom = moveApp({ pinned: ["tasks", "files"] }, ["tasks", "files", ...DEFAULT_APP_ORDER.filter((id) => id !== "tasks" && id !== "files")], "whiteboards", 2, false);
+  expect(isAlphabetical(custom)).toBe(false);
+  const reset = alphabeticalLayout(custom);
+  expect(isAlphabetical(reset)).toBe(true);
+  const tree = buildNavTree({ disabledModules: [], features, role: "member", active: "home", layout: reset });
+  expect(ids(tree.pinned)).toEqual(ids(buildNavTree({ disabledModules: [], features, role: "member", active: "home", layout: custom }).pinned));
+  expect(ids(tree.apps)).toEqual(DEFAULT_APP_ORDER.filter((id) => !reset.pinned.includes(id)));
+  expect(alphabeticalLayout({ order: ["whiteboards", "notes"] })).toEqual({ order: [], pinned: [] });
 });
 
 test("pinning never shows what is off or not offered (presentation only, T97)", () => {
@@ -74,16 +90,16 @@ test("pinning never shows what is off or not offered (presentation only, T97)", 
 
 test("dragging moves an app among the shown ones and pins or unpins it; hidden apps keep their place", () => {
   // collections is not shown (turned off).
-  const shown = ["notes", "files", "tasks", "calendar"];
+  const shown = ["calendar", "files", "notes", "tasks"];
   // tasks to the top, pinned.
   const pinned = moveApp({}, shown, "tasks", 0, true);
   expect(pinned.pinned).toEqual(["tasks"]);
-  expect(arrangeApps(shown, pinned, (id) => id)).toEqual({ pinned: ["tasks"], rest: ["notes", "files", "calendar"] });
+  expect(arrangeApps(shown, pinned, (id) => id)).toEqual({ pinned: ["tasks"], rest: ["calendar", "files", "notes"] });
   expect([...pinned.order].sort()).toEqual([...SIDEBAR_APP_IDS].sort());
-  // Calendar up between Notes and Files: collections keeps its place after tasks, so turning it on puts it back there.
-  const moved = moveApp(pinned, ["tasks", "notes", "files", "calendar"], "calendar", 2, false);
+  // Notes up to the top of Apps: chat and collections (hidden) keep their place after calendar, so turning them on puts them back there.
+  const moved = moveApp(pinned, ["tasks", "calendar", "files", "notes"], "notes", 1, false);
   expect(arrangeApps(shown, moved, (id) => id)).toEqual({ pinned: ["tasks"], rest: ["notes", "calendar", "files"] });
-  expect(moved.order.indexOf("collections")).toBe(moved.order.indexOf("tasks") + 1);
+  expect(moved.order.indexOf("chat")).toBe(moved.order.indexOf("calendar") + 1);
   // A second pin lands after the first; dropped among the apps again, unpinned where it fell.
   const two = moveApp(moved, ["tasks", "notes", "calendar", "files"], "files", 1, true);
   expect(arrangeApps(shown, two, (id) => id)).toEqual({ pinned: ["tasks", "files"], rest: ["notes", "calendar"] });
@@ -105,11 +121,11 @@ test("the arrows move within a group and stop at its edges; pin goes to the end 
 });
 
 test("Home's phone tiles follow the sidebar's order, pinned first", () => {
-  const layout = setAppPinned(moveApp({}, SIDEBAR_APP_IDS, "calendar", 0, false), SIDEBAR_APP_IDS, "files", true);
+  const layout = setAppPinned(moveApp({}, DEFAULT_APP_ORDER, "whiteboards", 0, false), DEFAULT_APP_ORDER, "files", true);
   const tiles = arrangedTodayApps(enabledTodayApps([]), layout).map((app) => app.section);
   const tree = buildNavTree({ disabledModules: [], features, role: "admin", active: "home", layout });
   expect(tiles).toEqual(ids([...tree.pinned, ...tree.apps]));
-  expect(tiles.slice(0, 3)).toEqual(["files", "calendar", "notes"]);
+  expect(tiles.slice(0, 3)).toEqual(["files", "whiteboards", "bookings"]);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -390,18 +406,20 @@ test("shortcut rows: the platform's keys, each key its own <kbd>", () => {
 
 test("Customize sidebar: arrows reorder within a group, pin moves to Pinned, Show is Settings → Modules", async () => {
   const tree = buildNavTree({ disabledModules: [], features, role: "member", active: "home" });
-  const apps = tree.apps.slice(0, 4).map((item) => ({ id: item.id, label: item.label, icon: item.icon, shown: item.id !== "collections" }));
+  // Given in any order: the sheet shows them A–Z (D1305), Pinned first.
+  const apps = tree.apps.filter((item) => ["tasks", "notes", "files", "collections"].includes(item.id)).reverse().map((item) => ({ id: item.id, label: item.label, icon: item.icon, shown: item.id !== "collections" }));
   const layouts: unknown[] = [];
   const shownCalls: Array<[string, boolean]> = [];
   const view = await render(<CustomizeSidebar apps={apps} layout={{ pinned: ["files"] }} onLayout={(layout) => layouts.push(layout)} onShown={(id, shown) => shownCalls.push([id, shown])} onClose={noop} />);
   const sheet = document.querySelector<HTMLElement>(".customize-sheet")!;
   expect(sheet.getAttribute("aria-modal")).toBe("true");
   const rows = () => [...sheet.querySelectorAll<HTMLElement>(".customize-row")].map((row) => row.dataset.app);
-  expect(rows()).toEqual(["files", "notes", "tasks", "collections"]);
+  expect(rows()).toEqual(["files", "collections", "notes", "tasks"]);
+  expect(view.button("Reset to A–Z")!.disabled).toBe(true);
   expect(sheet.querySelector<HTMLButtonElement>('[aria-label="Move Files up"]')!.disabled).toBe(true);
-  expect(sheet.querySelector<HTMLButtonElement>('[aria-label="Move Notes up"]')!.disabled).toBe(true);
+  expect(sheet.querySelector<HTMLButtonElement>('[aria-label="Move Collections up"]')!.disabled).toBe(true);
   await view.click(sheet.querySelector('[aria-label="Move Notes down"]')!);
-  expect(arrangeApps(["files", "notes", "tasks", "collections"], layouts.at(-1) as never, (id) => id)).toEqual({ pinned: ["files"], rest: ["tasks", "notes", "collections"] });
+  expect(arrangeApps(["files", "notes", "tasks", "collections"], layouts.at(-1) as never, (id) => id)).toEqual({ pinned: ["files"], rest: ["collections", "tasks", "notes"] });
   const pin = sheet.querySelector<HTMLButtonElement>('[aria-label="Pin Tasks"]')!;
   expect(pin.getAttribute("aria-pressed")).toBe("false");
   await view.click(pin);
@@ -411,6 +429,14 @@ test("Customize sidebar: arrows reorder within a group, pin moves to Pinned, Sho
   expect(shownCalls).toEqual([["collections", true]]);
   await view.click(view.button("Reset order and pins")!);
   expect(layouts.at(-1)).toEqual({ order: [], pinned: [] });
+  // Reset to A–Z (D1305): with a custom order it is offered, and it keeps the pins.
+  const custom = { order: ["tasks", "files", "notes", "collections"], pinned: ["files"] } as never;
+  await view.rerender(<CustomizeSidebar apps={apps} layout={custom} onLayout={(layout) => layouts.push(layout)} onShown={noop} onClose={noop} />);
+  expect(rows()).toEqual(["files", "tasks", "notes", "collections"]);
+  await view.click(view.button("Reset to A–Z")!);
+  const reset = layouts.at(-1) as { order: string[]; pinned: string[] };
+  expect(reset.pinned).toEqual(["files"]);
+  expect(arrangeApps(["files", "notes", "tasks", "collections"], reset as never, (id) => id)).toEqual({ pinned: ["files"], rest: ["collections", "notes", "tasks"] });
 });
 
 test("the sidebar shows Pinned above Apps, Apps' ⋯ opens Customize, and a drop reorders through the layout", async () => {

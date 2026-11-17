@@ -55,6 +55,7 @@ import {
 } from "./service";
 import { BOARD_TEMPLATES, validateStructure } from "../../shared/boardStructure";
 import { ESTIMATE_KINDS, ESTIMATE_SCALES } from "../../shared/estimates";
+import { LEGACY_URGENT_FLAG, TASK_PRIORITIES } from "../../shared/taskQuery";
 import { validTimeZone } from "../today/registry";
 
 // C0/C1 controls and bidi overrides never belong in a board, column, or card name.
@@ -138,8 +139,13 @@ const description = z.string().refine((value) => Buffer.byteLength(value, "utf8"
 const assigneeIdsSchema = z.array(uuid).max(MAX_ASSIGNEES * 2);
 /** Tag ids (D109): at most 10 after deduplication; the service dedupes and checks each is a tag of the card's board. */
 const tagIdsSchema = z.array(uuid).max(MAX_TAGS_PER_CARD * 2);
-/** Flags (D110): unique values from the fixed set. */
-const flagsSchema = z.array(z.enum(CARD_FLAGS)).max(CARD_FLAGS.length).refine((flags) => new Set(flags).size === flags.length, "Each flag can appear once");
+/**
+ * Flags (D110): unique values from the fixed set. The deprecated `urgent` is still accepted and sets
+ * the Urgent priority instead (D1312), so integrations written before priorities keep working.
+ */
+const flagsSchema = z.array(z.enum([...CARD_FLAGS, LEGACY_URGENT_FLAG])).max(CARD_FLAGS.length + 1).refine((flags) => new Set(flags).size === flags.length, "Each flag can appear once");
+/** The card's priority (D1310): urgent, high, medium, low, or null for none. */
+export const prioritySchema = z.enum(TASK_PRIORITIES).nullable();
 /**
  * Relations to create with a new card (§5.1 composer): each target must be readable; same rules as
  * POST /cards/:k/relations. A target listed twice is a 400 here: the new card has no relations yet,
@@ -173,6 +179,8 @@ export const cardCreateSchema = z.object({
   assigneeIds: assigneeIdsSchema.optional(),
   tagIds: tagIdsSchema.optional(),
   flags: flagsSchema.optional(),
+  /** D1310: urgent, high, medium, low, or null (the default) for none. */
+  priority: prioritySchema.optional(),
   relations: createRelationsSchema.optional(),
   /** The caller's own unlinked uploads, or their own Files items with attachmentsConfirmed (LIMITS.attachmentsPerCard). */
   attachmentIds: z.array(uuid).max(50).optional(),
@@ -202,6 +210,8 @@ export const cardPatchSchema = z.object({
   assigneeIds: assigneeIdsSchema.optional(),
   tagIds: tagIdsSchema.optional(),
   flags: flagsSchema.optional(),
+  /** D1310: set the priority, or null to clear it. */
+  priority: prioritySchema.optional(),
   /** Reparent (D128): a live card of this board one level up, or null to detach. */
   parentId: uuid.nullable().optional(),
   /** Change level (D128); 409 HAS_CHILDREN while the card has live children. */
@@ -215,8 +225,8 @@ export const cardPatchSchema = z.object({
   .refine((value) => value.assigneeId === undefined || value.assigneeIds === undefined, "Send assigneeIds or the legacy assigneeId, not both")
   .refine((value) => value.title !== undefined || value.description !== undefined || value.dueOn !== undefined || value.dueTime !== undefined
     || value.dueTz !== undefined || value.startOn !== undefined || value.startTime !== undefined || value.startTz !== undefined || value.assigneeId !== undefined || value.assigneeIds !== undefined || value.tagIds !== undefined || value.flags !== undefined
-    || value.parentId !== undefined || value.level !== undefined || value.sprintId !== undefined || value.estimate !== undefined,
-  "Provide a title, description, dueOn, dueTime, startOn, startTime, assigneeIds, tagIds, flags, parentId, level, sprintId, or estimate");
+    || value.priority !== undefined || value.parentId !== undefined || value.level !== undefined || value.sprintId !== undefined || value.estimate !== undefined,
+  "Provide a title, description, dueOn, dueTime, startOn, startTime, assigneeIds, tagIds, flags, priority, parentId, level, sprintId, or estimate");
 // A blank body is allowed only with files (files-only comments, uploads everywhere D397): the server
 // stores a generated body then (shared/commentFiles.ts).
 const commentBody = z.string().refine((value) => Buffer.byteLength(value, "utf8") <= COMMENT_MAX_BYTES, `Comments can be at most ${COMMENT_MAX_BYTES} bytes`);

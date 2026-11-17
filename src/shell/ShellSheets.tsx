@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef } from "react";
 import { ArrowDown, ArrowUp, Pin, type LucideIcon } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { shortcutKeys, type ShortcutGroup } from "./shortcuts";
-import { arrangeApps, setAppPinned, stepApp, type AppsLayout } from "./sidebarPrefs";
+import { alphabeticalLayout, arrangeApps, isAlphabetical, setAppPinned, stepApp, type AppsLayout } from "./sidebarPrefs";
 import "../files/files.css";
 import "./palette.css";
 
@@ -40,7 +40,7 @@ export type CustomizeSidebarProps = {
  * Customize sidebar (D1294): the keyboard and touch path for what dragging does. Every app this
  * person can have, Pinned first: Move up and Move down within its group, Pin or Unpin, and Show,
  * which is Settings → Modules' own switch (turning an app off there and here is the same thing).
- * Reset puts every app back in its default place and unpins them.
+ * Reset to A–Z drops the custom order and keeps the pins (D1305); Reset order and pins also unpins.
  */
 export function CustomizeSidebar({ apps, layout, onLayout, onShown, onClose }: CustomizeSidebarProps) {
   const { pinned, rest } = arrangeApps(apps, layout, (app) => app.id);
@@ -90,6 +90,8 @@ export function CustomizeSidebar({ apps, layout, onLayout, onShown, onClose }: C
       </section>
       <p className="customize-note" id="customize-hide-note">Hiding an app turns it off for you, as in Settings → Modules. It stays available to everyone else, and you can turn it back on here or there.</p>
       <div className="customize-foot">
+        {/* D1305: back to A–Z; pinned apps stay pinned. */}
+        <button type="button" className="secondary-button" onClick={() => onLayout(alphabeticalLayout(layout))} disabled={isAlphabetical(layout)}>Reset to A–Z</button>
         <button type="button" className="secondary-button" onClick={() => onLayout({ order: [], pinned: [] })} disabled={!layout.order?.length && !layout.pinned?.length}>Reset order and pins</button>
         <button type="button" className="primary-button" onClick={onClose}>Done</button>
       </div>

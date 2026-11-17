@@ -1,5 +1,6 @@
 import { audit, db, now } from "../db";
 import { recordItemActivity, listItemActivity } from "../activity/service";
+import { notifyMentions } from "../activity/mentions";
 import { captureUndo } from "../undo";
 import { cancelSchedules, upsertSchedule } from "../schedules/service";
 import { createLink, linksOf } from "../links/service";
@@ -107,6 +108,8 @@ export function logInteraction(userId: string, input: InteractionInput): CrmInte
       recordItemActivity({ itemKind: subject.kind, itemId: subject.id, container: { kind: "contact_book", id: bookId }, actorId: userId, kind: "crm_interaction", payload: { item: { id, label: `${kind[0]!.toUpperCase()}${kind.slice(1)}` }, extra: { kind } } });
     }
     touchSubjects([...unique.values()], occurredAt);
+    // @mentions in the notes (docs/plan/MENTIONS.md, phase B): readers of the book, on the first record named.
+    if (body) notifyMentions({ kind: subjects[0]!.kind, itemId: subjects[0]!.id, authorId: userId, text: body, where: `in a note on a ${subjects[0]!.kind}` });
     audit(userId, null, "crm.interaction_create", { bookId, interactionId: id, kind, subjects: unique.size });
     return readInteraction(id, userId);
   })();
@@ -133,6 +136,9 @@ export function updateInteraction(id: string, userId: string, patch: Interaction
     if (patch.durationS !== undefined) sets.push("duration_s = ?"), values.push(patch.durationS === null ? null : Math.max(0, Math.min(86_400, Math.round(Number(patch.durationS)))));
     if (!sets.length) return current;
     db.query(`UPDATE interactions SET ${[...sets, "updated_at = ?"].join(", ")} WHERE id = ?`).run(...values, now(), current.id);
+    // Only people the edit newly mentions are notified (D1326).
+    const subject = current.subjects[0];
+    if (patch.body !== undefined && subject) notifyMentions({ kind: subject.kind, itemId: subject.id, authorId: userId, text: patch.body ?? "", before: current.body, where: `in a note on a ${subject.kind}` });
     audit(userId, null, "crm.interaction_update", { bookId: current.bookId, interactionId: current.id });
     return readInteraction(current.id, userId);
   })();

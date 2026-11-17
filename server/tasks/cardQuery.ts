@@ -46,7 +46,17 @@ export function filterBoardCardIds(boardId: string, filter: CardFilter, context:
   if (normalized.columns) where.push(`k.column_id IN (${placeholders("c", normalized.columns, params)})`);
   if (normalized.assignees) where.push(setClause("card_assignees", "user_id", "a", normalized.assignees, params));
   if (normalized.tags) where.push(setClause("card_tags", "tag_id", "t", normalized.tags, params));
-  if (normalized.flags) where.push(setClause("card_flags", "flag", "f", { ids: normalized.flags.values, none: normalized.flags.none }, params));
+  if (normalized.flags) {
+    const flags = normalized.flags;
+    // The legacy Urgent flag is the Urgent priority (D1313), OR-ed with the other values.
+    const clause = flags.values.length || flags.none ? setClause("card_flags", "flag", "f", { ids: flags.values, none: flags.none }, params) : null;
+    where.push(flags.urgent ? `(${clause ? `${clause} OR ` : ""}k.priority = 'urgent')` : clause ?? "0");
+  }
+  if (normalized.priorities) {
+    const { values, none } = normalized.priorities;
+    const parts = [...(values.length ? [`k.priority IN (${placeholders("p", values, params)})`] : []), ...(none ? ["k.priority IS NULL"] : [])];
+    where.push(`(${parts.join(" OR ")})`);
+  }
   if (normalized.due) {
     const { before, after, none } = normalized.due;
     const parts: string[] = [];

@@ -43,14 +43,14 @@ describe("creating a card with tags, flags, relations, and attachments in one ca
     const tag = (await call(s.owner, "POST", `/boards/${s.boardId}/tags`, { name: "Backend" })).body.tag as { id: string };
     const document = await uploadAttachment(s.member);
     const created = await call(s.member, "POST", `/boards/${s.boardId}/cards`, {
-      columnId: s.columnId, title: "Composite", tagIds: [tag.id], flags: ["urgent"], assigneeIds: [s.member.userId],
+      columnId: s.columnId, title: "Composite", tagIds: [tag.id], flags: ["blocked"], priority: "high", assigneeIds: [s.member.userId],
       relations: [{ targetCardId: s.targetId, type: "depends_on" }], attachmentIds: [document.id]
     });
     expect(created.status).toBe(201);
-    const card = created.body.card as { id: string; revision: number; tag_ids: string[]; flags: string[] };
+    const card = created.body.card as { id: string; revision: number; tag_ids: string[]; flags: string[]; priority: string | null };
     expect(card.revision).toBe(1);
     expect(card.tag_ids).toEqual([tag.id]);
-    expect(card.flags).toEqual(["urgent"]);
+    expect([card.flags, card.priority]).toEqual([["blocked"], "high"]);
     const detail = await call(s.member, "GET", `/cards/${card.id}`);
     expect(detail.body.attachments.map((attachment: { document_id: string }) => attachment.document_id)).toEqual([document.id]);
     expect(detail.body.relations).toHaveLength(1);

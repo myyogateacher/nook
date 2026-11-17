@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { MentionTextarea } from "../ui/mentions/MentionTextarea";
+import { MentionText } from "../ui/mentions/Mentions";
 import {
   ArrowLeft, BellRing, Building2, CalendarClock, Check, Contact, Download, Handshake, Loader2, Mail, MessageSquareText, Phone, PhoneCall, Plus, SquareCheck, StickyNote, Trash2, Trophy, Users, XCircle
 } from "lucide-react";
@@ -194,7 +196,7 @@ export function RecordPage({ kind, refId, books, canWriteRole, onOpen, onBack, o
         {canEdit && <div className="crm-composer">
           <div className="ui-segmented" role="group" aria-label="Log a">{(["note", "call", "meeting", "email"] as const).map((item) => <button key={item} type="button" aria-pressed={composerKind === item} onClick={() => setComposerKind(item)}>{INTERACTION_LABELS[item]}</button>)}</div>
           <label className="ui-visually-hidden" htmlFor="crm-composer">{`Log a ${INTERACTION_LABELS[composerKind].toLowerCase()}`}</label>
-          <textarea id="crm-composer" rows={3} maxLength={20000} value={composer} placeholder={composerKind === "note" ? "Write a note…" : `What happened on the ${INTERACTION_LABELS[composerKind].toLowerCase()}?`} onChange={(event) => setComposer(event.target.value)}
+          <MentionTextarea id="crm-composer" rows={3} maxLength={20000} value={composer} target={{ kind, id: detail.id }} noun={kind} placeholder={composerKind === "note" ? "Write a note… @ to mention someone" : `What happened on the ${INTERACTION_LABELS[composerKind].toLowerCase()}?`} onValueChange={setComposer}
             onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void logIt(); } }} />
           <div className="crm-composer-actions"><small>⌘/Ctrl + Enter to log</small><button type="button" className="action-button" disabled={logging || !composer.trim()} onClick={() => void logIt()}>{logging ? "Logging…" : `Log ${INTERACTION_LABELS[composerKind].toLowerCase()}`}</button></div>
         </div>}
@@ -236,7 +238,7 @@ export function InteractionRow({ interaction, onDelete, self }: { interaction: C
     <span className="crm-interaction-icon" aria-hidden="true"><Icon /></span>
     <div>
       <header><strong>{interaction.title || INTERACTION_LABELS[interaction.kind]}</strong><span className="crm-muted">{interaction.title ? ` · ${INTERACTION_LABELS[interaction.kind]}` : ""}{interaction.durationS ? ` · ${Math.round(interaction.durationS / 60)} min` : ""}{" · "}{interaction.author?.name ?? "Nook"} · <time dateTime={interaction.occurredAt}>{dateTime(interaction.occurredAt)}</time></span></header>
-      {interaction.body && interaction.body !== interaction.title && <p className="crm-interaction-body">{interaction.body}</p>}
+      {interaction.body && interaction.body !== interaction.title && <p className="crm-interaction-body"><MentionText text={interaction.body} /></p>}
       {others.length > 0 && <p className="crm-muted">Also on {others.map((subject) => subject.title).join(", ")}</p>}
     </div>
     {interaction.canEdit && <button type="button" className="icon-button" aria-label="Delete this interaction" title="Delete" onClick={onDelete}><Trash2 /></button>}

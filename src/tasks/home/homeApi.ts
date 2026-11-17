@@ -38,6 +38,8 @@ export type QueriedCard = {
   assignees: CardAssignee[];
   tags: Array<{ id: string; name: string; color: TagColor | string }>;
   flags: string[];
+  /** urgent, high, medium, low, or null (D1310); absent from an older server. */
+  priority?: string | null;
   created_at: string;
   updated_at: string;
   /** The caller's level on the card's board (Wave 32): below edit the card offers no Move. Older servers omit it. */

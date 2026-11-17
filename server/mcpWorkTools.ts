@@ -20,7 +20,8 @@ import { registerAgentTools } from "./agents/nookBridge";
 import { readableCard } from "./tasks/access";
 import { cardIdForKey } from "./tasks/keys";
 import { CARD_KEY_PATTERN } from "../shared/boardKeys";
-import { ITEM_COMMENT_MAX } from "../shared/itemActivity";
+import { ITEM_COMMENT_MAX, MENTIONABLE_LIMIT_MAX, MENTION_QUERY_MAX, mentionMarkdown } from "../shared/itemActivity";
+import { mentionCandidates } from "./people/mentions";
 import { LINK_RELATIONS, WORK_KINDS, type WorkKind, type WorkRef } from "../shared/workRefs";
 import { WORKSPACE_SCOPES } from "../shared/workspaceModules";
 
@@ -206,7 +207,7 @@ export const workTools: McpToolSpec[] = [
   defineTool({
     name: "comment_on_item",
     title: "Comment on an item",
-    description: "Add a Markdown comment (or a reply, with parentId) to a workspace item where you can comment. Mention a person as @[Name](user:<id>); they are notified if they can read the item.",
+    description: "Add a Markdown comment (or a reply, with parentId) to a workspace item where you can comment. Mention a person as @[Name](user:<id>) (find_people_to_mention gives the text); they are notified if they can read the item.",
     scopes: WRITE_SCOPES,
     access: { mode: "derived", related: ["item", "parentId"] },
     write: true,
@@ -220,6 +221,24 @@ export const workTools: McpToolSpec[] = [
       } catch (error) {
         return mapLinkError(error);
       }
+    }
+  }),
+  defineTool({
+    name: "find_people_to_mention",
+    title: "Find people to mention",
+    description: "People you can @mention on an item you can read (a card, a note, a goal, a contact, …), matched by name: their id, name, whether they can read the item, and the ready-made mention text to put in a comment or a card description, e.g. @[Ana Silva](user:<id>). Only people who can read the item are notified; a mention never shares the item.",
+    scopes: [...READ_SCOPES, "tasks:read", "notes:read"],
+    access: { mode: "derived", related: ["item"] },
+    write: false,
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    inputSchema: z.object({ item: refSchema, query: z.string().max(MENTION_QUERY_MAX).optional(), limit: z.number().int().min(1).max(MENTIONABLE_LIMIT_MAX).optional() }),
+    handler: ({ item, query, limit }, key) => {
+      const ref = toRef(item, key);
+      keyItem(key, ref, "read");
+      const role = userRole(key.userId);
+      const people = role ? mentionCandidates({ id: key.userId, role }, ref.kind, ref.id, { q: query, limit: limit ?? MENTIONABLE_LIMIT_MAX }) : null;
+      if (!people) throw notFound("Item");
+      return { people: people.map((person) => ({ id: person.id, name: person.displayName, canRead: person.canRead, mention: mentionMarkdown(person.displayName, person.id) })) };
     }
   }),
   defineTool({

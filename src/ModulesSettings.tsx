@@ -5,6 +5,7 @@ import { isModuleEnabled, settingsModulesFor, type ModuleId } from "./modules";
 import type { Role } from "./team/teamRoles";
 import type { PreferencesStatus } from "./usePreferences";
 import { HUB_TITLE_ID } from "./settings/hubModel";
+import { compareLabels } from "./shell/sidebarPrefs";
 import "./modules.css";
 
 type ModulesSettingsProps = {
@@ -43,7 +44,8 @@ export function ModulesSettings({ disabledModules, status, onToggle, role, unava
     <div className="settings-section-heading"><span className="settings-icon"><LayoutGrid /></span><div><p id="modules-copy">Choose which parts of {appName()} you see. Turning a module off hides it from Home, the header, and Today on every device you sign in to. Nothing is deleted, sharing is unchanged, and MCP keys and links from other people keep working. Home and Settings are always on.</p></div></div>
     {status && <p className={status.kind === "error" ? "form-error" : "modules-notice"} role={status.kind === "error" ? "alert" : "status"}>{status.message}</p>}
     <ul className="modules-list" aria-describedby="modules-copy">
-      {settingsModulesFor(role, unavailable).map(({ id, label, description, icon: Icon }) => {
+      {/* D1305: A–Z by name, as the sidebar. */}
+      {[...settingsModulesFor(role, unavailable)].sort((a, b) => compareLabels(a.label, b.label)).map(({ id, label, description, icon: Icon }) => {
         const enabled = isModuleEnabled(disabledModules, id);
         const helpId = `module-help-${id}`;
         return <li key={id} className={`modules-row${enabled ? "" : " off"}${highlighted === id ? " highlight" : ""}`}>

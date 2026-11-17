@@ -90,3 +90,9 @@
 /* Mail link pages (/verify-email, /mail/unsubscribe). */
 .mail-link-card .auth-form { display: grid; gap: 10px; }
 .mail-link-card .secondary-button, .mail-link-card .primary-button, .mail-link-card .text-button { min-height: 44px; }
+
+/* All · Mentions (docs/plan/MENTIONS.md D1333). */
+.notifications-views { display: inline-flex; gap: 2px; margin: 0 0 14px; padding: 3px; border: 1px solid #2f2f34; border-radius: 10px; background: #111114; }
+.notifications-view { min-height: 30px; padding: 0 14px; border: 0; border-radius: 7px; background: transparent; color: #a0a0a8; font: inherit; font-size: .82rem; font-weight: 600; cursor: pointer; }
+.notifications-view:hover { color: #e8e8ea; }
+.notifications-view.is-active { background: #2d2920; color: #f1d58f; }

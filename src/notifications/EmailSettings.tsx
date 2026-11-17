@@ -19,6 +19,7 @@ import { FormError } from "../ui/FormError";
 const CATEGORY_ROWS: Array<{ id: EmailCategory; title: string; help: string }> = [
   { id: "assignments", title: "Assigned to you", help: "Someone assigns you a card. Grouped every 10 minutes." },
   { id: "comments", title: "Comments on your cards", help: "New comments on cards you created or are assigned to." },
+  { id: "mentions", title: "Mentions of you", help: "Someone @mentioned you in a comment, a description, a note, or an answer you can open. Grouped every 10 minutes." },
   { id: "sharing", title: "Shared with you", help: "Notes, files, boards, calendars, and collections shared with you by name." },
   { id: "proposals", title: "Proposals awaiting you", help: "Your MCP keys suggested changes. At most one email every few hours." },
   { id: "reminders", title: "Reminders by email", help: "Reminders you set to email (choose per reminder in Calendar), and changes to events you set a reminder on. Sent even in quiet hours." },

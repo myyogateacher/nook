@@ -172,6 +172,8 @@ svg.task-column-status.done { color: #6fbf85; }
    While editing it grows as you type and scrolls inside itself past 60vh. */
 .task-description-view .editor-surface, .task-description-editor .editor-surface { min-height: 0; }
 .task-description-view .note-prose, .task-description-editor .note-prose { min-height: calc(3 * 1.78em + 16px); padding: 8px 0; font-size: .92rem; }
+/* A card description reads in the app's sans font (notes keep their serif); pre-existing since D44, fixed with mentions (MENTIONS.md §13). */
+.task-description-view .note-prose, .task-description-editor .note-prose { font-family: inherit; line-height: 1.6; }
 .task-description-editor .note-prose { max-height: 60vh; overflow-y: auto; }
 .task-description-editor { display: grid; gap: 10px; }
 /* The editor is a focus target like any field: a visible ring while typing in it. */
@@ -351,7 +353,16 @@ svg.task-column-status.done { color: #6fbf85; }
 .task-tag-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; margin-left: -8px; }
 .task-tag-actions .task-add-time { margin-left: 0; }
 .task-flag-icon { flex: none; }
-.task-flag-icon.flag-urgent { color: #ff8f80; }
+/* Priority (D1317): urgent red (the old Urgent flag's flame), high orange, medium yellow, low muted blue. */
+.task-priority-icon { flex: none; }
+.task-priority-icon.priority-urgent { color: #ff8f80; }
+.task-priority-icon.priority-high { color: #f5a35c; }
+.task-priority-icon.priority-medium { color: #f0c94f; }
+.task-priority-icon.priority-low { color: #8fa9c8; }
+.task-priority-icon.priority-none { color: #7c7c84; }
+.task-priority { display: inline-grid; place-items: center; }
+.task-priority svg, .task-table-priority svg { width: 14px; height: 14px; }
+.task-table-priority { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .task-flag-icon.flag-blocked { color: #f0c060; }
 .task-flag-icon.flag-needs_review { color: #8fb4f5; }
 .task-flag-icon.flag-on_hold { color: #a1a1a8; }
@@ -362,7 +373,6 @@ svg.task-column-status.done { color: #6fbf85; }
 .task-flag-toggle:focus-visible { outline: 2px solid #6b582f; outline-offset: 1px; }
 .task-flag-toggle:disabled { opacity: .5; cursor: not-allowed; }
 .task-flag-toggle.on { color: #f2f2f3; }
-.task-flag-toggle.on.flag-urgent { border-color: #7a3a33; background: #3a1d1a; }
 .task-flag-toggle.on.flag-blocked { border-color: #6f5928; background: #332a17; }
 .task-flag-toggle.on.flag-needs_review { border-color: #34507f; background: #1a2640; }
 .task-flag-toggle.on.flag-on_hold { border-color: #4a4a50; background: #26262a; }

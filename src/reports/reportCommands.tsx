@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import "./overflowMenu.css";
 
 /**
  * The report page's header actions (wave 48 integration): Refresh all and Schedule belong to the

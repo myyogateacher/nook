@@ -19,8 +19,8 @@ const card: CardDetail = {
 
 test("flags toggle in the fixed order and tags resolve in tagging order", () => {
   expect(toggleFlag([], "on_hold")).toEqual(["on_hold"]);
-  expect(toggleFlag(["on_hold"], "urgent")).toEqual(["urgent", "on_hold"]);
-  expect(toggleFlag(["urgent", "blocked"], "urgent")).toEqual(["blocked"]);
+  expect(toggleFlag(["on_hold"], "blocked")).toEqual(["blocked", "on_hold"]);
+  expect(toggleFlag(["blocked", "needs_review"], "blocked")).toEqual(["needs_review"]);
   // A tag the board no longer has (deleted meanwhile) is skipped.
   expect(cardTags(["t3", "gone", "t1"], tags).map((item) => item.name)).toEqual(["Design", "Backend"]);
   expect(cardTags(undefined, tags)).toEqual([]);
@@ -53,11 +53,12 @@ test("a deleted tag leaves the board and every lane card; a saved card updates i
   expect(deleted.cards.map((item) => item.tag_ids)).toEqual([["t2"], []]);
   expect(applyTagChange(detail, { kind: "saved", tag: tag("t9", "Alpha") }).tags![0]!.name).toBe("Alpha");
 
-  const saved = applyCardDetail(detail, { ...card, column_id: "elsewhere", title: "Renamed", tag_ids: ["t2", "t3"], flags: ["urgent"], description: "Hi", description_excerpt: "Hi", revision: 4 });
+  const saved = applyCardDetail(detail, { ...card, column_id: "elsewhere", title: "Renamed", tag_ids: ["t2", "t3"], flags: ["on_hold"], priority: "high", description: "Hi", description_excerpt: "Hi", revision: 4 });
   const lane = saved.cards[0]!;
   expect([lane.title, lane.column_id, lane.has_description, lane.description_excerpt, lane.revision]).toEqual(["Renamed", "c1", 1, "Hi", 4]);
   expect(lane.tag_ids).toEqual(["t2", "t3"]);
-  expect(lane.flags).toEqual(["urgent"]);
+  expect(lane.flags).toEqual(["on_hold"]);
+  expect(lane.priority).toBe("high");
   expect(saved.tags!.map((item) => `${item.id}:${item.card_count}`)).toEqual(["t1:1", "t2:1", "t3:1"]);
   expect(recountTags(tags, ["t1"], ["t1"])).toBe(tags);
   // An older payload without the Wave 13 fields keeps what the lane card had.
@@ -84,11 +85,11 @@ test("the tag picker is a multiple combobox with coloured chips, and only the ow
   expect(full).toContain("A card can have up to 10 tags.");
 });
 
-test("flags are four toggle buttons with aria-pressed in the fixed order", () => {
+test("flags are three toggle buttons with aria-pressed in the fixed order; Urgent is a priority now (D1310)", () => {
   const markup = renderToStaticMarkup(<FlagPicker labelId="t-flags" flags={["blocked"]} disabled={false} onCommit={async () => undefined} />);
   expect(markup).toContain('role="group" aria-labelledby="t-flags"');
   const pressed = [...markup.matchAll(/aria-pressed="(true|false)"[^>]*>(?:<svg[\s\S]*?<\/svg>)([^<]+)</g)].map((match) => `${match[2]}:${match[1]}`);
-  expect(pressed).toEqual(["Urgent:false", "Blocked:true", "Needs review:false", "On hold:false"]);
+  expect(pressed).toEqual(["Blocked:true", "Needs review:false", "On hold:false"]);
 });
 
 test("the manage dialog lists each tag with its colour, name, count, and delete", () => {
@@ -105,7 +106,7 @@ test("the manage dialog lists each tag with its colour, name, count, and delete"
 });
 
 test("card fields add Tags when the board's tags are known, and Flags always", () => {
-  const withTags = renderToStaticMarkup(<CardFields card={{ ...card, tag_ids: ["t1"], flags: ["urgent"] }} userId="u1" idPrefix="t" done={false} saving={false} onSave={async () => true} tags={tags} owner={false} onTagsChange={noop} />);
+  const withTags = renderToStaticMarkup(<CardFields card={{ ...card, tag_ids: ["t1"], flags: ["on_hold"] }} userId="u1" idPrefix="t" done={false} saving={false} onSave={async () => true} tags={tags} owner={false} onTagsChange={noop} />);
   expect(withTags).toContain('<label for="t-tags">');
   expect(withTags).toContain('aria-label="Remove Backend"');
   expect(withTags).toContain('id="t-flags"');

@@ -42,7 +42,7 @@ export const VIEW_LIMITS = { perOwner: 50, members: 100, listed: 200 } as const;
 export const VIEW_LAYOUTS = ["list", "table", "board", "timeline"] as const;
 /** Group-by options. `board`, `state`, and `due` group on the server; `assignee` and `tag` group on the client (multi-valued). */
 export const VIEW_GROUPS = [...QUERY_GROUPS, "assignee", "tag"] as const;
-export const VIEW_FIELDS = ["board", "column", "state", "assignees", "due", "tags", "flags", "updated"] as const;
+export const VIEW_FIELDS = ["board", "column", "state", "assignees", "due", "tags", "flags", "priority", "updated"] as const;
 
 export type ViewDisplay = {
   layout: typeof VIEW_LAYOUTS[number];

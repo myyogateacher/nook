@@ -260,13 +260,15 @@ function trimCards(list: ReturnType<typeof getBoardWithRelationCounts>["cards"])
   // D720: the start fields are sent only on a card with a start (most have none), so the trim holds too.
   // Lane ESTIMATES (D752): `estimate` likewise only when set (a missing one reads as none), so the keys
   // lane's per-card `number` still fits under the 1.2 MB ceiling (tasksBoardPayload).
+  // D1310: `priority` too, only when set (a missing one reads as none).
   const cards = list.map(({ board_id: _board, assignees, assignee_id: _id, assignee_name: _name, done_at: _done, archived_at: archivedAt,
-    start_on: startOn, start_time: startTime, start_tz: startTz, start_at: startAt, estimate, ...card }) => {
+    start_on: startOn, start_time: startTime, start_tz: startTz, start_at: startAt, estimate, priority, ...card }) => {
     for (const assignee of assignees) users[assignee.id] ??= { display_name: assignee.display_name, can_read: assignee.can_read };
     return {
       ...card, ...(archivedAt ? { archived_at: archivedAt } : {}),
       ...(startOn ? { start_on: startOn, start_time: startTime, start_tz: startTz, start_at: startAt } : {}),
       ...(estimate !== null && estimate !== undefined ? { estimate } : {}),
+      ...(priority ? { priority } : {}),
       assignee_ids: assignees.map((assignee) => assignee.id)
     };
   });

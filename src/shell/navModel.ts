@@ -76,7 +76,10 @@ export type NavTree = {
   settings: NavItem;
 };
 
-export type NavFeatures = Parameters<typeof unavailableModules>[0];
+export type NavFeatures = NonNullable<Parameters<typeof unavailableModules>[0]> & {
+  /** D1304: Chat's Audit log is shown to this person (the server's `auditVisible` gate, read at sign-in). */
+  chatAudit?: boolean;
+};
 
 export type NavInput = {
   /** The person's own disabled modules (Settings → Modules). */
@@ -116,7 +119,7 @@ export function buildNavTree({ disabledModules, features, role, active, readyMod
     if (hiddenModuleForApp(disabled, launcher.section) !== null) return [];
     if (isWorkspaceModuleId(launcher.section) && !ready.includes(launcher.section)) return [];
     const row = item(launcher.section, "app", module.label, launcher.href, module.icon, launcher.section);
-    const children = appSections(launcher.section, { role, active, location, recents });
+    const children = appSections(launcher.section, { role, active, location, recents, features });
     const withTree = row.current && TREE_APPS.includes(launcher.section) ? { ...row, tree: true } : row;
     return [children.length ? { ...withTree, children } : withTree];
   });
@@ -144,16 +147,16 @@ export function buildNavTree({ disabledModules, features, role, active, readyMod
 export const navItems = (tree: NavTree): NavItem[] => [...(tree.search ? [tree.search] : []), ...tree.primary, ...tree.pinned, ...tree.apps, tree.settings]
   .flatMap((item) => [item, ...(item.children ?? [])]);
 
-type SectionContext = Pick<NavInput, "role" | "active" | "location" | "recents">;
+type SectionContext = Pick<NavInput, "role" | "active" | "location" | "recents" | "features">;
 type SectionRow = { id: string; label: string; href: string; kind?: "section" | "recent"; current: boolean };
 
 /**
  * An app's nested rows (D1280, D1282). Each is a real URL, and at most one is current: the one the
  * location on screen belongs to (none on an item's own page, such as one form or one session).
  */
-export function appSections(section: AppSection, { role, active, location, recents }: SectionContext): NavItem[] {
+export function appSections(section: AppSection, { role, active, location, recents, features }: SectionContext): NavItem[] {
   const here = location && navItemForSection(active) === section ? location : null;
-  const rows = sectionRows(section, role, here, recents);
+  const rows = sectionRows(section, role, here, recents, features);
   const parent = MODULES.find((module) => module.launcher?.section === section);
   const icon = parent?.icon ?? (section === "inbox" ? Inbox : House);
   return rows.map((row) => ({ id: `${section}:${row.kind === "recent" ? "recent:" : ""}${row.id}`, kind: row.kind ?? "section", label: row.label, href: row.href, icon, section, current: row.current }));
@@ -161,7 +164,18 @@ export function appSections(section: AppSection, { role, active, location, recen
 
 const pathSegments = (pathname: string) => pathname.split("/").filter(Boolean);
 
-function sectionRows(section: AppSection, role: Role | undefined, here: NavInput["location"] | null, recents: NavRecents | undefined): SectionRow[] {
+/**
+ * Whether Chat can be used now, for its sections (D1303): `features.agents` (never guests; members only
+ * once the module is on with a provider and their role chats). Admins see the app while it is off (its
+ * "not configured" screen), so for them the module being on is read from `chatAudit`, which is true
+ * for every admin exactly while the module is on (auditVisibleTo always lets admins see the log).
+ */
+export function chatUsable(role: Role | undefined, features: NavInput["features"]) {
+  if (features?.agents !== true) return false;
+  return role !== "admin" || features.chatAudit === true;
+}
+
+function sectionRows(section: AppSection, role: Role | undefined, here: NavInput["location"] | null, recents: NavRecents | undefined, features?: NavInput["features"]): SectionRow[] {
   if (isWorkspaceModuleId(section)) {
     const module = workspaceModule(section);
     if (!module) return [];
@@ -187,6 +201,16 @@ function sectionRows(section: AppSection, role: Role | undefined, here: NavInput
       { id: "pending", label: "Pending", href: "/inbox", current: view === "pending" },
       { id: "history", label: "History", href: "/inbox/history", current: view === "history" },
       { id: "routines", label: "Routines", href: "/inbox/routines", current: view === "routines" }
+    ];
+  }
+  if (section === "chat") {
+    // D1303: New chat, and the Audit log for exactly the people Chat shows its link to (D1304).
+    if (!chatUsable(role, features)) return [];
+    const route = here ? parseRoute(here.pathname, here.search) : null;
+    const chat = route?.app === "chat" ? route : null;
+    return [
+      { id: "new", label: "New chat", href: "/chat/new", current: Boolean(chat?.newChat) },
+      ...(features?.chatAudit === true ? [{ id: "audit", label: "Audit", href: "/chat/audit", current: Boolean(chat?.audit) }] : [])
     ];
   }
   if (section === "collections") {

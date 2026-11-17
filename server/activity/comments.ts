@@ -3,11 +3,11 @@ import { avatarUrlFor } from "../avatars";
 import { canWriteContent } from "../team/userRole";
 import { LEVEL_RANK, type ItemLevel } from "../access/levels";
 import { workKindAdapter } from "../links/adapters";
-import { notify } from "../notify";
+import { notifyMentions } from "./mentions";
 import { captureUndo } from "../undo";
 import { recordItemActivity } from "./service";
-import { ITEM_COMMENT_MAX, mentionedUserIds, registerActivityKinds, type ItemComment } from "../../shared/itemActivity";
-import { WORK_KIND_LABELS, WORK_KIND_MODULE, type WorkKind } from "../../shared/workRefs";
+import { ITEM_COMMENT_MAX, registerActivityKinds, type ItemComment } from "../../shared/itemActivity";
+import type { WorkKind } from "../../shared/workRefs";
 
 /**
  * Item comments (docs/plan/WORKSPACE_MODULES.md §B.5, D805): comments on any workspace item, one level
@@ -61,21 +61,6 @@ function checkBody(body: unknown): string {
   return body.trim();
 }
 
-function notifyMentions(kind: WorkKind, itemId: string, authorId: string, body: string, before: readonly string[] = []) {
-  const module = WORK_KIND_MODULE[kind];
-  const adapter = workKindAdapter(kind);
-  if (!module || !adapter) return;
-  const mentioned = mentionedUserIds(body).filter((userId) => userId !== authorId && !before.includes(userId) && adapter.level(itemId, { userId }) !== "none");
-  if (!mentioned.length) return;
-  const author = (db.query("SELECT display_name FROM users WHERE id = ?").get(authorId) as { display_name: string } | null)?.display_name ?? "Someone";
-  // Each mentioned reader can open the item, so its href and kind word are theirs to see.
-  const summary = adapter.resolve([itemId], { userId: mentioned[0]! }).get(itemId);
-  notify({
-    userIds: mentioned, module, topic: "core.mention", actor: authorId, title: `${author} mentioned you on a ${WORK_KIND_LABELS[kind].toLowerCase()}`,
-    href: summary?.href ?? "/notifications", item: { kind, id: itemId }, dedupeKey: `mention:${kind}:${itemId}`
-  });
-}
-
 export function addComment(input: { kind: string; itemId: string; authorId: string; body: string; parentId?: string | null }): ItemComment {
   const { level, kind } = levelOn(input.kind, input.itemId, input.authorId);
   if (LEVEL_RANK[level] < LEVEL_RANK.comment || !canWriteContent(input.authorId)) throw new CommentError(403, "READ_ONLY", "You can read this but not comment on it");
@@ -93,7 +78,7 @@ export function addComment(input: { kind: string; itemId: string; authorId: stri
       .run(id, kind, input.itemId, input.parentId ?? null, input.authorId, body, timestamp, timestamp);
     recordItemActivity({ itemKind: kind, itemId: input.itemId, actorId: input.authorId, kind: "commented", payload: { item: { id, label: "Comment" } } });
     audit(input.authorId, null, "item.comment_added", { kind, itemId: input.itemId, commentId: id });
-    notifyMentions(kind, input.itemId, input.authorId, body);
+    notifyMentions({ kind, itemId: input.itemId, authorId: input.authorId, text: body });
     const row = db.query(`${select} WHERE c.id = ?`).get(id) as Row;
     return toComment(row, input.authorId, level);
   })();
@@ -106,10 +91,9 @@ export function editComment(input: { kind: string; itemId: string; commentId: st
     const row = db.query(`${select} WHERE c.id = ? AND c.item_kind = ? AND c.item_id = ? AND c.deleted_at IS NULL`).get(input.commentId, kind, input.itemId) as Row | null;
     if (!row) throw notFound();
     if (row.author_id !== input.userId || !canWriteContent(input.userId)) throw new CommentError(403, "NOT_AUTHOR", "Only the author can edit a comment");
-    const before = mentionedUserIds(row.body_md);
     db.query("UPDATE item_comments SET body_md = ?, updated_at = ? WHERE id = ?").run(body, now(), row.id);
     audit(input.userId, null, "item.comment_edited", { kind, itemId: input.itemId, commentId: row.id });
-    notifyMentions(kind, input.itemId, input.userId, body, before);
+    notifyMentions({ kind, itemId: input.itemId, authorId: input.userId, text: body, before: row.body_md });
     return toComment(db.query(`${select} WHERE c.id = ?`).get(row.id) as Row, input.userId, level);
   })();
 }

@@ -2,6 +2,7 @@ import { auditVia, db, now } from "../db";
 import { readableBoard, readableCard } from "./access";
 import { boardStructure } from "./hierarchy";
 import { reportCardChange } from "./cardEvents";
+import { notifyMentions } from "../activity/mentions";
 import { estimateBadge, type EstimateKind } from "../../shared/estimates";
 import {
   ACTIVITY_COALESCE_MS,
@@ -34,7 +35,8 @@ import {
  * `(created_at, id)`. A related card the reader cannot open is shown without its title (T90).
  */
 
-const VIAS: readonly ActivityVia[] = ["mcp", "rest", "agent", "proposal", "system"];
+const PRIORITY_WORDS: Record<string, string> = { urgent: "Urgent", high: "High", medium: "Medium", low: "Low" };
+const VIAS: readonly ActivityVia[] =["mcp", "rest", "agent", "proposal", "system"];
 const clip = (value: string) => value.length > ACTIVITY_LABEL_MAX ? `${value.slice(0, ACTIVITY_LABEL_MAX - 1)}…` : value;
 
 export type RecordActivityInput = {
@@ -142,6 +144,8 @@ export const activityValue = {
   user: (id: string) => named("SELECT display_name AS label FROM users WHERE id = ?", id, "Former member")!,
   tag: (id: string) => named("SELECT name AS label FROM board_tags WHERE id = ?", id, "Deleted tag")!,
   flag: (flag: string): ActivityValue => ({ id: flag, label: flag }),
+  /** A priority (D1314): `id` urgent, high, medium, or low, `label` its word; null without one. */
+  priority: (priority: string | null): ActivityValue | null => priority ? { id: priority, label: PRIORITY_WORDS[priority] ?? priority } : null,
   column: (id: string | null | undefined) => named("SELECT name AS label FROM board_columns WHERE id = ?", id, "Deleted column"),
   sprint: (id: string | null | undefined) => named("SELECT name AS label FROM board_sprints WHERE id = ?", id, "Deleted sprint"),
   card: (id: string | null | undefined) => named("SELECT title AS label FROM cards WHERE id = ?", id, "Deleted card"),
@@ -168,11 +172,11 @@ export const activityValue = {
 /** The fields of a card the history compares before and after a change. */
 export function cardActivitySnapshot(cardId: string) {
   return db.query(`SELECT k.board_id, k.column_id, k.title, k.due_on, k.due_time, k.due_tz, k.start_on, k.start_time, k.start_tz,
-      k.parent_card_id, k.level, k.sprint_id, k.estimate, b.estimate_kind
+      k.parent_card_id, k.level, k.sprint_id, k.estimate, b.estimate_kind, k.priority
     FROM cards k JOIN boards b ON b.id = k.board_id WHERE k.id = ?`).get(cardId) as {
     board_id: string; column_id: string | null; title: string; due_on: string | null; due_time: string | null; due_tz: string | null;
     start_on: string | null; start_time: string | null; start_tz: string | null;
-    parent_card_id: string | null; level: number; sprint_id: string | null; estimate: number | null; estimate_kind: EstimateKind;
+    parent_card_id: string | null; level: number; sprint_id: string | null; estimate: number | null; estimate_kind: EstimateKind; priority: string | null;
   } | null;
 }
 
@@ -186,6 +190,7 @@ export function recordSnapshotChanges(cardId: string, actorId: string, before: N
   if (before.estimate !== after.estimate) {
     recordCardChange(cardId, boardId, actorId, "estimate", activityValue.estimate(before.estimate_kind, before.estimate), activityValue.estimate(after.estimate_kind, after.estimate), at);
   }
+  if (before.priority !== after.priority) recordCardChange(cardId, boardId, actorId, "priority", activityValue.priority(before.priority), activityValue.priority(after.priority), at);
   if (before.level !== after.level) recordCardChange(cardId, boardId, actorId, "level", activityValue.level(boardId, before.level), activityValue.level(boardId, after.level), at);
   if (before.parent_card_id !== after.parent_card_id) recordCardChange(cardId, boardId, actorId, "parent", activityValue.card(before.parent_card_id), activityValue.card(after.parent_card_id), at);
   if (before.sprint_id !== after.sprint_id) recordCardChange(cardId, boardId, actorId, "sprint", activityValue.sprint(before.sprint_id), activityValue.sprint(after.sprint_id), at);
@@ -266,4 +271,19 @@ export function listCardActivity(userId: string, cardId: string, options: {
   });
   const last = page[page.length - 1];
   return { activity, next: rows.length > options.limit && last ? encodeActivityCursor({ at: last.created_at, id: last.id }) : null };
+}
+
+/**
+ * @mentions in a card's comment or description (docs/plan/MENTIONS.md §5, §9, D1326, D1332): notifies
+ * each newly mentioned board reader (never the author, at most 20) and records one `mentioned` entry
+ * per person notified. Call inside the write's transaction, with the text before the write (null for
+ * a new comment or card).
+ */
+export function recordCardMentions(input: { cardId: string; boardId: string; authorId: string; text: string; before: string | null; where: "comment" | "description"; at?: string }) {
+  const notified = notifyMentions({
+    kind: "card", itemId: input.cardId, authorId: input.authorId, text: input.text, before: input.before,
+    where: input.where === "description" ? "in a card description" : "on a card"
+  });
+  for (const userId of notified) recordCardActivity({ cardId: input.cardId, boardId: input.boardId, actorId: input.authorId, kind: "mentioned", payload: { item: activityValue.user(userId) }, at: input.at });
+  return notified;
 }

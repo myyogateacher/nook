@@ -143,6 +143,20 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .folder-entry:hover .folder-share-button, .folder-share-button:focus-visible { opacity: 1; }
 .folder-share-button:hover { background: #1d1d20; color: var(--yellow); }
 .folder-share-button svg { width: 14px; }
+/* D1302: a folder the person may rename has a ⋯ (Rename) after Share; renaming, the field takes the row. */
+.folder-entry.has-menu { grid-template-columns: minmax(0, 1fr) auto auto; }
+.folder-entry:has(> .folder-link-renaming) { grid-template-columns: minmax(0, 1fr); }
+.folder-pane-menu { opacity: 0; }
+.folder-pane-menu-spacer { width: 32px; }
+.folder-entry:hover .folder-pane-menu, .folder-pane-menu:focus-within, .folder-pane-menu.is-open { opacity: 1; }
+.folder-link-renaming { cursor: default; grid-template-columns: 20px minmax(0, 1fr); }
+.folder-link-renaming:hover { background: transparent; }
+.folder-link-renaming .folder-rename input { height: 30px; font-size: .9rem; }
+@media (max-width: 760px), (pointer: coarse) {
+  .folder-pane-menu { opacity: 1; }
+  .folder-pane-menu-spacer { width: 44px; }
+  .folder-link-renaming .folder-rename input { height: 36px; font-size: 1rem; }
+}
 .folder-nav svg { width: 17px; }
 .folder-nav b { color: #67676e; font-size: .74rem; font-weight: 600; }
 .nav-label { display: flex; align-items: center; justify-content: space-between; margin: 22px 9px 7px; color: #6f6f76; font-size: .7rem; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }

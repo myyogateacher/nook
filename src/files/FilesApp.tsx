@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, LayoutGrid, List as ListIcon, Lock, Paperclip, Menu, RotateCcw, Search, Sparkles, Upload, Users, X } from "lucide-react";
+import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, LayoutGrid, List as ListIcon, Lock, Paperclip, Menu, Pencil, RotateCcw, Search, Sparkles, Upload, Users, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
 import { restoredMessage } from "../bin/binFormat";
@@ -10,6 +10,8 @@ import { useConfirm } from "../ui/useConfirm";
 import { NotificationBell } from "../notifications/NotificationBell";
 import { ShellMenuButton, ShellSidebarPortal, useShellLeaveGuard } from "../shell/shellContext";
 import { SidebarFolderTree, type TreeGroup } from "../shell/SidebarFolderTree";
+import { canRenameFolder, InlineRenameField, useFolderRename } from "../shell/folderRename";
+import { ReportOverflowMenu } from "../reports/reportCommands";
 import { countByFolder } from "../shell/folderTree";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
 import { FileSearchResults, matchedText, useFileSearch, type FileSearchHit } from "../search/FileSearchResults";
@@ -266,6 +268,10 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     return () => { for (const controller of controllers.values()) controller.abort(); controllers.clear(); };
   }, []);
 
+  // D1302: rename a folder in place (the sidebar, the drawer, or the phone's Folders panel), optimistic.
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
+  const renameFolderInList = useFolderRename<Folder>((change) => setData((current) => current ? { ...current, folders: change(current.folders) } : current));
+  const renameFolder = (item: Folder, name: string) => { void renameFolderInList(item, name); };
   const folders = data?.folders ?? [];
   const documents = data?.documents ?? [];
   const { owned, shared } = useMemo(() => orderFolders(folders), [folders]);
@@ -859,6 +865,22 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
 
   const uploadDestination = folder === "all" ? defaultFolder?.name ?? "Default" : currentFolder?.name ?? "";
 
+  /** One of the person's folders in the phone's Folders panel. */
+  const folderButton = (item: Folder, depth: number, depthStyle: CSSProperties | undefined) => <button
+    key={item.id}
+    style={depthStyle}
+    data-depth={depth || undefined}
+    className={`folder-link${folder === item.id ? " active" : ""}${draggingId && canDropOnFolder(item, findDocument(draggingId)) ? " drop-candidate" : ""}${dropFolderId === item.id ? " drop-target" : ""}`}
+    aria-current={folder === item.id ? "page" : undefined}
+    onClick={() => selectFolder(item.id)}
+    onDragEnter={(event) => folderDragOver(event, item)}
+    onDragOver={(event) => folderDragOver(event, item)}
+    onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropFolderId((current) => current === item.id ? null : current); }}
+    onDrop={(event) => folderDrop(event, item)}
+  >
+    {isSystemFolder(item) ? <Paperclip /> : <FolderIcon />}<span className="folder-copy" title={item.name}><span className="folder-name">{item.name}</span></span>{isSystemFolder(item) && <Lock className="folder-system-badge" role="img" aria-label="Managed by Nook: files you attach live here" />}<b>{documents.filter((document) => document.folder_id === item.id).length}</b>
+  </button>;
+
   return <main className={`workspace files-workspace${selected ? " preview-open" : ""}`} data-mobile-panel={panel === "files" ? "notes" : panel === "preview" ? "editor" : "folders"}>
     {/* Phase 3 (D1288): on a computer the folders live in the global sidebar; the pane below is the phone's Folders panel. */}
     <ShellSidebarPortal><SidebarFolderTree
@@ -886,6 +908,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
           onDrop: (event) => folderDrop(event, item)
         }
       }}
+      rename={{ can: (item) => canRenameFolder(item, canWrite), onRename: renameFolder }}
     /></ShellSidebarPortal>
     <aside className="folder-pane" id="file-folders">
       {/* D1276: Home, the apps, Inbox, and the account are in the global sidebar; this pane keeps the folders. */}
@@ -897,20 +920,20 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         <button className={folder === "all" ? "active" : ""} aria-current={folder === "all" ? "page" : undefined} onClick={() => selectFolder("all")}><Files /><span>All files</span><b>{documents.length}</b></button>
         <button className={folder === "shared" ? "active" : ""} aria-current={folder === "shared" ? "page" : undefined} onClick={() => selectFolder("shared")}><Users /><span>Shared with me</span><b>{documents.filter((item) => item.is_owner === 0).length}</b></button>
         <div className="nav-label"><span>Folders</span>{canWrite && <button id="files-new-folder" onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button>}</div>
-        {ownedTree.map(({ folder: item, depth }) => <button
-          key={item.id}
-          style={depth ? { "--folder-depth": Math.min(depth, 4) } as CSSProperties : undefined}
-          data-depth={depth || undefined}
-          className={`folder-link${folder === item.id ? " active" : ""}${draggingId && canDropOnFolder(item, findDocument(draggingId)) ? " drop-candidate" : ""}${dropFolderId === item.id ? " drop-target" : ""}`}
-          aria-current={folder === item.id ? "page" : undefined}
-          onClick={() => selectFolder(item.id)}
-          onDragEnter={(event) => folderDragOver(event, item)}
-          onDragOver={(event) => folderDragOver(event, item)}
-          onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropFolderId((current) => current === item.id ? null : current); }}
-          onDrop={(event) => folderDrop(event, item)}
-        >
-          {isSystemFolder(item) ? <Paperclip /> : <FolderIcon />}<span className="folder-copy" title={item.name}><span className="folder-name">{item.name}</span></span>{isSystemFolder(item) && <Lock className="folder-system-badge" role="img" aria-label="Managed by Nook: files you attach live here" />}<b>{documents.filter((document) => document.folder_id === item.id).length}</b>
-        </button>)}
+        {ownedTree.map(({ folder: item, depth }) => {
+          const depthStyle = depth ? { "--folder-depth": Math.min(depth, 4) } as CSSProperties : undefined;
+          // D1302: the phone's Folders panel renames in place too (⋯ → Rename); Default and Attachments have no ⋯.
+          if (!canWrite) return folderButton(item, depth, depthStyle);
+          // Default and Attachments keep their names: an empty slot keeps their counts in line.
+          if (!canRenameFolder(item, canWrite)) return <div key={item.id} className="folder-entry has-menu">{folderButton(item, depth, depthStyle)}<span className="folder-pane-menu-spacer" aria-hidden="true" /></div>;
+          return <div key={item.id} className="folder-entry has-menu">
+            {renamingFolderId === item.id
+              ? <div className="folder-link folder-link-renaming" data-depth={depth || undefined} style={depthStyle}><FolderIcon />
+                <InlineRenameField name={item.name} onCancel={() => setRenamingFolderId(null)} onSave={(name) => { setRenamingFolderId(null); renameFolder(item, name); }} /></div>
+              : <>{folderButton(item, depth, depthStyle)}<ReportOverflowMenu compact className="folder-pane-menu" label={`${item.name} folder actions`}
+                items={[{ id: "rename", label: "Rename", icon: <Pencil aria-hidden="true" />, onSelect: () => setRenamingFolderId(item.id) }]} /></>}
+          </div>;
+        })}
         {shared.length > 0 && <div className="nav-label"><span>Shared folders</span></div>}
         {shared.map((item) => <button key={item.id} className={`folder-link${folder === item.id ? " active" : ""}`} aria-current={folder === item.id ? "page" : undefined} onClick={() => selectFolder(item.id)}>
           <FolderIcon /><span className="folder-copy" title={item.name}><span className="folder-name">{item.name}</span><small>{item.owner_name}</small></span><b>{documents.filter((document) => document.folder_id === item.id).length}</b>

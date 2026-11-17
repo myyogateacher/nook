@@ -4,7 +4,7 @@ import { ownedNote } from "./access";
 import { restoreItem } from "./bin";
 import { config } from "./config";
 import { db, withAuditContext } from "./db";
-import { createFolder, FolderError } from "./folders";
+import { createFolder, FolderError, updateFolder } from "./folders";
 import { forgetSeenDraft, seenDraft } from "./mcpSeenDrafts";
 import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, issueDetails, McpToolError, notFound, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "./mcpToolKit";
 import { DraftActionError, moveNoteToBin, publishDraft } from "./noteDrafts";
@@ -88,6 +88,29 @@ export const noteManageTools: McpToolSpec[] = [
       } catch (error) {
         if (error instanceof FolderError) throw error.code === "NAME_TAKEN" ? new McpToolError("NAME_TAKEN", error.message) : notFound("Folder");
         throw error;
+      }
+    }
+  }),
+  defineTool({
+    name: "rename_folder",
+    title: "Rename a folder",
+    description: "Rename a folder the user owns (Notes and Files share folders). Its sharing, place, and contents do not change. The Default folder and the Attachments folder keep their names, and \"Default\" is taken (NAME_TAKEN).",
+    scopes: ["notes:write-draft", "files:write"],
+    access: { mode: "items", items: [{ arg: "folderId", kind: "folder" }] },
+    write: true,
+    buckets: ["structure_write"],
+    inputSchema: z.object({ folderId: uuid, name: z.string().min(1).max(120) }).strict(),
+    handler: ({ folderId, name }, key) => {
+      // D1301: the same validation and service as PATCH /api/folders/:id (D1300).
+      const parsed = folderSchema.pick({ name: true }).safeParse({ name });
+      if (!parsed.success) throw new McpToolError("INVALID", "Invalid arguments", { details: issueDetails(parsed.error.issues) });
+      try {
+        return { folder: viaKey(key, () => updateFolder(key.userId, folderId.toLowerCase(), { name: parsed.data.name })) };
+      } catch (error) {
+        if (!(error instanceof FolderError)) throw error;
+        if (error.code === "NAME_TAKEN") throw new McpToolError("NAME_TAKEN", error.message);
+        if (error.status === 404) throw notFound("Folder");
+        throw new McpToolError("INVALID", error.message, { reason: error.code });
       }
     }
   }),

@@ -55,8 +55,14 @@ export const CARD_ACTIVITY_KINDS = {
   board_move: { shape: "change", coalesce: false },
   tag_added: { shape: "item", coalesce: false },
   tag_removed: { shape: "item", coalesce: false },
+  /** Older entries may name `urgent`, from before it became a priority (D1310). */
   flag_set: { shape: "item", coalesce: false },
   flag_cleared: { shape: "item", coalesce: false },
+  /**
+   * The priority (D1314): `id` urgent, high, medium, or low, `label` its word; null is none. "set the
+   * priority to High", "changed the priority from High to Urgent", "cleared the priority".
+   */
+  priority: { shape: "change", coalesce: true },
   /** The parent card (same board). */
   parent: { shape: "change", coalesce: true },
   /** The card's level (Epic, Story, Subtask); `id` is the level number. */
@@ -79,7 +85,9 @@ export const CARD_ACTIVITY_KINDS = {
   time_logged: { shape: "item", coalesce: false },
   goal_linked: { shape: "item", coalesce: false },
   goal_unlinked: { shape: "item", coalesce: false },
-  blocked_by_checkin: { shape: "item", coalesce: false }
+  blocked_by_checkin: { shape: "item", coalesce: false },
+  /** Someone was @mentioned in a comment or the description and notified (docs/plan/MENTIONS.md D1332); `item` is the person. */
+  mentioned: { shape: "item", coalesce: false }
 } as const satisfies Record<string, { shape: ActivityShape; coalesce: boolean }>;
 
 export type CardActivityKind = keyof typeof CARD_ACTIVITY_KINDS;

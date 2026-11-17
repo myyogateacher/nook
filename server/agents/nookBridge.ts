@@ -40,7 +40,7 @@ import type { AgentRow } from "./agentsService";
  */
 export const NOOK_AGENT_TOOLS: ReadonlySet<string> = new Set([
   // Notes
-  "list_notes", "read_note", "search_notes", "list_folders", "create_note", "get_note_draft", "update_note_draft", "publish_note_draft", "create_folder",
+  "list_notes", "read_note", "search_notes", "list_folders", "create_note", "get_note_draft", "update_note_draft", "publish_note_draft", "create_folder", "rename_folder",
   // Files
   "list_documents", "get_document_metadata", "read_document_text", "search_documents", "create_text_file", "rename_file", "move_file",
   // Tasks

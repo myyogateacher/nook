@@ -40,7 +40,7 @@ export const MCP_LIMITS: Record<McpLimitBucket, Limit> = {
   bin_burst: { limit: 10, windowMs: MINUTE },
   // create_sprint and start_sprint.
   sprint_write: { limit: 20, windowMs: DAY },
-  // create_folder, rename_file, and move_file.
+  // create_folder, rename_folder, rename_file, and move_file.
   structure_write: { limit: 100, windowMs: DAY },
   // create_text_file and begin_upload.
   file_write: { limit: 100, windowMs: DAY },

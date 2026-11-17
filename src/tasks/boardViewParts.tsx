@@ -3,6 +3,7 @@ import { CalendarDays } from "lucide-react";
 import { avatarTone, FACE_PEOPLE, FACE_TAGS, initials } from "./CardFace";
 import { cardTags, FLAG_LABELS, visibleItems } from "./cardTags";
 import { FlagIcon } from "./TagPicker";
+import { isPriority, PriorityBadge } from "./priority";
 import { Avatar } from "../ui/Avatar";
 import type { BoardCard, BoardData } from "./boardQuery";
 import { cardDateStatus } from "./taskActions";
@@ -12,11 +13,15 @@ import type { CardAssignee, CardFlag } from "./tasksApi";
 // (CardFace.tsx, §4.4): the same flag icons, tag chips, due chip, and assignee avatars. Every label
 // is React text (T98).
 
-/** The card's flags as icons, each named for screen readers. */
-export function FlagIcons({ flags }: { flags: readonly string[] }) {
+/**
+ * The card's flags as icons, each named for screen readers, after its priority's indicator when
+ * `priority` is given (D1317; nothing for a card without one). The table shows priority in its own column.
+ */
+export function FlagIcons({ flags, priority }: { flags: readonly string[]; priority?: string | null }) {
   const known = flags.filter((flag): flag is CardFlag => flag in FLAG_LABELS);
-  if (!known.length) return null;
+  if (!known.length && !isPriority(priority)) return null;
   return <span className="task-flags">
+    <PriorityBadge priority={priority} />
     {known.map((flag) => <span key={flag} className="task-flag" role="img" aria-label={FLAG_LABELS[flag]} title={FLAG_LABELS[flag]}><FlagIcon flag={flag} /></span>)}
   </span>;
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CalendarDays, Flag, Tag, UsersRound } from "lucide-react";
+import { CalendarDays, Flag, SignalHigh, Tag, UsersRound } from "lucide-react";
 import { Combobox } from "../ui/Combobox";
 import { Avatar } from "../ui/Avatar";
 import { initials } from "./CardFace";
@@ -19,6 +19,7 @@ import { getBoardReaders, type BoardTag, type CardAssignee, type CardChange, typ
 import { FLAG_LABELS, type TagChange } from "./cardTags";
 import { FlagPicker, TagPicker } from "./TagPicker";
 import { DuePicker, startAsDue } from "./DuePicker";
+import { isPriority, PRIORITY_LABELS, PriorityPicker } from "./priority";
 
 export const MAX_ASSIGNEES = 20;
 
@@ -44,7 +45,7 @@ type CardFieldsProps = {
 };
 
 /**
- * The card's fields (WAVE_13_TASK_CARD_UX.md §4.3): the start and due dates, each with an optional time (D720), the
+ * The card's fields (WAVE_13_TASK_CARD_UX.md §4.3): the start and due dates, each with an optional time (D720), the priority (D1317),
  * assignees, the tags, and the flags. The card dialog uses it today; the composer and the full
  * page (13D) join here, so each adds a field with a small diff.
  */
@@ -53,6 +54,11 @@ export function CardFields({ card, userId, idPrefix, done, saving, onSave, tags,
   return <div className="task-card-details">
     <StartField card={card} idPrefix={idPrefix} done={done} saving={saving} onSave={onSave} />
     <DueField card={card} idPrefix={idPrefix} done={done} saving={saving} onSave={onSave} />
+    <div className="task-card-field">
+      <span id={`${idPrefix}-priority-label`} className="task-card-field-label"><SignalHigh aria-hidden="true" />Priority</span>
+      <PriorityPicker id={`${idPrefix}-priority`} labelledBy={`${idPrefix}-priority-label`} priority={isPriority(card.priority) ? card.priority : null} disabled={saving}
+        onChange={(priority) => { void onSave({ priority }, priority ? `Priority set to ${PRIORITY_LABELS[priority]}` : "Priority cleared"); }} />
+    </div>
     <div className="task-card-field">
       <label htmlFor={`${idPrefix}-assignees`}><UsersRound aria-hidden="true" />Assignees</label>
       <AssigneePicker boardId={card.board_id} userId={userId} inputId={`${idPrefix}-assignees`} assignees={cardAssignees(card)} disabled={saving}
@@ -91,6 +97,7 @@ function StaticCardFields({ card, idPrefix, done, tags }: Pick<CardFieldsProps, 
     {field("start", <CalendarDays aria-hidden="true" />, "Start", start.due_on ? [start.due_on, start.due_time && startNote ? startNote : null].filter(Boolean).join(" · ") : "No start date")}
     {field("due", <CalendarDays aria-hidden="true" />, "Due", card.due_on ? [card.due_on, card.due_time && note ? note : null].filter(Boolean).join(" · ") : "No due date",
       <small className={due ? `task-due-text ${due.tone}` : "task-due-text"}>{due ? due.description : card.due_on ? "In a done column" : ""}</small>)}
+    {field("priority", <SignalHigh aria-hidden="true" />, "Priority", isPriority(card.priority) ? PRIORITY_LABELS[card.priority] : "No priority")}
     {field("assignees", <UsersRound aria-hidden="true" />, "Assignees", assignees.length ? assignees.map(assigneeLabel).join(", ") : "Nobody")}
     {tags && field("tags", <Tag aria-hidden="true" />, "Tags", tagNames.length ? tagNames.join(", ") : "No tags")}
     {field("flags", <Flag aria-hidden="true" />, "Flags", flags.length ? flags.map((flag) => FLAG_LABELS[flag]).join(", ") : "No flags")}

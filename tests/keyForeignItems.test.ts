@@ -165,6 +165,8 @@ describe("foreign items a key may not read (T203)", () => {
     // Sample arguments for each resource argument, all inside the grants.
     const samples: Record<string, unknown> = {
       hostKind: "event", hostId: w.eventC, documentId: attachmentId,
+      // The @mention lookup (docs/plan/MENTIONS.md D1331) names its item.
+      item: { kind: "card", id: w.cardA },
       boardId: w.a.boardId, cardId: w.cardA, columnId: w.a.columnId, collectionId: w.collectionX.id, rowId: w.rowX.id, calendarId: w.calendarC, eventId: w.eventC,
       // Wave 34: the cross-board and cross-calendar reads are offered to chosen-item keys too.
       query: "a", filter: "", from: new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10), to: new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10)

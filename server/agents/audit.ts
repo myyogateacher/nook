@@ -1,7 +1,7 @@
 import { db, now } from "../db";
 import { EXTERNAL_BOUNDS, RUN_STATUSES, type AgentApiUsage, type AuditFacets, type AuditRunDetail, type AuditRunSummary, type AuditStepView, type AuditVia, type RunStatus, type TokenUsage } from "../../shared/agents";
 import { readAgentSettings } from "./settings";
-import { AgentError } from "./status";
+import { AgentError, agentsStatus } from "./status";
 
 /**
  * The Audit log (Wave 42 "AC-C", plan §7.3, D365, D366, T317): every API and MCP run, written
@@ -241,6 +241,13 @@ export function auditVisibleTo(viewer: AuditViewer) {
   return db.query(`SELECT 1 FROM api_key_grants g JOIN mcp_api_keys k ON k.id = g.key_id WHERE k.user_id = $user AND g.module = 'agents' AND g.permission = 'run'
     UNION ALL SELECT 1 FROM agent_runs WHERE user_id = $user AND via <> 'chat' LIMIT 1`).get({ user: viewer.userId }) !== null;
 }
+
+/**
+ * `features.chatAudit` on sign-in and /api/auth/me (D1304): the same gate as `auditVisible` on
+ * GET /api/agents/status, so the sidebar's Chat → Audit shows exactly when Chat's own Audit log link
+ * does. Read when the session loads (a key made later shows it after a reload). UI only (T97).
+ */
+export const chatAuditFeature = (userId: string, role: string) => agentsStatus().enabled && auditVisibleTo({ userId, role });
 
 /** An agent's API and MCP runs per day for its managers (D366): counts and tokens, never content. */
 export function agentApiUsage(agentId: string, days = 30): AgentApiUsage {

@@ -4,6 +4,19 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 
 ## Unreleased
 
+**@mentions**
+
+- Type @ in a card's comments or description, or in a comment on a goal, deal, contact, standup answer, booking or form response, to mention someone. Pick them from the list with the arrow keys and Enter, or with the mouse; they show as a chip that opens their profile.
+- The people you mention who can open the card or item are notified in the bell and on their phone. Editing the text notifies only people you newly add, and you are never notified about yourself.
+- People who can't open the card are shown greyed out ("Can't see this card"). A mention never shares the card: share the board first.
+- A card's history shows who was mentioned. Notifications has a new **Mentions** view.
+- MCP: `find_people_to_mention` finds people and gives the mention text; `comment_on_card` and `create_card` notify mentioned board readers.
+- You can also mention people in notes (they hear about it when you publish), standup answers, notes on contacts, goal check-ins, and the description of a card you're creating.
+- A new email setting, **Mentions of you** (on by default), emails you when someone mentions you. Several mentions within 10 minutes come as one email, and it lists only things you can still open.
+- Mention chips show the person's profile picture.
+- Bold, italic and links around a mention are kept when you save.
+- Card descriptions now use the same font as the rest of the app.
+
 **A sidebar for every app**
 
 - Every app now has a sidebar on the left: Search, Home, Inbox, and Notifications, then all your apps, then the timer, Settings, and your account. Switching apps no longer means going back to Home.
@@ -29,12 +42,27 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 - In Settings, the sidebar lists Settings' own sections (Account, Workspace with the Bin, Team) in place of the apps; **Back to apps** at its top shows the apps again. Each section is 264 px wider.
 - An open standup lists Rounds, Insights, and Settings under its name in the sidebar, and a form's header reads **Forms › Team feedback** instead of repeating the title on a second line.
 
+**Card priority**
+
+- A card now has a **Priority**: Urgent, High, Medium, or Low, or none. Pick it from the dropdown beside the card's dates; Urgent keeps its red flame, and High, Medium, and Low show as orange, yellow, and blue bars.
+- Cards that had the **Urgent** flag now have the Urgent priority, and Urgent is no longer among the flags (Blocked, Needs review, and On hold stay). Older history still says "flagged this Urgent"; new changes read "set the priority to High" or "cleared the priority".
+- Card faces, the list, the calendar, the timeline, and My work show the priority's icon before the flags; the table has a **Priority** column you can sort by. The list can be grouped by priority, and My work and views can be sorted by it.
+- **+ Filter** on a board has **Priority** (pick several, or No priority); the filter stays in the link like the others. Links and saved views that filtered by the Urgent flag now show Urgent-priority cards.
+- For integrations: the API and the MCP tools take and return `priority`; `flags: ["urgent"]` still works and sets the Urgent priority (deprecated). Migration **123** (`card_priority`) runs once on the first boot and converts the Urgent flags.
+
 **Jump anywhere with ⌘K, and a sidebar of your own**
 
 - Press ⌘K (Ctrl+K on Windows and Linux), or **Search** at the top of the sidebar, to jump anywhere: type a few letters of an app, a section ("ins" finds every Insights, "con ins" Contacts › Insights), a recent board, collection, or note, or a quick action such as Start timer. The last line searches your notes for what you typed. In Notes, ⌘K now opens this palette too; `/` still jumps to the notes search box.
 - Press `?` to see every keyboard shortcut, including the ones of the app you are in. It is also in your account menu.
 - Drag apps in the sidebar to put them in the order you like, or drop them in **Pinned** to keep them at the top. **Customize sidebar** (the ⋯ beside Apps, or your account menu) does the same with buttons and lets you hide apps, which is the same as turning them off in Settings → Modules. Home's app tiles on a phone follow your order.
 - Your sidebar now follows you: the order, pinned apps, the narrow strip or wide sidebar, and the apps you opened are saved with your account and show up on your other devices after you sign in.
+
+**Rename folders, and Chat in the sidebar**
+
+- Notes and Files folders can be renamed: choose **Rename** in the folder's ⋯ menu in the sidebar (or press F2 on it), type the new name, and press Enter or click away; Esc keeps the old name. On a phone the ⋯ is on each folder in the Folders tab and in the ☰ menu. You can rename your own folders, but not Default or Attachments, and not a folder someone shared with you, even one you can edit.
+- Agents with a key that can write drafts or files can rename your folders too, with the new `rename_folder` tool.
+- Chat lists **New chat** in the sidebar, and **Audit** for the people who can open Chat's Audit log. Both are in ⌘K as well.
+- Apps are listed A–Z by name in the sidebar, in ⌘K, on Home's phone tiles, in Customize sidebar, and in Settings → Modules. An order you arranged yourself is kept; **Reset to A–Z** in Customize sidebar goes back to A–Z and keeps your pinned apps.
 
 **Fixes: final QA of the modules**
 

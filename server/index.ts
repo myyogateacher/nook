@@ -27,7 +27,7 @@ import { initPush } from "./calendar/push";
 import { reconcileEventNextOccurrences } from "./calendar/service";
 import { reconcileCardExcerpts } from "./tasks/excerpt";
 import { registerBinRoutes } from "./binRoutes";
-import { createFolder, FolderError } from "./folders";
+import { createFolder, FolderError, updateFolder } from "./folders";
 import { registerAttachmentRoutes } from "./attachments/routes";
 import { isSystemFolder, isSystemFolderError, SYSTEM_FOLDER_BODY } from "./attachments/service";
 import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
@@ -48,6 +48,7 @@ import { registerAgentRoutes } from "./agents/routes";
 import { noteServer, SERVER_IDLE_TIMEOUT_SECONDS } from "./longRequests";
 import { publicShareHeaders, registerPublicChatShareApi } from "./agents/publicRoutes";
 import { agentsFeature, agentsStatus, chatRoleOff, initAgentsStatus } from "./agents/status";
+import { chatAuditFeature } from "./agents/audit";
 import { markInterruptedRuns } from "./agents/runs";
 import { registerKnowledgeRoutes } from "./knowledge/routes";
 import { registerReportRoutes } from "./reports/routes";
@@ -300,7 +301,7 @@ app.post("/api/auth/register", async (c) => {
   return c.json({
     user: { id, email: body.email, displayName: body.displayName, role, avatarUrl: null },
     csrfToken,
-    features: { vault: vaultFeature(role), agents: agentsFeature(role), chatRoleOff: chatRoleOff(role), reports: roleHasReports(role), ...workspaceRoleFeatures(id, role) },
+    features: { vault: vaultFeature(role), agents: agentsFeature(role), chatRoleOff: chatRoleOff(role), chatAudit: chatAuditFeature(id, role), reports: roleHasReports(role), ...workspaceRoleFeatures(id, role) },
     totp: { enabled: false, required: config.totpPolicy === "required", setupRequired: config.totpPolicy === "required" }
   }, 201);
 });
@@ -348,7 +349,7 @@ app.post("/api/auth/login", async (c) => {
   return c.json({
     user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role, avatarUrl: avatarUrlFor(user.id) },
     csrfToken,
-    features: { vault: vaultFeature(user.role), agents: agentsFeature(user.role), chatRoleOff: chatRoleOff(user.role), reports: roleHasReports(user.role), ...workspaceRoleFeatures(user.id, user.role) },
+    features: { vault: vaultFeature(user.role), agents: agentsFeature(user.role), chatRoleOff: chatRoleOff(user.role), chatAudit: chatAuditFeature(user.id, user.role), reports: roleHasReports(user.role), ...workspaceRoleFeatures(user.id, user.role) },
     totp: totpState(user)
   });
 });
@@ -369,7 +370,7 @@ app.get("/api/auth/me", (c) => {
     // Wave 35 review N2c: an admin reset this account; shown once, then dismissed.
     notices: { googleReset: googleResetNotice(user.id) },
     // Wave 25: whether this person sees the Vault module (server/vault/status.ts); Wave 40: the Chat module. UI only (T97).
-    features: { vault: vaultFeature(user.role), agents: agentsFeature(user.role), chatRoleOff: chatRoleOff(user.role), reports: roleHasReports(user.role), ...workspaceRoleFeatures(user.id, user.role) },
+    features: { vault: vaultFeature(user.role), agents: agentsFeature(user.role), chatRoleOff: chatRoleOff(user.role), chatAudit: chatAuditFeature(user.id, user.role), reports: roleHasReports(user.role), ...workspaceRoleFeatures(user.id, user.role) },
     // Wave 39: APP_NAME, as /api/about has it.
     app: { name: config.appName }
   });
@@ -630,19 +631,13 @@ app.post("/api/folders", async (c) => {
 app.patch("/api/folders/:id", async (c) => {
   const id = uuid.parse(c.req.param("id"));
   const body = await parseJson(c.req.raw, folderSchema.partial().strict());
-  const userId = c.get("user").id;
-  const folder = db.query("SELECT id, is_default FROM folders WHERE id = ? AND owner_id = ?").get(id, userId) as { id: string; is_default: number } | null;
-  if (!folder) return c.json({ error: "Folder not found" }, 404);
-  if (folder.is_default) return c.json({ error: "The Default folder cannot be changed" }, 409);
-  // T342, D392: a system folder is never renamed or moved, and never takes a subfolder.
-  if (isSystemFolder(id) || isSystemFolder(body.parentId)) return c.json(SYSTEM_FOLDER_BODY, 400);
-  if (body.parentId === id) return c.json({ error: "A folder cannot contain itself" }, 400);
-  if (body.parentId && !db.query("SELECT id FROM folders WHERE id = ? AND owner_id = ?").get(body.parentId, userId)) {
-    return c.json({ error: "Parent folder not found" }, 404);
+  try {
+    // D1300: rename (Notes and Files share these folders) and move, owner-only, through updateFolder.
+    return c.json({ ok: true, folder: updateFolder(c.get("user").id, id, body) });
+  } catch (error) {
+    if (error instanceof FolderError) return c.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
+    throw error;
   }
-  db.query("UPDATE folders SET name = COALESCE(?, name), parent_id = CASE WHEN ? THEN ? ELSE parent_id END, updated_at = ? WHERE id = ?")
-    .run(body.name ?? null, Object.hasOwn(body, "parentId") ? 1 : 0, body.parentId ?? null, now(), id);
-  return c.json({ ok: true });
 });
 
 app.delete("/api/folders/:id", (c) => {

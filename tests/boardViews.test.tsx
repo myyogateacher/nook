@@ -25,7 +25,7 @@ const board = boardData({
   columns: [column(todo, "To do", 1), column(done, "Done", 2, 1)],
   tags: [{ id: tag, name: "Backend", color: "blue" }],
   cards: [
-    card("k1", { title: "<img src=x onerror=alert(1)>", tag_ids: [tag], flags: ["urgent"], assignees: [{ id: me, display_name: "Pat", can_read: 1 }, { id: "22222222-2222-4222-8222-222222222222", display_name: "Asha", can_read: 0 }] }),
+    card("k1", { title: "<img src=x onerror=alert(1)>", tag_ids: [tag], flags: ["on_hold"], priority: "urgent", assignees: [{ id: me, display_name: "Pat", can_read: 1 }, { id: "22222222-2222-4222-8222-222222222222", display_name: "Asha", can_read: 0 }] }),
     card("k2", { title: "Ship", column_id: done, due_on: "2026-09-20" })
   ]
 });
@@ -49,8 +49,8 @@ test("table headers sort with aria-sort and cycle asc, desc, then board order", 
   const markup = renderToStaticMarkup(<BoardTable board={board} cards={board.cards} sort={{ field: "due", direction: "desc" }} today={context.today} filtered={false} onSort={noop} onOpenCard={noop} onCardMenu={noop} />);
   expect(markup).toContain('role="region" aria-label="Cards table" tabindex="0"');
   expect(markup).toContain('aria-sort="descending" class="task-table-due"');
-  expect(markup.match(/aria-sort="none"/g)).toHaveLength(7);
-  for (const label of ["Title", "Column", "Assignees", "Due", "Tags", "Flags", "Created", "Updated"]) expect(markup).toContain(`<span>${label}</span>`);
+  expect(markup.match(/aria-sort="none"/g)).toHaveLength(8);
+  for (const label of ["Title", "Column", "Assignees", "Due", "Priority", "Tags", "Flags", "Created", "Updated"]) expect(markup).toContain(`<span>${label}</span>`);
   // Titles are text, never markup (T98); the sticky title column holds the open button and ⋯.
   expect(markup).toContain("&lt;img src=x onerror=alert(1)&gt;");
   expect(markup).not.toContain("<img");
@@ -58,7 +58,8 @@ test("table headers sort with aria-sort and cycle asc, desc, then board order", 
   expect(markup).toContain('data-open-card="k1"');
   expect(markup).toContain("Pat, Asha (no access)");
   expect(markup).toContain('aria-label="Tags Backend"');
-  expect(markup).toContain('aria-label="Urgent"');
+  expect(markup).toContain('aria-label="On hold"');
+  expect(markup).toContain('<span class="task-table-priority"><svg');
   // A done card shows no due chip.
   expect(markup).toContain('<tr class="done" data-card-id="k2">');
   expect(markup).not.toContain("Overdue");
@@ -90,7 +91,7 @@ test("the grouped list shows counted, collapsible sections and marks cards liste
   expect(markup).toContain("also in Asha");
   expect(markup).toContain("No assignee");
   expect(markup).not.toContain("<select");
-  const byColumn = applyBoardQuery(board, { ...parseBoardSearch("?view=list&q=flag:urgent") }, context).groups!;
+  const byColumn = applyBoardQuery(board, { ...parseBoardSearch("?view=list&q=priority:urgent") }, context).groups!;
   const columnMarkup = renderToStaticMarkup(<BoardGroupedList board={board} groups={byColumn} group="column" today={context.today} filtered onGroup={noop} onOpenCard={noop} onCardMenu={noop} />);
   expect(columnMarkup).toContain('<span class="task-group-name">Done</span><span class="task-group-count" aria-label="0 cards">0</span>');
   expect(columnMarkup).toContain("No cards");

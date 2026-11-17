@@ -102,13 +102,13 @@ describe("recording each kind", () => {
     ]);
 
     const tag = (await call(owner, "POST", `/boards/${boardId}/tags`, { name: "Backend" })).body.tag as { id: string };
-    await patch(owner, card.id, { tagIds: [tag.id], flags: ["urgent"] });
+    await patch(owner, card.id, { tagIds: [tag.id], flags: ["blocked"] });
     await patch(owner, card.id, { tagIds: [], flags: [] });
     // Deleting the tag later keeps the history readable.
     expect((await call(owner, "DELETE", `/tags/${tag.id}`)).status).toBe(200);
     expect(stored(card.id).filter((row) => /^(tag|flag)_/.test(row.kind)).map((row) => [row.kind, row.item])).toEqual([
-      ["tag_added", { id: tag.id, label: "Backend" }], ["flag_set", { id: "urgent", label: "urgent" }],
-      ["tag_removed", { id: tag.id, label: "Backend" }], ["flag_cleared", { id: "urgent", label: "urgent" }]
+      ["tag_added", { id: tag.id, label: "Backend" }], ["flag_set", { id: "blocked", label: "blocked" }],
+      ["tag_removed", { id: tag.id, label: "Backend" }], ["flag_cleared", { id: "blocked", label: "blocked" }]
     ]);
 
     expect((await call(owner, "POST", `/cards/${card.id}/archive`)).status).toBe(200);

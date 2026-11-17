@@ -3,6 +3,7 @@
 import { canEnterColumn, columnFullMessage, viewerTimeZone, wallTimeInstant } from "./taskActions";
 import type { BoardColumn, CardAssignee, CardCreate, CardDetail, CardSearchResult, RelationType, UploadedAttachment } from "./tasksApi";
 import { parentRequired, parentRequiredMessage, type BoardStructure } from "../../shared/boardStructure";
+import { isTaskPriority, type TaskPriority } from "../../shared/taskQuery";
 
 export type StagedRelation = { key: string; type: RelationType; card: CardSearchResult };
 
@@ -16,6 +17,8 @@ export type ComposerDraft = {
   assignees: CardAssignee[];
   tagIds: string[];
   flags: string[];
+  /** The priority (D1310), or null for none. */
+  priority: TaskPriority | null;
   relations: StagedRelation[];
   attachments: UploadedAttachment[];
   /** Hierarchy (17A): the parent one level up, and the level; null level means the board's work level. */
@@ -29,12 +32,12 @@ export const MAX_COMPOSER_ATTACHMENTS = 50;
 export const MAX_COMPOSER_RELATIONS = 50;
 
 /** Fields a saved view on its board starts a new card with (lane VIEWS, D637). */
-export type ComposerPrefill = Partial<Pick<ComposerDraft, "assignees" | "tagIds" | "flags">>;
+export type ComposerPrefill = Partial<Pick<ComposerDraft, "assignees" | "tagIds" | "flags" | "priority">>;
 
 export function emptyDraft(columnId: string, placement: { parentId?: string | null; level?: number | null; sprintId?: string | null } = {}, prefill: ComposerPrefill = {}): ComposerDraft {
   return {
     columnId, title: "", description: "", dueOn: null, dueTime: null, dueTz: null,
-    assignees: prefill.assignees ?? [], tagIds: prefill.tagIds ?? [], flags: prefill.flags ?? [], relations: [], attachments: [],
+    assignees: prefill.assignees ?? [], tagIds: prefill.tagIds ?? [], flags: prefill.flags ?? [], priority: prefill.priority ?? null, relations: [], attachments: [],
     parentId: placement.parentId ?? null, level: placement.level ?? null, sprintId: placement.sprintId ?? null
   };
 }
@@ -59,7 +62,7 @@ const sameSet = (left: readonly string[], right: readonly string[]) => left.leng
 export function composerDirty(draft: ComposerDraft, prefill: ComposerPrefill = {}) {
   return Boolean(draft.title.trim() || draft.description.trim() || draft.dueOn
     || !sameSet(draft.assignees.map((person) => person.id), (prefill.assignees ?? []).map((person) => person.id))
-    || !sameSet(draft.tagIds, prefill.tagIds ?? []) || !sameSet(draft.flags, prefill.flags ?? [])
+    || !sameSet(draft.tagIds, prefill.tagIds ?? []) || !sameSet(draft.flags, prefill.flags ?? []) || draft.priority !== (prefill.priority ?? null)
     || draft.relations.length || draft.attachments.length);
 }
 
@@ -90,6 +93,7 @@ export function applyFieldChange(draft: ComposerDraft, change: Record<string, un
   }
   if (Array.isArray(change.tagIds)) next.tagIds = [...change.tagIds as string[]];
   if (Array.isArray(change.flags)) next.flags = [...change.flags as string[]];
+  if ("priority" in change) next.priority = isTaskPriority(change.priority) ? change.priority : null;
   return next;
 }
 
@@ -102,7 +106,7 @@ export function draftCard(draft: ComposerDraft, boardId: string): CardDetail {
     due_at: draft.dueOn && draft.dueTime && draft.dueTz ? wallTimeInstant(draft.dueOn, draft.dueTime, draft.dueTz) : null,
     assignees: draft.assignees,
     comment_count: 0, attachment_count: draft.attachments.length, created_at: "", updated_at: "", description: draft.description,
-    tag_ids: draft.tagIds, flags: draft.flags
+    tag_ids: draft.tagIds, flags: draft.flags, priority: draft.priority
   };
   return card as CardDetail;
 }
@@ -118,6 +122,7 @@ export function createBody(draft: ComposerDraft, title: string): CardCreate {
   if (draft.assignees.length) body.assigneeIds = draft.assignees.map((person) => person.id);
   if (draft.tagIds.length) body.tagIds = draft.tagIds;
   if (draft.flags.length) body.flags = draft.flags;
+  if (draft.priority) body.priority = draft.priority;
   if (draft.relations.length) body.relations = draft.relations.map((relation) => ({ targetCardId: relation.card.id, type: relation.type }));
   if (draft.attachments.length) body.attachmentIds = draft.attachments.map((file) => file.id);
   // A file picked From Files was confirmed in the picker (D396); the server asks for it once per create.

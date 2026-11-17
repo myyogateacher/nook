@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type Dispatch, type KeyboardEvent, type MutableRefObject, type ReactNode, type RefObject, type SetStateAction } from "react";
-import { Archive, ArrowUpDown, Bot, Check, ChevronLeft, FileDown, FilePlus2, FileText, Folder as FolderIcon, FolderInput, FolderPlus, History, Menu, MoreHorizontal, PenTool, Search, Share2, Sparkles, Trash2, Users, X } from "lucide-react";
+import { Archive, ArrowUpDown, Bot, Check, ChevronLeft, FileDown, FilePlus2, FileText, Folder as FolderIcon, FolderInput, FolderPlus, History, Menu, MoreHorizontal, Pencil, PenTool, Search, Share2, Sparkles, Trash2, Users, X } from "lucide-react";
 import { api } from "../api";
 import { AccessSheet } from "../access/AccessSheet";
 import { lineDiff } from "../diff/lineDiff";
@@ -18,6 +18,8 @@ import { FileSearchResults, type useFileSearch } from "../search/FileSearchResul
 import { mcpDraftBadge } from "../noteFinalization";
 import { ShellMenuButton, ShellSidebarPortal } from "../shell/shellContext";
 import { SidebarFolderTree } from "../shell/SidebarFolderTree";
+import { canRenameFolder, InlineRenameField } from "../shell/folderRename";
+import { ReportOverflowMenu } from "../reports/reportCommands";
 import { countByFolder } from "../shell/folderTree";
 import { formatRoute } from "../router";
 import { notesRoute } from "../notesRoute";
@@ -174,6 +176,8 @@ export type NotesAppProps = {
   openSearchHit: (hit: NoteSearchHit) => void;
   panel: "history" | "share" | null;
   publish: (reloadCurrent?: boolean, interactive?: boolean) => Promise<boolean>;
+  /** D1302: renames one of the person's folders in place (optimistic, rolled back with a toast on failure). */
+  renameFolder: (folder: Folder, name: string) => void;
   query: string;
   saveState: "saved" | "saving" | "error" | "conflict";
   search: ReturnType<typeof useNoteSearch>;
@@ -216,7 +220,7 @@ export type NotesAppProps = {
  * as a tree, with the same counts, note drops, Share buttons, and New folder as the pane had. A click
  * goes through `selectFolder`, which saves or publishes the open note first, as the pane did.
  */
-function NotesSidebarTree({ notes, folders, selectedFolder, selectFolder, canWrite, openNewFolder, draggingNoteId, dropFolderId, setDropFolderId, moveNote, setSharingFolder }: Pick<NotesAppProps, "notes" | "folders" | "selectedFolder" | "selectFolder" | "canWrite" | "openNewFolder" | "draggingNoteId" | "dropFolderId" | "setDropFolderId" | "moveNote" | "setSharingFolder">) {
+function NotesSidebarTree({ notes, folders, selectedFolder, selectFolder, canWrite, openNewFolder, draggingNoteId, dropFolderId, setDropFolderId, moveNote, setSharingFolder, renameFolder }: Pick<NotesAppProps, "notes" | "folders" | "selectedFolder" | "selectFolder" | "canWrite" | "openNewFolder" | "draggingNoteId" | "dropFolderId" | "setDropFolderId" | "moveNote" | "setSharingFolder" | "renameFolder">) {
   const counts = useMemo(() => countByFolder(notes), [notes]);
   const groups = useMemo(() => [{ id: "folders", heading: "Folders", folders, onNew: canWrite ? openNewFolder : undefined, newLabel: "New folder", empty: "Create a folder to organize your notes." }], [folders, canWrite, openNewFolder]);
   return <SidebarFolderTree
@@ -248,11 +252,13 @@ function NotesSidebarTree({ notes, folders, selectedFolder, selectFolder, canWri
       }
     })}
     action={(folder) => folder.is_owner === 1 && canWrite ? <button type="button" className="app-sidebar-tree-action" onClick={() => setSharingFolder(folder)} aria-label={`Share ${folder.name}`} title={`Share ${folder.name}`}><Share2 aria-hidden="true" /></button> : null}
+    rename={{ can: (folder) => canRenameFolder(folder, canWrite), onRename: renameFolder }}
   />;
 }
 
 export function NotesApp(props: NotesAppProps) {
-  const { activeSearchHit, activeSearchIndex, askDeleteNote, binnedFiles, boardFacetAvailable, boardSearch, boardsFacet, canWrite, clearSearch, closeMoveNote, closeNewFolder, confirmedFilesRef, createFolder, createNote, deleteNote, deletingNote, discard, downloadPdf, draftBadge, draggingNoteId, dropFolderId, editorLocked, fileFacetAvailable, fileSearch, filesFacet, focusAfterDeleteConfirm, folders, hasPublishableDelta, loadNavigation, loadNote, markdown, mobileActions, mobileBack, mobilePanel, moveNote, movingNote, newFolderOpen, note, noteSort, noteUploadControl, notes, onSearchKeyDown, openContentPath, openFileHit, openMoveNote, openNewFolder, openSearchHit, panel, publish, query, saveState, search, searchAll, searchEnabled, searchInputRef, selectFolder, selectNote, selectedFolder, selectedNoteId, sessionEditedRef, setActiveSearchIndex, setBinnedFiles, setDeletingNote, setDraggingNoteId, setDropFolderId, setMarkdown, setMobileActions, setNoteSort, setNoteUploads, setPanel, setQuery, setSearchAll, setSearchKind, setSharingFolder, setSortOpen, sharingFolder, showMobilePanel, showingBoards, showingFacet, showingFiles, showingSearchResults, sortOpen, toastStatus, visibleNotes } = props;
+  const { activeSearchHit, activeSearchIndex, askDeleteNote, binnedFiles, boardFacetAvailable, boardSearch, boardsFacet, canWrite, clearSearch, closeMoveNote, closeNewFolder, confirmedFilesRef, createFolder, createNote, deleteNote, deletingNote, discard, downloadPdf, draftBadge, draggingNoteId, dropFolderId, editorLocked, fileFacetAvailable, fileSearch, filesFacet, focusAfterDeleteConfirm, folders, hasPublishableDelta, loadNavigation, loadNote, markdown, mobileActions, mobileBack, mobilePanel, moveNote, movingNote, newFolderOpen, note, noteSort, noteUploadControl, notes, onSearchKeyDown, openContentPath, openFileHit, openMoveNote, openNewFolder, openSearchHit, panel, publish, query, renameFolder, saveState, search, searchAll, searchEnabled, searchInputRef, selectFolder, selectNote, selectedFolder, selectedNoteId, sessionEditedRef, setActiveSearchIndex, setBinnedFiles, setDeletingNote, setDraggingNoteId, setDropFolderId, setMarkdown, setMobileActions, setNoteSort, setNoteUploads, setPanel, setQuery, setSearchAll, setSearchKind, setSharingFolder, setSortOpen, sharingFolder, showMobilePanel, showingBoards, showingFacet, showingFiles, showingSearchResults, sortOpen, toastStatus, visibleNotes } = props;
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   return (
     <main className="workspace" data-mobile-panel={mobilePanel}>
       {/* Phase 3 (D1288): on a computer the folders live in the global sidebar; the pane below is the phone's Folders panel. */}
@@ -267,8 +273,10 @@ export function NotesApp(props: NotesAppProps) {
           <button className={selectedFolder === "all" ? "active" : ""} onClick={() => { void selectFolder("all"); }}><Archive /><span>All notes</span><b>{notes.length}</b></button>
           <button className={selectedFolder === "shared" ? "active" : ""} onClick={() => { void selectFolder("shared"); }}><Users /><span>Shared with me</span><b>{notes.filter((item) => item.is_owner === 0).length}</b></button>
           <div className="nav-label"><span>Folders</span>{canWrite && <button onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button>}</div>
-          {folders.map((folder) => <div className="folder-entry" key={folder.id}>
-            <button
+          {folders.map((folder) => <div className={`folder-entry${folder.is_owner === 1 && canWrite ? " has-menu" : ""}`} key={folder.id}>
+            {/* D1302: the phone's Folders panel renames in place too (⋯ → Rename). */}
+            {renamingFolderId === folder.id && canRenameFolder(folder, canWrite) ? <div className="folder-link folder-link-renaming"><FolderIcon />
+              <InlineRenameField name={folder.name} onCancel={() => setRenamingFolderId(null)} onSave={(name) => { setRenamingFolderId(null); renameFolder(folder, name); }} /></div> : <button
               className={`folder-link${selectedFolder === folder.id ? " active" : ""}${dropFolderId === folder.id ? " drop-target" : ""}`}
               onClick={() => { void selectFolder(folder.id); }}
               onDragEnter={(event) => { if (draggingNoteId && folder.is_owner === 1 && canWrite) { event.preventDefault(); setDropFolderId(folder.id); } }}
@@ -284,8 +292,12 @@ export function NotesApp(props: NotesAppProps) {
               <FolderIcon />
               <span className="folder-copy">{folder.name}{folder.is_owner !== 1 && <small>{folder.owner_name}</small>}</span>
               <b>{notes.filter((item) => item.folder_id === folder.id).length}</b>
-            </button>
-            {folder.is_owner === 1 && canWrite && <button className="folder-share-button" onClick={() => setSharingFolder(folder)} aria-label={`Share ${folder.name}`}><Share2 /></button>}
+            </button>}
+            {renamingFolderId !== folder.id && folder.is_owner === 1 && canWrite && <button className="folder-share-button" onClick={() => setSharingFolder(folder)} aria-label={`Share ${folder.name}`}><Share2 /></button>}
+            {renamingFolderId !== folder.id && canRenameFolder(folder, canWrite) && <ReportOverflowMenu compact className="folder-pane-menu" label={`${folder.name} folder actions`}
+              items={[{ id: "rename", label: "Rename", icon: <Pencil aria-hidden="true" />, onSelect: () => setRenamingFolderId(folder.id) }]} />}
+            {/* Default keeps its name: an empty slot keeps its count and Share in line with the rows that have a ⋯. */}
+            {folder.is_owner === 1 && canWrite && !canRenameFolder(folder, canWrite) && <span className="folder-pane-menu-spacer" aria-hidden="true" />}
           </div>)}
           {!folders.length && <p className="nav-empty">Create a folder to organize your notes.</p>}
         </nav>
@@ -411,7 +423,7 @@ export function NotesApp(props: NotesAppProps) {
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : note.canEdit ? `Shared by ${note.owner_name} · you can edit` : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
             <NoteEditor key={note.id} markdown={markdown} editable={(note.isOwner || note.canEdit === true) && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} attachHost="note" onNotice={notify}
               onFileConfirmed={(documentId) => { const files = confirmedFilesRef.current.get(note.id) ?? new Set<string>(); files.add(documentId); confirmedFilesRef.current.set(note.id, files); }}
-              onUploadsChange={setNoteUploads} uploadControl={noteUploadControl} />
+              onUploadsChange={setNoteUploads} uploadControl={noteUploadControl} mentionTarget={{ kind: "note", id: note.id }} mentionNoun="note" />
           </article>
         </>}
       </section>

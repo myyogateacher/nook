@@ -61,7 +61,7 @@ test("My work keeps its query only when it differs from the default, and always 
   expect(parseMyWorkSearch("?q=assignee:me").filter).toEqual(all.filter);
   // A link naming someone else still runs as assignee:me; negated assignees stay.
   expect(format(parseMyWorkSearch(`?q=assignee:${ann}`).filter)).toBe("assignee:me");
-  expect(format(withAssigneeMe(q(`-assignee:${ann} flag:urgent`)))).toBe(`assignee:me -assignee:${ann} flag:urgent`);
+  expect(format(withAssigneeMe(q(`-assignee:${ann} flag:blocked`)))).toBe(`assignee:me -assignee:${ann} flag:blocked`);
   // Bad values fall back without throwing.
   expect(parseMyWorkSearch("?layout=grid&group=planet&sort=%%")).toEqual(myWorkDefault());
 });

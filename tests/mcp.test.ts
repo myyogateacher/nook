@@ -72,7 +72,8 @@ async function publishedNote(session: Session, markdown: string, folderId: strin
 }
 
 // Uploads everywhere U0 (D402): the generic attachment reads come with every host module's read scope.
-const NOTES_READ_TOOLS = ["list_attachments", "list_folders", "list_notes", "read_attachment_text", "read_note", "search_notes"];
+// find_people_to_mention (docs/plan/MENTIONS.md D1331) comes with every read scope that has items to mention on.
+const NOTES_READ_TOOLS = ["find_people_to_mention", "list_attachments", "list_folders", "list_notes", "read_attachment_text", "read_note", "search_notes"];
 
 describe("MCP scopes", () => {
   test("a key created through the API defaults to notes:read and sees only the read tools", async () => {
@@ -276,7 +277,7 @@ describe("MCP draft-only note writes", () => {
   test("write tools need notes:write-draft, which also grants the read tools", async () => {
     const owner = await createUser("Writer scopes");
     const writer = makeKey(owner, ["notes:read", "notes:write-draft"]);
-    expect(await toolNames(writer)).toEqual([...NOTES_READ_TOOLS, "create_folder", "create_note", "get_note_draft", "update_note_draft"].sort());
+    expect(await toolNames(writer)).toEqual([...NOTES_READ_TOOLS, "create_folder", "create_note", "get_note_draft", "rename_folder", "update_note_draft"].sort());
     // Stored without its read scope, the write scope still implies it.
     const writeOnly = makeKey(owner, ["notes:write-draft"]);
     expect(await toolNames(writeOnly)).toContain("list_notes");

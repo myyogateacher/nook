@@ -1,6 +1,7 @@
 import { AlignLeft, Archive, CalendarDays, Link2, ListChecks, MessageSquare, OctagonAlert, Paperclip } from "lucide-react";
 import { cardTags, FLAG_LABELS, visibleItems } from "./cardTags";
 import { FlagIcon } from "./TagPicker";
+import { isPriority, PRIORITY_LABELS, PriorityIcon } from "./priority";
 import { Avatar } from "../ui/Avatar";
 import { assigneeSentence, attachmentCountLabel, cardAssignees, cardDateStatus, commentCountLabel } from "./taskActions";
 import type { BoardTag, CardSummary } from "./tasksApi";
@@ -102,6 +103,7 @@ export function cardFaceLabel({ card, tags, done, today, parentTitle, rollup, ch
   if (card.archived_at) parts.push("archived");
   if (parentTitle) parts.push(`in ${parentTitle}`);
   if (rollup?.total) parts.push(`${rollup.done} of ${rollup.total} ${childLabel} done`);
+  if (isPriority(card.priority)) parts.push(`${PRIORITY_LABELS[card.priority].toLowerCase()} priority`);
   for (const flag of card.flags ?? []) parts.push(FLAG_LABELS[flag].toLowerCase());
   const due = cardDateStatus(card, today, done);
   if (due) parts.push(lowerFirst(due.description));
@@ -164,7 +166,8 @@ export function CardFace({ card, tags, done, today, excerptId, rollup, childLabe
 
   return <div className="task-card-face" aria-hidden="true">
     <span className="task-card-title">
-      {flags.length > 0 && <span className="task-card-flags">
+      {(flags.length > 0 || isPriority(card.priority)) && <span className="task-card-flags">
+        {isPriority(card.priority) && <span className={`task-card-flag task-card-priority priority-${card.priority}`} title={`${PRIORITY_LABELS[card.priority]} priority`}><PriorityIcon priority={card.priority} /></span>}
         {flags.map((flag) => <span key={flag} className="task-card-flag" title={FLAG_LABELS[flag]}><FlagIcon flag={flag} /></span>)}
       </span>}
       {card.title}

@@ -92,6 +92,37 @@ export function mentionedUserIds(markdown: string): string[] {
   return [...new Set([...markdown.matchAll(MENTION_PATTERN)].map((match) => match[2]!.toLowerCase()))];
 }
 
+/** At most this many people are notified by one write (docs/plan/MENTIONS.md D1327). */
+export const MENTION_NOTIFY_MAX = 20;
+
+/** Ids mentioned in `after` that `before` did not mention, in order (D1326: an edit notifies only new mentions). */
+export function newMentionIds(before: string | null | undefined, after: string): string[] {
+  const had = new Set(before ? mentionedUserIds(before) : []);
+  return mentionedUserIds(after).filter((id) => !had.has(id));
+}
+
+export type MentionPart = { type: "text"; text: string } | { type: "mention"; name: string; userId: string };
+
+/** Splits plain text into text runs and mentions, for chips (D1329). Pure. */
+export function splitMentions(text: string): MentionPart[] {
+  const parts: MentionPart[] = [];
+  let last = 0;
+  for (const match of text.matchAll(MENTION_PATTERN)) {
+    const index = match.index ?? 0;
+    if (index > last) parts.push({ type: "text", text: text.slice(last, index) });
+    parts.push({ type: "mention", name: match[1]!, userId: match[2]!.toLowerCase() });
+    last = index + match[0].length;
+  }
+  if (last < text.length) parts.push({ type: "text", text: text.slice(last) });
+  return parts;
+}
+
+/** One person as GET /api/people/mentionable returns them (D1323). */
+export type MentionCandidate = { id: string; displayName: string; avatarUrl: string | null; canRead: boolean };
+export const MENTIONABLE_LIMIT_DEFAULT = 8;
+export const MENTIONABLE_LIMIT_MAX = 20;
+export const MENTION_QUERY_MAX = 40;
+
 /** One comment as GET /api/items/:kind/:id/comments returns it. Replies sit one level under a top-level comment. */
 export type ItemComment = {
   id: string;

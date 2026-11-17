@@ -1,8 +1,32 @@
 // Pure Bin display helpers. No DOM or network access, so they are unit tested directly.
 import type { BinItem, BinRestoreResult, Visibility } from "../types";
 import { whiteboardDisplayName } from "../../shared/whiteboardScene";
+import { WORKSPACE_MODULE_LABELS, type WorkspaceBinType, type WorkspaceModuleId } from "../../shared/workspaceModules";
 
-export type BinFilter = "all" | "note" | "document" | "tasks" | "collections" | "calendar" | "vault" | "chat" | "agent" | "knowledge_base" | "report";
+/** Core filters, then one per workspace module (D1380: the Bin's Modules group). */
+export type BinFilter = "all" | "note" | "document" | "tasks" | "collections" | "calendar" | "vault" | "chat" | "agent" | "knowledge_base" | "report" | `module:${WorkspaceModuleId}`;
+
+/** The module each workspace Bin type belongs to (D1380). */
+export const BIN_TYPE_MODULE: Record<WorkspaceBinType, WorkspaceModuleId> = {
+  form: "forms", goal: "goals", checkin: "checkins", contact_book: "crm", contact: "crm", company: "crm", deal: "crm", time_project: "time", booking_type: "bookings", townhall_session: "townhall"
+};
+/** What a person reads for each workspace Bin type (D1380); before, every one of them read "Item". */
+export const WORKSPACE_BIN_KIND_LABELS: Record<WorkspaceBinType, string> = {
+  form: "Form", goal: "Goal", checkin: "Standup", contact_book: "Contact book", contact: "Contact", company: "Company", deal: "Deal", time_project: "Time project", booking_type: "Booking type", townhall_session: "Townhall session"
+};
+const isWorkspaceBinType = (type: string): type is WorkspaceBinType => Object.prototype.hasOwnProperty.call(BIN_TYPE_MODULE, type);
+/** The workspace module a Bin item belongs to, or null for a core item. */
+export const binItemModule = (item: Pick<BinItem, "type">): WorkspaceModuleId | null => isWorkspaceBinType(item.type) ? BIN_TYPE_MODULE[item.type] : null;
+/** The label of a module filter chip ("Forms", "Contacts", …). */
+export const moduleFilterLabel = (module: WorkspaceModuleId) => WORKSPACE_MODULE_LABELS[module].label;
+/**
+ * The module filter chips (D1380): one per module with items in the Bin, plus the active one, in
+ * Settings order. Seven always-on chips would double the row for modules most Bins never hold.
+ */
+export function moduleFilters(items: Array<Pick<BinItem, "type">>, active: BinFilter): WorkspaceModuleId[] {
+  const present = new Set(items.map(binItemModule).filter((module): module is WorkspaceModuleId => module !== null));
+  return (Object.keys(WORKSPACE_MODULE_LABELS) as WorkspaceModuleId[]).filter((module) => present.has(module) || active === `module:${module}`);
+}
 
 export const isTaskBinItem = (item: Pick<BinItem, "type">) => item.type === "card" || item.type === "board";
 export const isCollectionItem = (item: Pick<BinItem, "type">) => item.type === "collection" || item.type === "collection_row";
@@ -42,6 +66,9 @@ export function binFolderLabel(item: Pick<BinItem, "folder_name"> & Partial<Pick
   if (item.type === "event") return item.folder_name ?? "Calendar";
   if (item.type === "vault") return "Vault";
   if (item.type === "vault_environment" || item.type === "vault_secret") return item.folder_name ?? "its vault";
+  // Workspace modules (D1380): contacts, companies, and deals go back to their contact book; the rest to their module.
+  const module = item.type ? binItemModule({ type: item.type }) : null;
+  if (module) return (item.type === "contact" || item.type === "company" || item.type === "deal") && item.folder_name ? item.folder_name : moduleFilterLabel(module);
   // Notes and files: the server names the folder the restore really uses (an Attachments file goes
   // back to Attachments, linked or not; an item whose folder is gone goes to Default).
   return item.restore_folder_name ?? item.folder_name ?? "Default";
@@ -56,10 +83,12 @@ export function filterBinItems(items: BinItem[], filter: BinFilter) {
   if (filter === "vault") return items.filter(isVaultItem);
   // Reports: reports, report folders (Lane I), and report lists (phase 3).
   if (filter === "report") return items.filter((item) => item.type === "report" || item.type === "report_folder" || item.type === "report_list");
+  if (filter.startsWith("module:")) return items.filter((item) => `module:${binItemModule(item)}` === filter);
   return items.filter((item) => item.type === filter);
 }
 
-const untitled: Record<BinItem["type"], string> = { note: "Untitled note", document: "Untitled file", card: "Untitled card", board: "Untitled board", collection: "Untitled collection", collection_row: "Untitled row", calendar: "Untitled calendar", event: "Untitled event", vault: "Untitled vault", vault_environment: "Untitled environment", vault_secret: "Untitled secret", chat: "Untitled chat", agent: "Untitled agent", knowledge_base: "Untitled knowledge base", report: "Untitled report", report_folder: "Untitled folder", report_list: "Untitled list" };
+const untitled: Record<BinItem["type"], string> = { note: "Untitled note", document: "Untitled file", card: "Untitled card", board: "Untitled board", collection: "Untitled collection", collection_row: "Untitled row", calendar: "Untitled calendar", event: "Untitled event", vault: "Untitled vault", vault_environment: "Untitled environment", vault_secret: "Untitled secret", chat: "Untitled chat", agent: "Untitled agent", knowledge_base: "Untitled knowledge base", report: "Untitled report", report_folder: "Untitled folder", report_list: "Untitled list",
+  form: "Untitled form", goal: "Untitled goal", checkin: "Untitled standup", contact_book: "Untitled contact book", contact: "Unnamed contact", company: "Unnamed company", deal: "Untitled deal", time_project: "Untitled project", booking_type: "Untitled booking type", townhall_session: "Untitled session" };
 
 export function binItemLabel(item: Pick<BinItem, "title" | "type"> & Partial<Pick<BinItem, "kind">>) {
   // QA L6: a whiteboard reads by its name, without the ".excalidraw" of its file.
@@ -104,6 +133,7 @@ export function binKindLabel(item: Pick<BinItem, "type" | "attachment"> & Partia
   if (item.type === "report") return "Report";
   if (item.type === "report_folder") return "Report folder";
   if (item.type === "report_list") return "Report list";
+  if (isWorkspaceBinType(item.type)) return WORKSPACE_BIN_KIND_LABELS[item.type];
   if (item.type !== "document") return "Item";
   return item.attachment ? attachmentKindLabel(item) : "File";
 }

@@ -7,7 +7,7 @@ import { EmptyState } from "../EmptyState";
 import { HealthChip } from "../progress/Progress";
 import { useHistoryDialogGuard } from "../useHistoryDialogGuard";
 import { createLink, deleteLink, listLinks, resolveRef, searchWork } from "../workspaceApi";
-import { workIcon } from "./workIcons";
+import { appIcon, workIcon } from "./workIcons";
 import { isWorkKind, LINK_RELATIONS, parseWorkRef, RELATION_WORDS, WORK_KIND_LABELS, type HiddenWorkSummary, type LinkRelation, type WorkLinkView, type WorkRef, type WorkSummary } from "../../../shared/workRefs";
 import "../pickerSheet.css";
 import "../workspace.css";
@@ -127,12 +127,22 @@ export function LinkedItemsPanel({ item, canEdit, onOpen, relations = ["relates"
 
 type Candidate = WorkSummary;
 
-/** A search result of the All scope that names an item (module scopes; built-in scopes that carry the same fields). */
-function candidateOf(result: unknown): Candidate | null {
+/**
+ * A search result of the All scope that names an item: a module scope's result, or a built-in hit by
+ * its `ref` (notes, cards, events, files, whiteboards, collections and rows, reports; D1342). Chats
+ * are not a work kind and are left out. The subtitle is the hit's own context (a board, a calendar).
+ */
+export function candidateOf(result: unknown): Candidate | null {
   if (!result || typeof result !== "object") return null;
   const value = result as Record<string, unknown>;
-  if (!isWorkKind(value.kind) || typeof value.id !== "string" || typeof value.title !== "string" || typeof value.href !== "string") return null;
-  return { kind: value.kind, id: value.id, title: value.title, href: value.href, icon: typeof value.icon === "string" ? value.icon : "", ...(typeof value.snippet === "string" ? { subtitle: value.snippet } : {}) };
+  const ref = value.ref && typeof value.ref === "object" ? value.ref as Record<string, unknown> : null;
+  const named = ref ?? value;
+  if (!isWorkKind(named.kind) || typeof named.id !== "string" || typeof named.title !== "string" || typeof named.href !== "string") return null;
+  const subtitle = typeof value.snippet === "string" ? value.snippet
+    : typeof value.board_name === "string" ? value.board_name
+      : typeof value.calendarName === "string" ? value.calendarName
+        : typeof value.collectionName === "string" ? value.collectionName : undefined;
+  return { kind: named.kind, id: named.id, title: named.title, href: named.href, icon: typeof value.icon === "string" ? value.icon : "", ...(subtitle ? { subtitle } : {}), ...(typeof value.key === "string" ? { key: value.key } : {}) };
 }
 
 /**
@@ -201,7 +211,7 @@ export function LinkPicker({ title, relations, onPick, onClose }: {
           ? <p className="nook-picker-empty">Nothing found you can open.</p>
           : <ul className="nook-picker-list" aria-label="Results">
             {results.map((item) => {
-              const Icon = workIcon(item.icon, item.kind);
+              const Icon = appIcon(item.kind);
               return <li key={`${item.kind}:${item.id}`}><button type="button" disabled={busy} onClick={() => { void pick(item); }}>
                 <Icon aria-hidden="true" />
                 <span><strong>{item.key ? `${item.key} · ` : ""}{item.title}</strong><small>{[WORK_KIND_LABELS[item.kind], item.subtitle].filter(Boolean).join(" · ")}</small></span>

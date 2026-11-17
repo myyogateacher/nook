@@ -61,3 +61,6 @@
   .bin-more { width: 44px; height: 44px; display: grid; }
 }
 @media (min-width: 761px) { .bin-sheet, .bin-section > .panel-scrim { display: none; } }
+/* D1380: the Apps row of module filters sits right under the core filters. */
+.bin-filters-modules { margin-top: -6px; align-items: center; }
+.bin-filters-label { color: #8a8a92; font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; margin-right: 2px; }

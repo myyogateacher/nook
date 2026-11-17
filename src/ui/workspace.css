@@ -322,12 +322,35 @@ button.ui-person-body:hover .ui-person-name { color: #f5cf79; }
 .ui-activity time { color: #7c7c84; white-space: nowrap; }
 .ui-activity-via { font-style: italic; }
 .ui-timeline-empty { padding: 8px 2px; color: #8d8d94; font-size: .84rem; }
+/* Item comments' files and reactions (D1362, D1363): the Tasks comment chips (src/ui/reactions.css). With no
+   reactions yet, the Add button waits at the header's end on desktop (as on a card comment), so an empty row
+   never opens a gap under the text (D1369); on phones it stays in the flow, a 44 px target. */
+.ui-comment { position: relative; }
+.ui-comment .task-reactions.empty { position: static; }
+.ui-comment .attachment-list { margin: 0; }
+.ui-comment-files { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.ui-comment-files li { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 4px 4px 10px; border: 1px solid #2a2a2f; border-radius: 10px; background: #1a1a1d; color: #cfcfd4; font-size: .8rem; }
+.ui-comment-files li > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-comment-files li > svg { width: 14px; height: 14px; flex: none; color: #9a9aa2; }
+.ui-comment-files .icon-button { width: 28px; height: 28px; }
+.ui-comment-files .icon-button svg { width: 14px; height: 14px; }
+.ui-comment-attach { width: 32px; height: 32px; margin-right: auto; }
+.ui-comment-attach svg { width: 16px; height: 16px; }
+.ui-spin { animation: ui-spin 1s linear infinite; }
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+@media (min-width: 761px) {
+  .ui-comment > .task-reactions.empty { position: absolute; top: 8px; right: 12px; }
+  .ui-comment-replies .ui-comment > .task-reactions.empty { top: 2px; right: 0; }
+  .ui-comment:has(> .task-reactions.empty) > header { padding-right: 34px; min-height: 30px; }
+  .ui-comment:not(:hover):not(:focus-within) > .task-reactions.empty .task-reaction-add { opacity: 0; }
+}
 @media (max-width: 760px) {
   .ui-switch { min-height: 44px; }
   .ui-comment-tools .icon-button { width: 40px; height: 40px; }
+  .ui-comment-attach, .ui-comment-files .icon-button { width: 44px; height: 44px; }
   .ui-activity { padding: 0 4px; }
 }
-@media (prefers-reduced-motion: reduce) { .ui-switch-track, .ui-switch-thumb { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .ui-switch-track, .ui-switch-thumb { transition: none; } .ui-spin { animation: none; } }
 
 /* ── Kanban (the Tasks board's look: 280 px columns, 10 px cards) ───────────────────────────── */
 .ui-kanban { min-width: 0; display: grid; gap: 10px; }

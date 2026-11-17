@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
-import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, notFound, type McpErrorCode, type McpKeyContext } from "../mcpToolKit";
+import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, notFound, restoreResult, type McpErrorCode, type McpKeyContext } from "../mcpToolKit";
+import { restoreItem } from "../bin";
 import { keyFilter } from "../keyResources";
 import { linksOf } from "../links/service";
 import {
@@ -216,6 +217,14 @@ export const goalTools = [
     annotations: { destructiveHint: true },
     inputSchema: z.object({ goalId }).strict(),
     handler: ({ goalId: id }, key) => run(() => deleteGoal(key.userId, id))
+  }),
+  defineTool({
+    name: "restore_goal", title: "Restore a goal from the Bin",
+    description: "Restores a goal you own from the Bin, with its key results and check-ins.",
+    scopes: ["goals:write"], alsoRequires: ["bin:write"], access: { mode: "items", items: [{ arg: "goalId", kind: "goal" }] }, write: true,
+    inputSchema: z.object({ goalId: z.string().uuid() }).strict(),
+    // D1385: the restore every bin_* tool's description promises, through the module's Bin provider.
+    handler: async ({ goalId }, key) => restoreResult(await restoreItem("goal", goalId.toLowerCase(), key.userId), "Goal")
   })
 ];
 

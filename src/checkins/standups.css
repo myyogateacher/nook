@@ -208,3 +208,6 @@
 .standup-summary-note a { color: #ffe19a; }
 .standup-summary-note-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .standup-goal-input > span { min-width: 4.5em; }
+
+/* A standup's Activity tab (D1375). */
+.standup-activity { max-width: 760px; min-width: 0; }

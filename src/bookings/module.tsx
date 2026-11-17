@@ -10,6 +10,10 @@ import { EmbedCard } from "../ui/embeds/EmbedCard";
 import { api } from "../api";
 import type { EmbedCardProps } from "../editor/moduleEmbedRegistry";
 import { bookTimeMemberAction } from "./TeamBookTime";
+import { resetHandleMemberAction } from "./ResetHandleAction";
+
+/** The booking type editor's sections a link may open (TypeEditor.tsx SECTIONS). */
+export const TYPE_EDITOR_SECTIONS: readonly string[] = ["general", "when", "where", "hosts", "calendars", "intake", "after", "sharing", "activity"];
 
 /**
  * Bookings (lane BOOK, docs/plan/WORKSPACE_MODULES.md §D.6): the client module. The app is its own
@@ -68,7 +72,12 @@ export const module: WorkspaceClientModule = {
   app: BookingsApp,
   launcher: true,
   sections: BOOKINGS_SECTIONS,
-  parseRoute: (segments) => ({ path: segments.slice(0, 2).map((segment) => decodeURIComponent(segment)) }),
+  // A booking type's editor section rides in `?section=` (D1367: `?section=activity` opens its history and comments).
+  parseRoute: (segments, search) => {
+    const path = segments.slice(0, 2).map((segment) => decodeURIComponent(segment));
+    const section = new URLSearchParams(search).get("section");
+    return path[0] === "types" && path[1] && section && TYPE_EDITOR_SECTIONS.includes(section) ? { path, search: `?section=${section}` } : { path };
+  },
   todaySections: {
     bookingsToday: {
       title: "Bookings", group: "today", empty: "no bookings today or tomorrow", app: "Bookings",
@@ -82,6 +91,14 @@ export const module: WorkspaceClientModule = {
   ],
   workKindRenderers: { booking: { icon: CalendarCheck2, label: "Booking" }, booking_type: { icon: CalendarPlus, label: "Booking type" } },
   embedRenderers: [{ kind: "booking_type", component: BookingLinkEmbed }],
+  // A booking type's and a booking's history (D1375): the kinds server/bookings/index.ts registers.
+  activityRenderers: {
+    type_renamed: (entry) => `renamed it to “${entry.payload.to?.label ?? ""}”`,
+    type_updated: () => "changed the settings",
+    booking_status: (entry) => `marked it ${(entry.payload.to?.label ?? "changed").toLowerCase()}`,
+    booking_rescheduled: () => "rescheduled it",
+    meeting_booked: (entry) => `booked ${entry.payload.item?.label ?? "a meeting"}`
+  },
   slashItems: [{
     label: "Booking link", hint: "Embed one of your booking types", keywords: "booking book meeting schedule calendly link",
     // A picker of your active public types (D1059; D1025 embedded the first one).
@@ -90,8 +107,8 @@ export const module: WorkspaceClientModule = {
       load: loadBookableTypes
     })
   }],
-  // "Book time with …" on the Team page (D1253).
-  memberActions: [bookTimeMemberAction],
+  // "Book time with …" on the Team page (D1253); admins reset a member's booking link name on their page (D1384, T579).
+  memberActions: [bookTimeMemberAction, resetHandleMemberAction],
   itemSections: [{ id: "bookings.record", kinds: ["contact", "company", "deal"], order: 30, component: RecordBookings }],
   searchRenderer: {
     scope: "bookings", label: "Bookings", icon: CalendarCheck2,

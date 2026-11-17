@@ -21,6 +21,11 @@ describe("descriptionExcerpt (unit)", () => {
     expect(descriptionExcerpt("<img src=x onerror=alert(1)> safe")).not.toContain("<img");
   });
 
+  test("an @mention reads as @Name, with no space after the @", () => {
+    const id = "0190a0b2-1111-7222-8333-944455556666";
+    expect(descriptionExcerpt(`Ping @[Max Member](user:${id}) and **@[Amy](user:${id})** now`)).toBe("Ping @Max Member and @Amy now");
+  });
+
   test("at most 160 code points, cut with an ellipsis, never splitting a surrogate pair", () => {
     const long = descriptionExcerpt("word ".repeat(100));
     expect(Array.from(long)).toHaveLength(EXCERPT_MAX_CHARS);

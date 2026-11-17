@@ -8,7 +8,7 @@ import { stripImageLocation } from "./exif";
  * quota, idempotency, the S3-ready byte store) and lands in the uploader's Attachments folder.
  */
 
-export type HostKind = "event" | "note" | "chat_message" | "whiteboard" | "card" | "row";
+export type HostKind = "event" | "note" | "chat_message" | "whiteboard" | "card" | "row" | "item_comment";
 
 export type HostAttachment =
   | { documentId: string; removed: false; name: string; mimeType: string; previewKind: string; sizeBytes: number; partId: string | null; position: number; linkedAt: string; isOwner: boolean; inAttachmentsFolder: boolean }
@@ -102,7 +102,7 @@ export type FileUsage = { uses: Array<{ hostKind: HostKind; hostId: string; titl
 export const fileUsage = (documentId: string) => api<FileUsage>(`/files/${encodeURIComponent(documentId)}/usage`);
 
 const HOST_NOUNS: Record<HostKind, [string, string]> = {
-  event: ["event", "events"], note: ["note", "notes"], chat_message: ["chat message", "chat messages"], whiteboard: ["whiteboard", "whiteboards"], card: ["card", "cards"], row: ["row", "rows"]
+  event: ["event", "events"], note: ["note", "notes"], chat_message: ["chat message", "chat messages"], whiteboard: ["whiteboard", "whiteboards"], card: ["card", "cards"], row: ["row", "rows"], item_comment: ["comment", "comments"]
 };
 
 /** "Used on 2 cards and 1 event" (D409); null when the file is not attached anywhere. */

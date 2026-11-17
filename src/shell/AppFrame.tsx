@@ -8,6 +8,11 @@ import type { QuickActionDef } from "../workspaceModules/types";
 import { AppSidebar, isMacPlatform, toggleShortcutLabel } from "./AppSidebar";
 import type { NavItem, NavRecent, NavTree } from "./navModel";
 import { paletteEntries, type PaletteEntry } from "./paletteModel";
+import { paletteResultRenderers, resultGroups, shownApps } from "./paletteSearch";
+import type { PaletteSearchRun } from "./usePaletteSearch";
+import { appOfKind, useRecentItems } from "./recentItems";
+import { appIcon } from "../ui/links/workIcons";
+import type { SearchSection } from "../../shared/workspaceSearch";
 import { ShellContext, useUnreadNotifications, type LeaveGuard, type ShellValue } from "./shellContext";
 import { CommandPalette } from "./CommandPalette";
 import { CustomizeSidebar, ShortcutSheet, type CustomizeApp } from "./ShellSheets";
@@ -48,6 +53,10 @@ export type FramePalette = {
   onOpenPath: (href: string) => void;
   /** Opens Notes' search with the query (Notes saves first). */
   onSearchNotes: (query: string) => void;
+  /** D1340: search across apps (the server's All scope); absent while the Search module is off. Keep it stable. */
+  searchAll?: PaletteSearchRun;
+  /** D1344: whose recently opened items the palette lists (recorded by App as pages open). */
+  userId?: string;
 };
 
 /** ⌘K, or Ctrl+K elsewhere (either is accepted, as for ⌘\). */
@@ -142,16 +151,35 @@ export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onAccount, 
   }, []);
 
   const mac = isMacPlatform();
+  // D1344: recently opened items, resolved (and access-checked) by the server each time it opens; only
+  // kinds whose app this person's sidebar shows.
+  const opened = useRecentItems(palette?.userId, paletteOpen);
+  const recentItems = useMemo(() => {
+    const apps = shownApps(tree);
+    return opened.flatMap((item) => {
+      const app = apps.get(appOfKind(item.kind));
+      return app ? [{ kind: item.kind, id: item.id, title: item.title, href: item.href, icon: appIcon(item.kind), app: app.label }] : [];
+    });
+  }, [opened, tree]);
   const entries = useMemo(() => paletteOpen ? paletteEntries({
     tree,
     recentNotes: palette?.recentNotes,
+    recentItems,
     quickActions: palette?.quickActions,
     moduleLabels: palette?.moduleLabels,
     searchNotes: tree.notesSearch,
     canToggleSidebar: mode !== "drawer" && !railForced,
     toggleShortcut: toggleShortcutLabel(),
     canCustomize: Boolean(customize)
-  }) : [], [paletteOpen, tree, palette, mode, railForced, customize]);
+  }) : [], [paletteOpen, tree, palette, recentItems, mode, railForced, customize]);
+  // D1340: search across the apps this person's sidebar shows, drawn by each scope's renderer.
+  const searchAll = palette?.searchAll;
+  const paletteSearch = useMemo(() => {
+    if (!paletteOpen || !searchAll) return undefined;
+    const renderers = paletteResultRenderers();
+    const apps = shownApps(tree);
+    return { run: searchAll, groups: (sections: readonly SearchSection[]) => resultGroups(sections, renderers, apps) };
+  }, [paletteOpen, searchAll, tree]);
 
   const runEntry = (entry: PaletteEntry) => {
     const action = entry.action;
@@ -237,7 +265,7 @@ export function AppFrame({ tree, displayName, avatarUrl, onNavigate, onAccount, 
           {sidebarElement(true)}
         </div>
       </div>}
-      {paletteOpen && <CommandPalette entries={entries} searchNotes={tree.notesSearch} onRun={runEntry} onClose={closePalette} />}
+      {paletteOpen && <CommandPalette entries={entries} searchNotes={tree.notesSearch} search={paletteSearch} onRun={runEntry} onClose={closePalette} />}
       {sheet === "shortcuts" && <ShortcutSheet groups={shortcutGroups({ mac, notesSearch: tree.notesSearch, ...shortcuts })} onClose={closeSheet} />}
       {sheet === "customize" && customize && <CustomizeSidebar apps={customize.apps} layout={layout ?? {}} onLayout={updateAppsLayout} onShown={customize.onShown} onClose={closeSheet} />}
     </div>

@@ -70,9 +70,12 @@ describe("work links", () => {
     expect(JSON.stringify(theirs.body)).not.toContain(noteId);
     expect((await api(outsider, "GET", `/links?kind=${TEST_KIND}&id=${privateWidgetId}`)).status).toBe(404);
     expect((await api(owner, "GET", `/links?kind=note&id=${noteId}`)).body.links).toEqual([expect.objectContaining({ direction: "in", other: expect.objectContaining({ kind: TEST_KIND, id: widgetId }) })]);
-    // Activity on the widget side names the note by its kind word only.
+    // Activity on the widget side names the note for its readers (D1390), and by its kind word only for the rest.
     const activity = await api(owner, "GET", `/items/${TEST_KIND}/${widgetId}/activity`);
-    expect(activity.body.entries).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "linked", payload: expect.objectContaining({ item: expect.objectContaining({ kind: "note", label: "Note" }) }) })]));
+    expect(activity.body.entries).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "linked", payload: expect.objectContaining({ item: { id: noteId, kind: "note", label: "New note" } }) })]));
+    const readerActivity = await api(reader, "GET", `/items/${TEST_KIND}/${widgetId}/activity`);
+    expect(readerActivity.body.entries).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "linked", payload: expect.objectContaining({ item: { kind: "note", label: "Note" } }) })]));
+    expect(JSON.stringify(readerActivity.body)).not.toContain(noteId);
     expect((await api(reader, "DELETE", `/links/${created.body.link.id}`)).status).toBe(403);
     expect((await api(owner, "DELETE", `/links/${created.body.link.id}`)).status).toBe(204);
     expect((await api(owner, "GET", `/links?kind=${TEST_KIND}&id=${widgetId}`)).body.links).toEqual([]);

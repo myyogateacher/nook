@@ -189,3 +189,6 @@
   .th-row-main :is(strong, small) { white-space: normal; }
   .th-row-chevron { position: absolute; top: calc(50% - 8px); right: 12px; }
 }
+
+/* A session's Activity tab (D1375). */
+.th-activity { max-width: 760px; min-width: 0; }

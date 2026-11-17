@@ -8,6 +8,7 @@ import { withAuditContext } from "../db";
 import { keyMayRead } from "../keyReach";
 import { anchorsOf, keyReach, reachCovers } from "../keyResources";
 import { cardRef } from "./keys";
+import { keyReachesRef } from "../links/keyReach";
 import { getCard, TaskError } from "./service";
 import { decodeActivityCursor, listCardActivity, type ActivityOrder } from "./activity";
 import { ACTIVITY_PAGE_DEFAULT, ACTIVITY_PAGE_MAX, CARD_ACTIVITY_KIND_NAMES } from "../../shared/cardActivity";
@@ -49,7 +50,7 @@ export function registerCardActivityRoutes(app: Hono<AppEnv>) {
 export const cardActivityTool: McpToolSpec = defineTool({
   name: "get_card_activity",
   title: "Get a card's history",
-  description: `Read a card's activity history: who created it, changed its title, description, column, assignees, due date, tags, flags, parent, level, start date, estimate, relations, sprint, or files, when it moved to another board, and when it was archived, moved to the Bin, or restored. Newest first unless order is asc; at most ${ACTIVITY_PAGE_MAX} entries a page (default ${ACTIVITY_PAGE_DEFAULT}); pass next back as cursor for the next page. Kinds: ${CARD_ACTIVITY_KIND_NAMES.join(", ")}. Each entry has the actor's name, via (mcp, rest, agent, proposal, system, or null for the web app), and a payload with from/to or item values ({ id, label }) as they were at the time. Comments are not included (get_card lists them).`,
+  description: `Read a card's activity history: who created it, changed its title, description, column, assignees, due date, tags, flags, parent, level, start date, estimate, relations, sprint, or files, when it moved to another board, and when it was archived, moved to the Bin, or restored. Newest first unless order is asc; at most ${ACTIVITY_PAGE_MAX} entries a page (default ${ACTIVITY_PAGE_DEFAULT}); pass next back as cursor for the next page. Kinds: ${CARD_ACTIVITY_KIND_NAMES.join(", ")}. Each entry has the actor's name, via (mcp, rest, agent, proposal, system, or null for the web app), and a payload with from/to or item values ({ id, label }) as they were at the time; a linked goal, note, or other item (goal_linked, relation_added with a kind) shows its current title when you can open it, else only its kind word. Comments are not included (get_card lists them).`,
   scopes: ["tasks:read"],
   access: { mode: "items", items: [{ arg: "cardId", kind: "card" }] },
   write: false,
@@ -70,7 +71,9 @@ export const cardActivityTool: McpToolSpec = defineTool({
           // A key limited to chosen boards sees no related card's title outside them (T203).
           mayRead: (otherId) => keyMayRead(key, { type: "card", id: otherId }),
           // ...nor the name of a board the card moved from or to outside them (board_move).
-          mayReadBoard: (boardId) => reachCovers(keyReach(key, "tasks:read"), anchorsOf("board", boardId))
+          mayReadBoard: (boardId) => reachCovers(keyReach(key, "tasks:read"), anchorsOf("board", boardId)),
+          // ...nor the title of a work-linked goal, note, or other item it does not reach (D1390).
+          mayReadRef: keyReachesRef(key)
         });
       });
     } catch (error) {

@@ -1,3 +1,5 @@
+import type { WorkspaceBinType } from "../shared/workspaceModules";
+
 /** `role` is the platform role (Team, migration 017); older servers leave it out. */
 export type User = { id: string; email?: string; displayName: string; role?: "admin" | "member" | "viewer" | "guest"; /** Wave 35: the same-origin picture, or null. */ avatarUrl?: string | null };
 export type Folder = {
@@ -73,7 +75,7 @@ export type DocumentSummary = {
   updated_at: string;
 };
 export type BinItem = {
-  type: "note" | "document" | "card" | "board" | "collection" | "collection_row" | "calendar" | "event" | "vault" | "vault_environment" | "vault_secret" | "chat" | "agent" | "knowledge_base" | "report" | "report_folder" | "report_list";
+  type: "note" | "document" | "card" | "board" | "collection" | "collection_row" | "calendar" | "event" | "vault" | "vault_environment" | "vault_secret" | "chat" | "agent" | "knowledge_base" | "report" | "report_folder" | "report_list" | WorkspaceBinType;
   id: string;
   title: string;
   folder_id: string | null;
@@ -99,6 +101,8 @@ export type BinItem = {
   kind?: "file" | "whiteboard";
   /** Notes and documents: the folder a restore puts it in now, by the restore's own rule (server/bin.ts restoreFolderName). Older servers omit it. */
   restore_folder_name?: string;
+  /** Workspace-module items (D1380): the in-app path the item opens at once restored. Older servers omit it. */
+  href?: string;
 };
 export type BinRestoreResult = {
   ok: true;

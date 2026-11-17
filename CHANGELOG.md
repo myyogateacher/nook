@@ -4,6 +4,56 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 
 ## Unreleased
 
+**Link history names what was linked**
+
+- A card's Activity and an item's Activity tab now name the goal, note, card, or other item that was linked or unlinked ("linked the goal Q3 plan"), with its current name, when you can open it. If you can't, it still says only what kind of item it was.
+
+**Search everything from ⌘K**
+
+- The command palette (`⌘K`, `Ctrl+K`) now searches your work in every app as you type: notes, cards, calendar events, files, whiteboards, collections, reports, your own chats, contacts, goals, forms, bookings, standups, time, and townhall. Results are grouped under each app, and the arrow keys move through all of them. **Search notes for "…"** is still the last line.
+- You only see what you can open. Chats shared with you are not searched, only your own.
+- With nothing typed, **Recent** now lists what you opened lately of any kind (a goal, a contact, an event, a report…), not only boards, collections, and notes. It is checked each time, so renamed items show their new name and removed ones drop out.
+- **Link work** now finds notes, cards, files, whiteboards, collections, rows, reports, and events by name, besides goals and contacts.
+- Fixed: a link to a shared note could show, in its address, the title of a draft its owner had not published yet. Links now use the published title.
+- API: `GET /api/search` has three new scopes, `cards`, `events`, and `chats`, and every built-in result now also carries `ref: { kind, id, title, href }`. See docs/plan/API_CONTRACTS.md.
+
+**Fixes and gaps: the Bin, AI usage, week start, exports**
+
+- The Bin names the apps' items (Form, Goal, Standup, Contact, Company, Deal, Contact book, Time project, Booking type, Townhall session) with their own icons, instead of "Item". An **Apps** row of filters lists the apps that have something in the Bin. Restoring one offers **Open**.
+- Restoring a goal from the Bin works again (it always said the goal was no longer in the Bin).
+- **Settings → AI → Usage** (admins): runs and tokens per day, by person or by agent, for the last 7 to 90 days, with a chart and a table of totals. Counts only: no chat is read there.
+- **Public townhall links** is a workspace setting of its own (Settings → Workspace). Before, "Public forms and polls" also closed townhall audience links. Upgrading keeps each workspace as it was.
+- **Week starts on** now applies to Calendar's month view, the month grid of a board's calendar, the booking pickers in the app, and the board timeline's weeks. Your units (week start and how durations show) are also read when the app opens; before, they took effect only after you changed them in Settings → Workspace.
+- Admins can **reset a member's booking link name** from the member's page in Settings → Team (it was only in the API).
+- MCP: `restore_form`, `restore_goal`, `restore_contact`, `restore_company`, `restore_deal`, and `bin_` / `restore_` tools for time projects and townhall sessions (each with `bin:write`).
+- A card shows the goal it contributes to, with the goal's progress, on its face. Each key result shows a small line of its progress over time.
+- **Export to CSV** for Goals (the list as filtered), Standups (every round's answers you can read), Bookings (Upcoming, Past, or Cancelled), and a board's cards (the download button beside Board settings).
+- Removed two endpoints nothing used: `PUT /api/crm/pipelines/:id/stages` (use `PATCH /api/crm/pipelines/:id`) and `GET /api/crm/search`.
+**Comments on workspace items: notifications, reactions, files, and Undo**
+
+- A comment on a goal, deal, contact, booking, form response, standup answer, townhall question, or one of the new Activity panels now notifies the people the item belongs to (its owner, assignees, and contributors, and the owner of the form, standup, or project it is in), and a reply notifies the person you replied to. You never hear about your own comments, and someone you @mention gets one notification, the mention.
+- These come by email too, under **Comments on your cards and items** (Settings → Notifications → Email), grouped every 10 minutes. The email never contains the comment's text, and is skipped if you can no longer open the item or the comment was deleted.
+- React to item comments with the same emoji as task comments, and attach files to a comment (the paperclip). Files open for the people who can open the item, and only while they can.
+- Deleting a comment shows **Undo**, which brings it back with its reactions and files.
+- A notification or email about a comment on a form, standup, townhall, booking type, or time project opens its Activity panel, and links like `/time/projects/…?tab=activity` and `/bookings/types/…?section=activity` open the right tab or section.
+- Comments no longer leave an empty gap under their text when nobody has reacted yet.
+
+**Sharing workspace items tells people**
+
+- When you share a form, time project, goal, standup, contact book, booking type, or townhall with someone by name, they get a notification and a "Shared with you" email, and it shows in their daily digest.
+- The daily digest description in Settings now lists the workspace sections it can include.
+
+**Activity on forms, standups, townhalls, booking types and time projects**
+
+- A form, a standup, a townhall session and a time project have a new **Activity** tab, and a booking type an **Activity** section at the end of its editor. It lists what changed, who did it and when (published, closed, renamed, rounds opened and closed, weeks submitted and approved, and more), and you can comment there.
+- Anyone who can open the item sees its activity. Respondents who only answer a form, and people who join a townhall from its audience link, don't.
+
+**Email from Time, Goals, and Contacts**
+
+- The Time, Goals, and Contacts switches in Settings → Notifications → Email now send email: a week submitted for your approval, your week approved or returned, a project's budget alerts; a goal at risk or off track, a check-in due, being made a goal's owner or contributor; a follow-up due, a deal you now own, and a deal you own won or lost.
+- The email is checked again when it is sent: if you can no longer open the item, or the moment has passed (the goal recovered, the follow-up is done), nothing is sent. Notes and reasons are never emailed.
+- You hear when someone makes you a goal's owner or adds you as a contributor.
+
 **@mentions**
 
 - Type @ in a card's comments or description, or in a comment on a goal, deal, contact, standup answer, booking or form response, to mention someone. Pick them from the list with the arrow keys and Enter, or with the mouse; they show as a chip that opens their profile.

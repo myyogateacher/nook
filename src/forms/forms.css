@@ -291,3 +291,6 @@ td .forms-run + .forms-run { margin-left: 6px; }
 .forms-poll, .forms-poll .ui-live { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 @media (max-width: 760px) { .forms-row-actions > button, .forms-link-row > button, .forms-slot-add { min-height: 44px; } }
 @media (max-width: 760px) { .forms-row-main .ui-health { justify-self: end; } }
+
+/* A form's Activity tab (D1375). */
+.forms-activity { max-width: 760px; min-width: 0; }

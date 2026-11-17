@@ -358,7 +358,7 @@ export function publicUrlOf(row: SessionRow): string | null {
 
 export function setPublicLink(ref: string, userId: string, enabled: boolean) {
   const { row } = requireEditor(ref, userId);
-  if (enabled && !publicPolicyAllows("townhall_session")) throw new TownhallError(403, "POLICY_OFF", "Public links are turned off for this workspace");
+  if (enabled && !publicPolicyAllows("townhall_session")) throw new TownhallError(403, "POLICY_OFF", "Public townhall links are turned off for this workspace");
   const result = db.transaction(() => {
     revokePublicLinksOf("townhall_session", row.id, userId);
     let seed: string | null = null;

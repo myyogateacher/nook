@@ -29,7 +29,21 @@ function useStore<T>(store: Store<T>, load: () => Promise<T>) {
   return value;
 }
 
-const loadUnits = () => api<{ preferences: UnitPreferences }>("/preferences/units").then((body) => ({ ...DEFAULT_UNIT_PREFERENCES, ...body.preferences }));
+/**
+ * D1383: `GET /api/preferences/units` answers the preferences themselves (`{ weekStart, durationFormat,
+ * bareDuration, revision }`). This read used to take `body.preferences`, which is never there, so every
+ * reader got the defaults (Monday) until the person saved Settings → Workspace in the same tab.
+ */
+export const unitsFromBody = (body: Partial<UnitPreferences> & { revision?: number; preferences?: Partial<UnitPreferences> }): UnitPreferences => {
+  const { revision: _revision, preferences, ...flat } = body;
+  const source = preferences ?? flat;
+  return {
+    weekStart: source.weekStart ?? DEFAULT_UNIT_PREFERENCES.weekStart,
+    durationFormat: source.durationFormat ?? DEFAULT_UNIT_PREFERENCES.durationFormat,
+    bareDuration: source.bareDuration ?? DEFAULT_UNIT_PREFERENCES.bareDuration
+  };
+};
+const loadUnits = () => api<Parameters<typeof unitsFromBody>[0]>("/preferences/units").then(unitsFromBody);
 const loadWorkspace = () => api<WorkspaceSettingsState>("/workspace/settings").then((body) => ({ ...DEFAULT_WORKSPACE_SETTINGS, ...body.settings }));
 
 export const useUnitPreferences = () => useStore(units, loadUnits);

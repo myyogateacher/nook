@@ -55,16 +55,21 @@ export function barOf(card: DateCard, viewerZone: string): TimelineBar | null {
 export const OPEN_BAR_DAYS = 5;
 
 /** The range first shown at a zoom: a little before today, more after. */
-export function initialRange(today: string, scale: TimelineScale): TimelineRange {
+export function initialRange(today: string, scale: TimelineScale, weekStart: 0 | 1 | 6 = 1): TimelineRange {
   const pad = RANGE_PAD[scale];
-  // Start on a Monday so week lines and labels sit on the grid's own weeks.
-  const from = mondayOf(addDays(today, -pad.before));
+  // Start on the viewer's week start (D1383; Monday by default) so week lines and labels sit on the grid's own weeks.
+  const from = weekStartOn(addDays(today, -pad.before), weekStart);
   return { from, days: daysBetween(from, addDays(today, pad.after)) + 1 };
 }
 
 /** The Monday on or before a day. */
 export function mondayOf(day: string) {
-  return addDays(day, -((weekdayOf(day) + 6) % 7));
+  return weekStartOn(day, 1);
+}
+
+/** The week's first day (0 Sunday, 1 Monday, 6 Saturday) on or before a day (D1383). */
+export function weekStartOn(day: string, weekStart: 0 | 1 | 6) {
+  return addDays(day, -((weekdayOf(day) - weekStart + 7) % 7));
 }
 
 /** 0 = Sunday … 6 = Saturday, for a `YYYY-MM-DD` civil day. */
@@ -92,10 +97,10 @@ export function extendRange(range: TimelineRange, side: "before" | "after", step
 }
 
 /** The range grown (if needed) so it holds `day` with `margin` days to spare either side. */
-export function rangeHolding(range: TimelineRange, day: string, margin: number): { range: TimelineRange; added: number } {
+export function rangeHolding(range: TimelineRange, day: string, margin: number, weekStart: 0 | 1 | 6 = 1): { range: TimelineRange; added: number } {
   const index = daysBetween(range.from, day);
   if (index - margin < 0) {
-    const need = mondayOf(addDays(day, -margin));
+    const need = weekStartOn(addDays(day, -margin), weekStart);
     const added = Math.min(daysBetween(need, range.from), Math.max(0, MAX_RANGE_DAYS - range.days));
     return added > 0 ? { range: { from: addDays(range.from, -added), days: range.days + added }, added } : { range, added: 0 };
   }
@@ -245,10 +250,10 @@ export type HeaderTick = { key: string; label: string; sub?: string; start: numb
 
 /**
  * The two header rows for days `[firstIndex, lastIndex]` of the range (D762): months on top, and
- * below them days with weekday initials (Week, Month) or weeks starting Monday (Quarter).
+ * below them days with weekday initials (Week, Month) or weeks from the viewer's week start (Quarter; D1383, Monday by default).
  * Only the asked-for window is built, so a long range costs no more than the screen.
  */
-export function headerRows(range: TimelineRange, scale: TimelineScale, today: string, firstIndex: number, lastIndex: number): { top: HeaderSpan[]; bottom: HeaderTick[] } {
+export function headerRows(range: TimelineRange, scale: TimelineScale, today: string, firstIndex: number, lastIndex: number, weekStart: 0 | 1 | 6 = 1): { top: HeaderSpan[]; bottom: HeaderTick[] } {
   const first = Math.max(0, firstIndex);
   const last = Math.min(range.days - 1, lastIndex);
   const top: HeaderSpan[] = [];
@@ -266,12 +271,15 @@ export function headerRows(range: TimelineRange, scale: TimelineScale, today: st
     index = endIndex + 1;
   }
   if (scale === "quarter") {
-    let week = Math.max(0, daysBetween(range.from, mondayOf(addDays(range.from, first))));
+    // Weeks stay on the week start's grid even when the range does not begin on one (D1383: the
+    // range was made before the viewer's preference loaded): the first column is then a part week.
+    let week = daysBetween(range.from, weekStartOn(addDays(range.from, first), weekStart));
     while (week <= last) {
-      const day = addDays(range.from, week);
+      const start = Math.max(0, week);
+      const day = addDays(range.from, start);
       const end = Math.min(range.days - 1, week + 6);
       const todayIndex = daysBetween(range.from, today);
-      bottom.push({ key: day, label: String(Number(day.slice(8, 10))), sub: MONTHS[Number(day.slice(5, 7)) - 1], start: week, days: end - week + 1, today: todayIndex >= week && todayIndex <= end });
+      bottom.push({ key: day, label: String(Number(day.slice(8, 10))), sub: MONTHS[Number(day.slice(5, 7)) - 1], start, days: end - start + 1, today: todayIndex >= start && todayIndex <= end });
       week += 7;
     }
     return { top, bottom };

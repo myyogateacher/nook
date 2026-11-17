@@ -31,8 +31,12 @@ export type CardSlotProps = {
  */
 export type CardSectionDef = { id: string; area: "side" | "main"; order?: number; component: ComponentType<CardSlotProps>; module?: string };
 
-/** A small badge on the card face's footer line (Time's "1h 30m"); it returns null for nothing. */
-export type CardFaceBadgeDef = { id: string; order?: number; component: ComponentType<{ card: CardSlotCard }>; module?: string };
+/**
+ * A small badge on the card face's footer line (Time's "1h 30m"); it returns null for nothing.
+ * `useShows` (a hook, D1386) says whether it has something for this card, so a card none applies to
+ * keeps no footer line; without it the badge counts as showing.
+ */
+export type CardFaceBadgeDef = { id: string; order?: number; component: ComponentType<{ card: CardSlotCard }>; module?: string; useShows?: (card: CardSlotCard) => boolean };
 
 /** An icon button in the card dialog's header, before Move (Time's ▶ Start timer). */
 export type CardHeaderActionDef = { id: string; order?: number; component: ComponentType<CardSlotProps>; module?: string };
@@ -68,6 +72,8 @@ const shown = <T extends { module?: string }>(list: readonly T[], disabled: read
 /** The slots to render for a viewer whose `disabled` modules are off. */
 export const cardSections = (area: "side" | "main", disabled: readonly string[] = []) => shown(sections, disabled).filter((section) => section.area === area);
 export const cardFaceBadges = (disabled: readonly string[] = []) => shown(badges, disabled);
+/** Every registered face badge, on or off: the hooks of `useShows` run for all of them, in a fixed order. */
+export const registeredCardFaceBadges = (): readonly CardFaceBadgeDef[] => badges;
 export const cardHeaderActions = (disabled: readonly string[] = []) => shown(actions, disabled);
 export const timelineDecorations = (disabled: readonly string[] = []) => shown(decorations, disabled);
 export const boardHeaderItemsFor = (disabled: readonly string[] = []) => shown(boardHeaderItems, disabled);

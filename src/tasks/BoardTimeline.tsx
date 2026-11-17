@@ -15,6 +15,7 @@ import {
 import { byPosition } from "./boardOrder";
 import { cardCountLabel } from "./taskActions";
 import "./timeline.css";
+import { useUnitPreferences } from "../ui/units";
 import { TimelineDecorationsOutlet } from "../ui/CardSlotOutlets";
 
 type BoardTimelineProps = {
@@ -103,7 +104,9 @@ export function BoardTimeline({ board, cards, groups, group, scale, today, viewe
   const rowHeight = phone ? PHONE_ROW_HEIGHT : ROW_HEIGHT;
   const [pane, setPane] = useState<PaneState>(() => typeof window === "undefined" ? { width: PANE_DEFAULT, collapsed: false } : readPane());
   const paneWidth = phone ? PHONE_PANE : pane.collapsed ? PANE_COLLAPSED : pane.width;
-  const [range, setRange] = useState<TimelineRange>(() => initialRange(today, scale));
+  // D1383: weeks (Quarter's week columns, the first range) start on the viewer's "Week starts on".
+  const { weekStart } = useUnitPreferences();
+  const [range, setRange] = useState<TimelineRange>(() => initialRange(today, scale, weekStart));
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const scrollerRef = useRef<HTMLDivElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -133,7 +136,7 @@ export function BoardTimeline({ board, cards, groups, group, scale, today, viewe
   const visibleFrom = addDays(range.from, firstDay);
   const visibleTo = addDays(range.from, Math.max(firstDay, lastDay - 1));
   const { first, last } = rowWindow(viewport.top, viewport.height, rowHeight, rows.length);
-  const header = useMemo(() => headerRows(range, scale, today, firstDay - 14, lastDay + 14), [range, scale, today, firstDay, lastDay]);
+  const header = useMemo(() => headerRows(range, scale, today, firstDay - 14, lastDay + 14, weekStart), [range, scale, today, firstDay, lastDay, weekStart]);
   const todayIndex = daysBetween(range.from, today);
 
   const savePane = (next: PaneState) => {
@@ -159,7 +162,7 @@ export function BoardTimeline({ board, cards, groups, group, scale, today, viewe
   const scrollToDay = useCallback((day: string, options: { smooth?: boolean; align?: number } = {}) => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    const grown = rangeHolding(range, day, RANGE_PAD[scale].before);
+    const grown = rangeHolding(range, day, RANGE_PAD[scale].before, weekStart);
     const from = grown.range.from;
     const visibleGrid = Math.max(0, scroller.clientWidth - paneWidth);
     const target = daysBetween(from, day) * dayWidth - (options.align ?? (visibleGrid / 2 - dayWidth / 2));
@@ -170,7 +173,7 @@ export function BoardTimeline({ board, cards, groups, group, scale, today, viewe
     }
     const reduce = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     scroller.scrollTo({ left: Math.max(0, target), behavior: options.smooth && !reduce ? "smooth" : "instant" as ScrollBehavior });
-  }, [range, scale, paneWidth, dayWidth]);
+  }, [range, scale, paneWidth, dayWidth, weekStart]);
 
   // First paint: today a third of the way in.
   const placedRef = useRef(false);
@@ -195,7 +198,7 @@ export function BoardTimeline({ board, cards, groups, group, scale, today, viewe
     const visibleGrid = Math.max(0, scroller.clientWidth - paneWidth);
     const centre = (lastLeftRef.current + visibleGrid / 2) / dayWidthFor(previous, phone);
     const centreDay = addDays(range.from, Math.floor(centre));
-    const grown = rangeHolding(range, centreDay, RANGE_PAD[scale].after);
+    const grown = rangeHolding(range, centreDay, RANGE_PAD[scale].after, weekStart);
     const from = grown.range.from;
     const left = Math.max(0, (daysBetween(from, centreDay) + (centre % 1)) * dayWidth - visibleGrid / 2);
     if (grown.range !== range) {
@@ -205,7 +208,7 @@ export function BoardTimeline({ board, cards, groups, group, scale, today, viewe
       scroller.scrollLeft = left;
       readViewport();
     }
-  }, [scale, dayWidth, paneWidth, range, readViewport]);
+  }, [scale, dayWidth, paneWidth, range, readViewport, weekStart]);
 
   // After the range grew at the left, or a pending jump: put the scroll where it belongs before paint.
   useLayoutEffect(() => {

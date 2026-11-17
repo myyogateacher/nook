@@ -139,8 +139,8 @@ describe("deals, board, interactions", () => {
 
   test("a stage in use can't be removed without a destination", async () => {
     const kept = stages.filter((stage) => stage.name !== "Lead").map((stage) => ({ id: stage.id, name: stage.name, kind: stage.kind, probability: stage.probability }));
-    expect((await api(owner, "PUT", `/crm/pipelines/${pipelineId}/stages`, { stages: kept })).body.code).toBe("STAGE_IN_USE");
-    const moved = await api(owner, "PUT", `/crm/pipelines/${pipelineId}/stages`, { stages: [{ name: "Intro", kind: "open", probability: 5 }, ...kept], moveDealsTo: stages[1]!.id });
+    expect((await api(owner, "PATCH", `/crm/pipelines/${pipelineId}`, { stages: kept })).body.code).toBe("STAGE_IN_USE");
+    const moved = await api(owner, "PATCH", `/crm/pipelines/${pipelineId}`, { stages: [{ name: "Intro", kind: "open", probability: 5 }, ...kept], moveDealsTo: stages[1]!.id });
     expect(moved.status).toBe(200);
     expect(moved.body.pipeline.stages.map((stage: Json) => stage.name)).toEqual(["Intro", "Qualified", "Proposal", "Won", "Lost"]);
   });

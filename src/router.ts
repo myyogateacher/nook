@@ -602,11 +602,11 @@ export const SETTINGS_SECTIONS = ["security", "modules", "mcp", "access", "notif
 export type SettingsSection = typeof SETTINGS_SECTIONS[number];
 
 /** Settings → AI's tabs, in tab order; each is its own URL under /settings/ai. */
-export const AI_TABS = ["providers", "tools", "policy"] as const;
+export const AI_TABS = ["providers", "tools", "policy", "usage"] as const;
 export type AiTab = typeof AI_TABS[number];
 export const isAiTab = (value: unknown): value is AiTab => typeof value === "string" && (AI_TABS as readonly string[]).includes(value);
 /** Settings → AI's tab labels (also the tab's part of its document title). */
-export const AI_TAB_LABELS: Record<AiTab, string> = { providers: "Model providers", tools: "Tool servers", policy: "Chat policy" };
+export const AI_TAB_LABELS: Record<AiTab, string> = { providers: "Model providers", tools: "Tool servers", policy: "Chat policy", usage: "Usage" };
 /** The URL of one Settings → AI tab. */
 export const aiTabPath = (tab: AiTab) => `${settingsPath("ai")}/${tab}`;
 

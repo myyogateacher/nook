@@ -5,7 +5,7 @@ import { parseJson } from "../validation";
 import { workKindAdapter } from "../links/adapters";
 import { listItemActivity } from "./service";
 import { addComment, CommentError, deleteComment, editComment, listComments } from "./comments";
-import { ITEM_COMMENT_MAX } from "../../shared/itemActivity";
+import { ITEM_COMMENT_FILES_MAX, ITEM_COMMENT_MAX } from "../../shared/itemActivity";
 
 /**
  * Item activity and comments over HTTP (docs/plan/WORKSPACE_MODULES.md §D.0): for any registered work
@@ -29,7 +29,7 @@ export function registerItemActivityRoutes(app: Hono<AppEnv>) {
     const item = readable(c);
     if (!item) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
     const limit = Number(c.req.query("limit") ?? "50");
-    return c.json(listItemActivity(item.kind, item.id, { order: c.req.query("order") === "asc" ? "asc" : "desc", cursor: c.req.query("cursor") ?? null, limit: Number.isFinite(limit) ? limit : 50 }));
+    return c.json(listItemActivity(item.kind, item.id, { viewer: { userId: c.get("user").id }, order: c.req.query("order") === "asc" ? "asc" : "desc", cursor: c.req.query("cursor") ?? null, limit: Number.isFinite(limit) ? limit : 50 }));
   });
   app.get("/api/items/:kind/:id/comments", (c) => {
     try {
@@ -39,9 +39,13 @@ export function registerItemActivityRoutes(app: Hono<AppEnv>) {
     }
   });
   app.post("/api/items/:kind/:id/comments", async (c) => {
-    const body = await parseJson(c.req.raw, z.object({ body: z.string().min(1).max(ITEM_COMMENT_MAX), parentId: z.string().uuid().nullish() }).strict());
+    // With files (D1363) the text may be empty; the files are the author's own (uploaded with ?attachTo=item_comment).
+    const body = await parseJson(c.req.raw, z.object({
+      body: z.string().max(ITEM_COMMENT_MAX).optional(), parentId: z.string().uuid().nullish(),
+      attachmentIds: z.array(z.string().uuid()).max(ITEM_COMMENT_FILES_MAX).optional(), confirmed: z.boolean().optional()
+    }).strict());
     try {
-      return c.json({ comment: addComment({ kind: c.req.param("kind"), itemId: (c.req.param("id") ?? "").toLowerCase(), authorId: c.get("user").id, body: body.body, parentId: body.parentId ?? null }) }, 201);
+      return c.json({ comment: addComment({ kind: c.req.param("kind"), itemId: (c.req.param("id") ?? "").toLowerCase(), authorId: c.get("user").id, body: body.body ?? null, parentId: body.parentId ?? null, attachmentIds: body.attachmentIds, confirmed: body.confirmed }) }, 201);
     } catch (error) {
       return respond(c, error);
     }

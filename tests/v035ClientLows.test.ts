@@ -19,7 +19,7 @@ describe("v0.35.0 QA low fixes", () => {
   });
 
   test("a restore from Settings › Bin is a success toast, as Undo's is", () => {
-    expect(source("bin/BinSection.tsx")).toContain("notify.success(restoreResultMessage(item, result))");
+    expect(source("bin/BinSection.tsx")).toContain("notify.success(restoreResultMessage(item, result)");
   });
 
   test("binning the open file closes its confirm before leaving the file, so Back is not undone", () => {

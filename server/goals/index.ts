@@ -5,6 +5,9 @@ import { page as todayPage, sectionScope } from "../today/registry";
 import { SWEEP_BATCH_SIZE, type BinItem } from "../bin";
 import { notify } from "../notify";
 import { registerGoalRoutes } from "./routes";
+import { goalsMailTemplates } from "./mail";
+import type { RegisteredMailTemplate } from "../mail/registry";
+import { WINDOW_MS } from "../mail/outbox";
 import { goalAgentTools, goalTools } from "./mcp";
 import { tasksProgressSource } from "./sources";
 import { goalLevel, readableGoalSql, type GoalRow } from "./access";
@@ -56,6 +59,7 @@ const providedDefaults = { size_bytes: null, board_id: null, board_name: null, a
 registerWorkspaceModule({
   id: "goals",
   routes: registerGoalRoutes,
+  mailTemplates: goalsMailTemplates as unknown as Record<string, RegisteredMailTemplate<never>>,
   mcpTools: goalTools,
   agentTools: goalAgentTools,
   accessContainer: { kind: "goal", table: "goals", nameColumn: "title", audienceLevels: ["view", "comment", "edit"] },
@@ -76,9 +80,10 @@ registerWorkspaceModule({
   binProviders: [{
     type: "goal",
     provider: {
-      list: (userId) => goalsInBin(userId).map((row): BinItem => ({ type: "goal" as never, id: row.id, title: row.title, folder_id: null, folder_name: "Goals", deleted_at: row.deleted_at, purge_after: row.purge_after, purging: row.purge_started_at !== null, ...providedDefaults }) as BinItem),
+      list: (userId) => goalsInBin(userId).map((row): BinItem => ({ type: "goal" as never, id: row.id, title: row.title, folder_id: null, folder_name: "Goals", deleted_at: row.deleted_at, purge_after: row.purge_after, purging: row.purge_started_at !== null, ...providedDefaults, href: goalHref(row) }) as BinItem),
       restore: async (id, userId) => {
-        const outcome = restoreGoal(id, userId);
+        // D1385: restoreGoal takes the person first; the arguments were swapped, so every goal restore was NOT_FOUND.
+        const outcome = restoreGoal(userId, id);
         if (outcome === "not_found") return { status: "not_found" };
         if (outcome === "purging") return { status: "purging" };
         if (outcome === "already") return { status: "already_restored", folderId: null, folderName: "Goals" };
@@ -208,7 +213,8 @@ registerWorkspaceModule({
         if (!checkinDue(goal.checkin_cadence, goal.last_checkin_at, goal.created_at, Date.parse(fireAt) + 86_400_000)) return;
         const contributors = (db.query("SELECT user_id FROM goal_contributors WHERE goal_id = ?").all(goal.id) as Array<{ user_id: string }>).map((row) => row.user_id);
         notify({ userIds: [goal.owner_id, ...contributors].filter((id) => goalLevel(goal.id, id) !== "none"), module: "goals", topic: "goals.checkin_due", title: `Check in on ${goal.title}`,
-          body: goal.last_checkin_at ? "It's time for this goal's check-in." : "This goal has no check-in yet.", href: goalHref(goal), item: { kind: "goal", id: goal.id }, dedupeKey: `goal-checkin:${goal.id}` });
+          body: goal.last_checkin_at ? "It's time for this goal's check-in." : "This goal has no check-in yet.", href: goalHref(goal), item: { kind: "goal", id: goal.id }, dedupeKey: `goal-checkin:${goal.id}`,
+          email: { template: "goals.update", payload: { topic: "goals.checkin_due", kind: "goal", id: goal.id, at: fireAt }, coalesceKey: `goals.checkin:${goal.id}`, windowMs: WINDOW_MS.activity } });
       }
     },
     "goals.sweep": { skipIfLateMs: 10 * 60_000, run: async () => { await sweepAutoKrs(); } },

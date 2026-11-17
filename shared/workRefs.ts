@@ -87,6 +87,14 @@ export const WORK_KIND_LABELS: Record<WorkKind, string> = {
 };
 
 /**
+ * The words before a linked item's label in a history line (D1390): "the goal " when the reader can
+ * open it (the server served its id and title), "" when the label is only the kind word ("Goal").
+ */
+export function linkedItemNoun(item: { id?: string; kind?: string } | null | undefined): string {
+  return item?.id && isWorkKind(item.kind) ? `the ${WORK_KIND_LABELS[item.kind].toLowerCase()} ` : "";
+}
+
+/**
  * A reference as text names it, before the server resolves it to an id: a UUID, a short id
  * (friendly URLs, D771), a card key (MYT-12), or a board code.
  */

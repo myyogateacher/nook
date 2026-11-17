@@ -5,11 +5,13 @@ import { canWriteContent, userRole } from "../team/userRole";
 import { recordItemActivity, recordItemChange } from "../activity/service";
 import { cancelSchedules, upsertSchedule } from "../schedules/service";
 import { notify } from "../notify";
+import { WINDOW_MS } from "../mail/outbox";
 import { captureUndo } from "../undo";
 import { computeProgress, progressSource, ProgressError, registeredProgressSources } from "../goalsProgress";
 import { createLink } from "../links/service";
 import { setItemMember } from "../access/workspaceItems";
 import { atLeast, goalLevel, goalRow, readableGoalIds, readableGoalSql, type GoalRow } from "./access";
+import { readableBoardPredicate } from "../tasks/access";
 import { slugSegment } from "../../shared/friendlyUrls";
 import { isValidTimeZone } from "../../shared/calendarRecurrence";
 import {
@@ -565,6 +567,10 @@ export async function createGoal(userId: string, input: GoalInput): Promise<Goal
     // The creator keeps edit on a goal they made for someone else.
     if (ownerId !== userId && (input.visibility ?? "all_users") !== "all_users") setItemMember("goal", id, userId, "edit", userId);
     recordItemActivity({ itemKind: "goal", itemId: id, actorId: userId, kind: "created", payload: { to: { label: title } } });
+    // D1371: a goal made for someone else, or with contributors, tells them (not the creator).
+    const created = goalRow(id)!;
+    if (ownerId !== userId) goalAssigned(created, [ownerId], "owner", userId);
+    goalAssigned(created, contributors, "contributor", userId);
     audit(userId, null, "goals.create", { goalId: id, parentId: input.parentId ?? null, periodId: input.periodId ?? null });
   })();
   const goal = goalRow(id)!;
@@ -605,6 +611,7 @@ export function updateGoal(userId: string, ref: string, patch: GoalPatch): GoalD
   checkDates(patch.startOn !== undefined ? patch.startOn : goal.start_on, patch.dueOn !== undefined ? patch.dueOn : goal.due_on);
   if (patch.progress !== undefined && (!Number.isFinite(patch.progress) || patch.progress < 0 || patch.progress > 1)) throw invalid("Progress is between 0 and 1");
   if (patch.contributorIds) for (const id of patch.contributorIds) if (!activePerson(id)) throw invalid("Contributors must be members of the workspace");
+  const contributorsBefore = new Set<string>();
   db.transaction(() => {
     const sets: string[] = [];
     const values: Array<string | number | null> = [];
@@ -654,9 +661,16 @@ export function updateGoal(userId: string, ref: string, patch: GoalPatch): GoalD
     if (patch.shareRole !== undefined) set("share_role", patch.shareRole);
     if (patch.contributorIds) {
       const owner = patch.ownerId ?? goal.owner_id;
+      for (const row of db.query("SELECT user_id FROM goal_contributors WHERE goal_id = ?").all(goal.id) as Array<{ user_id: string }>) contributorsBefore.add(row.user_id);
       db.query("DELETE FROM goal_contributors WHERE goal_id = ?").run(goal.id);
       const add = db.query("INSERT INTO goal_contributors (goal_id, user_id, added_by, created_at) VALUES (?, ?, ?, ?)");
       for (const id of new Set(patch.contributorIds)) if (id !== owner) add.run(goal.id, id, userId, now());
+    }
+    // D1371: a new owner and newly added contributors hear about it (never the person who changed it).
+    if (patch.ownerId !== undefined && patch.ownerId !== goal.owner_id) goalAssigned(goal, [patch.ownerId], "owner", userId);
+    if (patch.contributorIds) {
+      const owner = patch.ownerId ?? goal.owner_id;
+      goalAssigned(goal, [...new Set(patch.contributorIds)].filter((id) => id !== owner && !contributorsBefore.has(id)), "contributor", userId);
     }
     if (sets.length || patch.contributorIds) {
       set("updated_at", now());
@@ -671,6 +685,22 @@ export function updateGoal(userId: string, ref: string, patch: GoalPatch): GoalD
   return goalDetail(goalRow(goal.id)!, goalLevel(goal.id, userId), userId);
 }
 
+/**
+ * Made a goal's owner or a contributor (D1371): a bell row and the Goals email, to people who can read
+ * the goal, never the person who did it. One unread row per person and goal.
+ */
+function goalAssigned(goal: GoalRow, userIds: readonly string[], role: "owner" | "contributor", actorId: string) {
+  const readers = userIds.filter((id) => id !== actorId && goalLevel(goal.id, id) !== "none");
+  if (!readers.length) return;
+  const actor = (db.query("SELECT display_name FROM users WHERE id = ?").get(actorId) as { display_name: string } | null)?.display_name ?? "Someone";
+  notify({
+    userIds: readers, module: "goals", topic: "goals.assigned", actor: actorId,
+    title: role === "owner" ? `${actor} made you the owner of ${goal.title}` : `${actor} added you to ${goal.title}`,
+    href: goalHref(goal), item: { kind: "goal", id: goal.id }, dedupeKey: `goal-assigned:${goal.id}`,
+    email: { template: "goals.update", payload: { topic: "goals.assigned", kind: "goal", id: goal.id, actorId, role }, coalesceKey: `goals.assigned:${goal.id}`, windowMs: WINDOW_MS.activity }
+  });
+}
+
 /** Health went to at risk or off track: the owner, contributors, and the parent's owner hear it (§D.3). */
 function healthChanged(goal: GoalRow, health: GoalHealth, actorId: string) {
   recordItemChange({ itemKind: "goal", itemId: goal.id, actorId, kind: "goal_health", from: { label: goal.health }, to: { label: health } });
@@ -678,7 +708,8 @@ function healthChanged(goal: GoalRow, health: GoalHealth, actorId: string) {
   const parentOwner = goal.parent_id ? (db.query("SELECT owner_id FROM goals WHERE id = ? AND deleted_at IS NULL").get(goal.parent_id) as { owner_id: string } | null)?.owner_id : null;
   const contributors = (db.query("SELECT user_id FROM goal_contributors WHERE goal_id = ?").all(goal.id) as Array<{ user_id: string }>).map((row) => row.user_id);
   const recipients = [goal.owner_id, ...contributors, ...(parentOwner ? [parentOwner] : [])].filter((id) => goalLevel(goal.id, id) !== "none");
-  notify({ userIds: recipients, module: "goals", topic: "goals.health_changed", actor: actorId, title: `${goal.title} is ${health === "at_risk" ? "at risk" : "off track"}`, href: goalHref(goal), item: { kind: "goal", id: goal.id }, dedupeKey: `goal-health:${goal.id}` });
+  notify({ userIds: recipients, module: "goals", topic: "goals.health_changed", actor: actorId, title: `${goal.title} is ${health === "at_risk" ? "at risk" : "off track"}`, href: goalHref(goal), item: { kind: "goal", id: goal.id }, dedupeKey: `goal-health:${goal.id}`,
+    email: { template: "goals.update", payload: { topic: "goals.health_changed", kind: "goal", id: goal.id, actorId }, coalesceKey: `goals.health:${goal.id}`, windowMs: WINDOW_MS.activity } });
 }
 
 /** To the Bin (owner or manager). Children stay aligned until it is purged (§D.3). */
@@ -1134,11 +1165,43 @@ export function goalsOfItem(userId: string, kind: string, id: string): GoalSumma
   return summarize(rows, userId);
 }
 
+/** The most cards one card-face read asks about (D1386). */
+export const MAX_BADGE_CARDS = 200;
+
+export type CardGoalBadge = { id: string; title: string; href: string; progress: number; health: string };
+
+/**
+ * The goals each card contributes to, for the card face's goal badge (D1386; the TODO's batched
+ * read): one query for up to 200 cards, only cards on boards the viewer can read and goals they can
+ * open, at most 5 goals per card. Cards with none are left out.
+ */
+export function goalsOfCards(userId: string, cardIds: readonly string[]): Record<string, CardGoalBadge[]> {
+  const ids = [...new Set(cardIds)].slice(0, MAX_BADGE_CARDS);
+  if (!ids.length) return {};
+  const params: Record<string, string> = { userId };
+  ids.forEach((id, index) => { params[`c${index}`] = id; });
+  const rows = db.query(`SELECT l.a_id AS card_id, g.* FROM work_links l
+      JOIN cards k ON k.id = l.a_id AND k.deleted_at IS NULL JOIN boards b ON b.id = k.board_id
+      JOIN goals g ON g.id = l.b_id
+    WHERE l.a_kind = 'card' AND l.a_id IN (${ids.map((_, index) => `$c${index}`).join(",")}) AND l.b_kind = 'goal' AND l.relation = 'contributes'
+      AND ${readableBoardPredicate} AND ${readableGoalSql("g")}
+    ORDER BY l.created_at`).all(params) as Array<GoalRow & { card_id: string }>;
+  const summaries = new Map(summarize([...new Map(rows.map((row) => [row.id, row])).values()], userId).map((goal) => [goal.id, goal]));
+  const out: Record<string, CardGoalBadge[]> = {};
+  for (const row of rows) {
+    const goal = summaries.get(row.id);
+    if (!goal) continue;
+    const list = out[row.card_id] ??= [];
+    if (list.length < 5 && !list.some((item) => item.id === goal.id)) list.push({ id: goal.id, title: goal.title, href: goal.href, progress: goal.progress, health: goal.health });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Bin (§B.13): the owner restores and purges; purge detaches children (parent SET NULL).
 
 export function goalsInBin(userId: string) {
-  return db.query("SELECT id, title, deleted_at, purge_after, purge_started_at FROM goals WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 500").all(userId) as Array<{ id: string; title: string; deleted_at: string; purge_after: string; purge_started_at: string | null }>;
+  return db.query("SELECT id, title, short_id, deleted_at, purge_after, purge_started_at FROM goals WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 500").all(userId) as Array<{ id: string; title: string; short_id: string; deleted_at: string; purge_after: string; purge_started_at: string | null }>;
 }
 
 export function restoreGoal(userId: string, id: string) {

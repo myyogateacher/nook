@@ -6,7 +6,7 @@ import {
 } from "./support/attachments";
 
 const { syncDerivedLinks, linkAttachment, hostReadable } = await import("../server/attachments/service");
-const { HOSTS, HOST_KINDS, LINK_TABLE_HOSTS } = await import("../server/attachments/hosts");
+const { CODE_READ_HOSTS, HOSTS, HOST_KINDS, LINK_TABLE_HOSTS } = await import("../server/attachments/hosts");
 const { storedBytes } = await import("../server/documents");
 
 /**
@@ -22,8 +22,11 @@ const unbinRow = (table: string, id: string) => db.query(`UPDATE ${table} SET de
 
 describe("the host registry", () => {
   test("every kind is registered once, link-table hosts are the generated branch, and links of unknown kinds grant nothing", async () => {
-    expect([...HOST_KINDS].sort()).toEqual(["card", "chat_message", "event", "note", "row", "whiteboard"]);
-    expect(LINK_TABLE_HOSTS.map((spec) => spec.kind).sort()).toEqual(["chat_message", "event", "note", "whiteboard"]);
+    expect([...HOST_KINDS].sort()).toEqual(["card", "chat_message", "event", "item_comment", "note", "row", "whiteboard"]);
+    expect(LINK_TABLE_HOSTS.map((spec) => spec.kind).sort()).toEqual(["chat_message", "event", "item_comment", "note", "whiteboard"]);
+    // Item comments (D1363) are read by code, never by the generated SQL branch.
+    expect(CODE_READ_HOSTS.map((spec) => spec.kind)).toEqual(["item_comment"]);
+    expect(HOSTS.item_comment.readableSql("x", { documentReadable: () => "1" })).toBe("0");
     for (const kind of HOST_KINDS) {
       const spec = HOSTS[kind];
       expect(spec.kind).toBe(kind);

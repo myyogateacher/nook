@@ -8,6 +8,7 @@ import { notify } from "../ui/notify";
 import { FormError } from "../ui/FormError";
 import type { Answers } from "../../shared/questions";
 import { SlotPicker } from "./SlotPicker";
+import { useUnitPreferences } from "../ui/units";
 import { bookingsApi, dayLabel, durationLabel, timeLabel, viewerZone, type BookableType, type Booking, type BookingForm } from "./api";
 import "../files/files.css";
 import "../ui/workspace.css";
@@ -29,6 +30,7 @@ export default function BookTimeSheet({ type, hostName, onClose }: { type: Booka
   const [form, setForm] = useState<BookingForm | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tz, setTz] = useState(viewerZone);
+  const { weekStart } = useUnitPreferences();
   const [duration, setDuration] = useState(type.durations[0] ?? 30);
   const [step, setStep] = useState<Step>({ kind: "pick" });
   const [busy, setBusy] = useState(false);
@@ -61,7 +63,7 @@ export default function BookTimeSheet({ type, hostName, onClose }: { type: Booka
             {durations.length > 1 && <div className="bk-book-durations" role="radiogroup" aria-label="Length">
               {durations.map((value) => <button key={value} type="button" role="radio" aria-checked={value === duration} className={value === duration ? "selected" : ""} onClick={() => setDuration(value)}>{durationLabel(value)}</button>)}
             </div>}
-            <SlotPicker key={duration} load={(from, to, zone) => bookingsApi.typeSlots(type.id, { from, to, tz: zone, duration })} tz={tz} onTz={setTz} onPick={(start) => setStep({ kind: "details", start })} />
+            <SlotPicker key={duration} load={(from, to, zone) => bookingsApi.typeSlots(type.id, { from, to, tz: zone, duration })} tz={tz} onTz={setTz} weekStart={weekStart} onPick={(start) => setStep({ kind: "details", start })} />
           </>}
           {step.kind === "details" && form && <Details form={form} start={step.start} duration={duration} tz={tz} busy={busy} setBusy={setBusy}
             onBack={() => setStep({ kind: "pick" })} onDone={(booking, mailQueued) => setStep({ kind: "done", booking, mailQueued })} />}

@@ -86,7 +86,7 @@ const mayRestore = (row: FormRow, userId: string) => row.owner_id === userId || 
 export const formsBinProvider: BinProvider = {
   list(userId) {
     const rows = db.query("SELECT * FROM forms WHERE deleted_at IS NOT NULL AND (owner_id = ? OR deleted_by = ?) ORDER BY deleted_at DESC, id LIMIT 500").all(userId, userId) as FormRow[];
-    return rows.map((row): BinItem => ({ type: "form", id: row.id, title: row.title, folder_id: null, folder_name: "Forms", deleted_at: row.deleted_at!, purge_after: row.purge_after!, purging: row.purge_started_at !== null, ...defaults, can_purge: row.owner_id === userId }));
+    return rows.map((row): BinItem => ({ type: "form", id: row.id, title: row.title, folder_id: null, folder_name: "Forms", deleted_at: row.deleted_at!, purge_after: row.purge_after!, purging: row.purge_started_at !== null, ...defaults, can_purge: row.owner_id === userId, href: formPath(row.title, row.short_id) }));
   },
   restore(id, userId) {
     return withResourceLock(lockKey(id), async (): Promise<RestoreOutcome> => db.transaction((): RestoreOutcome => {

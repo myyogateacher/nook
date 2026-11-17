@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Plus, RotateCcw, TriangleAlert } from "lucide-react";
 import { addDays, monthGridDays } from "../calendarRoute";
+import { useUnitPreferences } from "../ui/units";
 import { MonthGrid } from "../ui/calendarGrid/MonthGrid";
 import { listOccurrences, viewerTimeZone, type Occurrence, type OccurrenceList } from "./calendarApi";
 import { dayHeading, eventDayLabel, groupByDay, tasksByDay } from "./calendarFormat";
@@ -26,8 +27,8 @@ type MonthViewProps = {
 const CHIPS_PER_DAY = 3;
 
 /**
- * The month grid (desktop) or a dot grid with the selected day's list (phones). Six Monday-first
- * weeks; prev/next replace the history entry (the caller decides), so Back never walks months.
+ * The month grid (desktop) or a dot grid with the selected day's list (phones). Six weeks from the
+ * viewer's week start (D1383); prev/next replace the history entry (the caller decides), so Back never walks months.
  * This container loads the month's occurrences; the grid itself is `src/ui/calendarGrid/MonthGrid`.
  */
 export function MonthView(props: MonthViewProps) {
@@ -36,7 +37,9 @@ export function MonthView(props: MonthViewProps) {
   const [loadedMonth, setLoadedMonth] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const days = monthGridDays(month);
+  // D1383: the rows start on the viewer's "Week starts on"; the load covers the same 42 days.
+  const { weekStart } = useUnitPreferences();
+  const days = monthGridDays(month, weekStart);
   const from = days[0]!;
   const to = addDays(days[days.length - 1]!, 1);
   const zone = viewerTimeZone();
@@ -63,7 +66,7 @@ export function MonthView(props: MonthViewProps) {
   const dayTasks = dueByDay.get(day) ?? [];
   const stale = loadedMonth !== month;
 
-  return <MonthGrid month={month} today={today} selectedDay={day} compact={compact} busy={stale}
+  return <MonthGrid month={month} today={today} selectedDay={day} compact={compact} busy={stale} weekStart={weekStart}
     countFor={(cell) => (byDay.get(cell)?.length ?? 0) + (dueByDay.get(cell)?.length ?? 0)}
     onSelectDay={onSelectDay} onShiftMonth={onShiftMonth} onToday={onToday}
     onDayCreate={canCreate && !compact ? onCreate : undefined}

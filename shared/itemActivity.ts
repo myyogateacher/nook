@@ -20,6 +20,7 @@
  */
 import type { ActivityShape, ActivityValue, ActivityVia } from "./cardActivity";
 import type { WorkKind } from "./workRefs";
+import type { ReactionAggregate } from "./reactions";
 
 export type { ActivityShape, ActivityValue, ActivityVia } from "./cardActivity";
 export { ACTIVITY_COALESCE_MS, ACTIVITY_LABEL_MAX, ACTIVITY_PAGE_DEFAULT, ACTIVITY_PAGE_MAX, sameActivityValue } from "./cardActivity";
@@ -139,4 +140,31 @@ export type ItemComment = {
   updatedAt: string;
   /** Whether the viewer may edit or delete it (the author, or a manager of the item). */
   canEdit: boolean;
+  /** Reactions as this viewer sees them (`target_kind = 'item_comment'`, D1362); none on a deleted comment. */
+  reactions: ReactionAggregate[];
+  /** Files attached through the comment (`host_kind = 'item_comment'`, D1363); none on a deleted comment. */
+  attachments: ItemCommentAttachment[];
 };
+
+/** A file on an item comment, as the item's readers see it; `removed` while it sits in its owner's Bin (D409). */
+export type ItemCommentAttachment =
+  | { documentId: string; removed: false; name: string; mimeType: string; previewKind: string; sizeBytes: number; partId: string | null; position: number; linkedAt: string; isOwner: boolean; inAttachmentsFolder: boolean }
+  | { documentId: string; removed: true; partId: string | null; position: number; linkedAt: string };
+
+/** Files one comment may carry (D1363). */
+export const ITEM_COMMENT_FILES_MAX = 10;
+
+/**
+ * Where an item's comments are on screen (D1367): a container's sit in its Activity tab or section, so a
+ * comment notification or email about a form, standup, townhall, booking type, or time project opens
+ * there; everything else shows its comments on its own page.
+ */
+export function commentsPath(kind: WorkKind, href: string): string {
+  if (href.includes("?") || href.includes("#")) return href;
+  switch (kind) {
+    case "form": case "checkin": return `${href}/activity`;
+    case "townhall_session": case "time_project": return `${href}?tab=activity`;
+    case "booking_type": return `${href}?section=activity`;
+    default: return href;
+  }
+}

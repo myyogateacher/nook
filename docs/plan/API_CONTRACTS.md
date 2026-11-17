@@ -360,6 +360,26 @@ type RowSearchHit = { rowId: string; collectionId: string; collectionName: strin
 
 → 200 `{ results: RowSearchHit[], truncated }`. The live `readableCollection` rule is applied in the query before `LIMIT` (T60); binned rows and rows of binned collections never match. The title is the primary field; the body is the other text, url, number, and date values and chosen option labels. Note titles and file names are never indexed (T59). Rows are indexed in the transaction that writes them (`collection_row_search` + `collection_row_fts`), a schema change reindexes its collection, and boot reconciles entries whose `source_revision` or `schema_version` is stale.
 
+### Search everywhere: cards, events, chats, and `ref` (D1341–D1343)
+
+Built-in scopes are now `notes`, `cards`, `events`, `files`, `whiteboards`, `collections`, `reports`, `chats` (plus `all` and every registered module scope; anything else is 400). Same `q`, `limit`, rate limit (one bucket for every scope, `all` included), and 200 shapes `{ results, truncated }`.
+
+**Every built-in hit also carries `ref`** (additive; each scope keeps all of its own fields):
+
+```ts
+type SearchItemRef = { kind: WorkKind | "chat"; id: string; title: string; href: string };  // title plain text; href a relative in-app path
+```
+
+`ref.kind` is `note`, `card`, `event`, `document` (Files), `whiteboard`, `collection`, `row`, `report`, or `chat`. A note's `href` slugs its **published** title (never the owner's draft title; the owner's own unpublished note uses its draft title, which only they can read).
+
+| Scope | Matches | Read check (before `LIMIT`) | Hit (besides `ref`) |
+| --- | --- | --- | --- |
+| `cards` | Card titles (case-insensitive substring, `%`/`_` literal) or a card key (`MYT-12`, an old key too) | Live cards on boards the caller can read (the relation picker's search, T95); archived cards included and marked | `CardSearchHit` (`id, board_id, board_name, title, column_name, is_done, is_archived, key`) + `kind: "card"`, `href` |
+| `events` | Event titles (substring) | Live events on calendars the caller can read (T61); a series is one hit | `{ kind: "event", id, title, href: "/calendar/event/<id>", calendarId, calendarName, allDay, start, recurring, updatedAt }` (`start`: the date of an all-day event, else the first start instant) |
+| `chats` | Title or message words (the chat FTS, as `GET /api/chats?q=`) | The caller's **own** live chats only; never chats shared with them; nothing for guests or a role that may not chat, or while Chat is not set up | `{ kind: "chat", id, title, href: "/chat/<id>", agentName, updatedAt }` |
+
+**`scope=all`** lists, in order, Notes, Tasks (`cards`), Calendar (`events`), Files, Whiteboards, Collections, Reports, Chat (`chats`), then each module scope the caller has; guests get no Reports or Chat section. Its Collections section lists collections whose **name** matches (`{ kind: "collection", id, title, href, updatedAt, ref }`, readable collections only) ahead of row hits, five in all.
+
 ## Tasks (Wave 9)
 
 Task Boards ([WAVES_7-9.md](WAVES_7-9.md) §3). Every endpoint is under `/api/tasks`, takes and returns JSON, and inherits the global session, Origin, CSRF, `Content-Type: application/json`, and TOTP rules. Path ids are UUIDs (400 otherwise) and are always joined to a board the caller can read.
@@ -3182,7 +3202,7 @@ All JSON under `/api/crm`, behind the session, CSRF, and role write gates; error
 | GET | `/contacts/:id/vcard` | — | `text/vcard` |
 | GET / POST, GET / PATCH / DELETE, POST merge | `/companies[/:id][/merge]` | as contacts; 409 `EXISTS` with `companyId` on a taken domain | |
 | GET / POST | `/pipelines?book=` | `{ bookId, name, currency?, stages? }` | `{ pipelines }` / 201 `{ pipeline }` (managers) |
-| PATCH / PUT stages / DELETE | `/pipelines/:id`, `/pipelines/:id/stages` | `{ name?, currency?, stages?: [{ id?, name, kind, probability, rotDays?, color? }], moveDealsTo? }` | `{ pipeline }`; 409 `STAGE_IN_USE`, `PIPELINE_IN_USE`, `LAST_PIPELINE` |
+| PATCH / DELETE | `/pipelines/:id` | `{ name?, currency?, stages?: [{ id?, name, kind, probability, rotDays?, color? }], moveDealsTo? }` | `{ pipeline }`; 409 `STAGE_IN_USE`, `PIPELINE_IN_USE`, `LAST_PIPELINE`. D1386: `PUT /pipelines/:id/stages`, a duplicate of PATCH that nothing called, is gone (405/404) |
 | GET | `/pipelines/:id/board?owner=me&q=` | — | `{ board: { pipeline, currency, columns: [{ stage, count, sum, weighted, deals ≤ 200 }], totals } }` |
 | GET / POST | `/deals` | `?book=&pipeline=&stage=&owner=&status=&company=&list=&q=&filter=&sort=&cursor=` / `{ bookId \| pipelineId, stageId \| stageName, title, value (minor units), currency?, expectedCloseOn?, ownerId?, companyId?, contactIds?, nextStep?, nextStepOn?, tags?, custom? }` | `{ items, nextCursor }` / 201 `{ deal }` |
 | GET / PATCH / DELETE | `/deals/:id` | partial fields, `stageId \| stageName`, `position` (index in the stage), `lostReason`, `expectedRevision?` | `{ deal }` |
@@ -3308,6 +3328,12 @@ Plan: `docs/plan/MENTIONS.md`. A mention is `@[Name](user:<uuid>)` in any commen
 | POST | `/api/tasks/cards/:k/comments`, PATCH `/api/tasks/comments/:id` | unchanged | the board readers the text newly mentions are notified (never the author, at most 20 a write) and the card records `mentioned` |
 | POST | `/api/tasks/boards/:b/cards`, PATCH `/api/tasks/cards/:k` | unchanged | the same for mentions a `description` adds (compared with the stored description) |
 | POST / PATCH | `/api/items/:kind/:id/comments…` | unchanged | as before (only new mentions on an edit); now shared with cards (`server/activity/mentions.ts`) |
+| POST | `/api/items/:kind/:id/comments` | `{ body?, parentId?, attachmentIds?: uuid[] (≤ 10), confirmed? }` | 201 `{ comment }`; with files the text may be empty; the item's followers and the parent's author are notified (`core.comment`, D1361); `attachmentIds` are the caller's own files (404 otherwise; 409 `CONFIRM_REQUIRED` for a Files item without `confirmed`) |
+| GET | `/api/items/:kind/:id/comments` | — | each comment now has `reactions: ReactionAggregate[]` and `attachments: HostAttachment[]` (empty on a deleted comment); MCP's `list_item_comments` / `comment_on_item` give `fileCount` instead of `attachments` |
+| DELETE | `/api/items/:kind/:id/comments/:cid` | — | `{ undoTicket }`; `POST /api/undo/:ticket` restores the comment with its reactions and file links (D1364) |
+| PUT / DELETE | `/api/reactions/item_comment/:commentId/:emoji` | — | `{ reactions }`; readers of the item see, `comment` and up react (D1362) |
+| POST / DELETE | `/api/attachments/item_comment/:commentId[/:documentId]`, `POST /api/files?attachTo=item_comment` | as for other declared hosts | the comment's author links; the linker, the author, a manager of the item, or the file's owner unlinks (D1363) |
+| PUT | `/api/access/:kind/:id` (workspace containers) | unchanged | people newly added by name get a `core.shared` bell row, the `sharing.shared` mail, and a digest entry (D1366) |
 
 **Notifications**: `kind = 'module'`, topic `core.mention`, module `tasks` for cards (`notify()` now accepts the core modules `tasks` and `notes`, D1325), title "<Author> mentioned you on a card" / "… in a card description" / "… on a <kind>", `href` the item's path, `dedupeKey mention:<kind>:<id>` (one unread row per person and item).
 
@@ -3323,3 +3349,18 @@ Plan: `docs/plan/MENTIONS.md`. A mention is `@[Name](user:<uuid>)` in any commen
 - `GET /api/people/mentionable?kind=board&id=…` serves the new-card composer.
 - **Mail**: category `mentions` in `GET`/`PUT /api/mail/settings` `categories`. It is optional in the PUT body; a missing value keeps the stored one. Template `core.mention`, class `activity`, coalesced per recipient for 10 minutes. The payload is `{ mentions: [{ kind, id, actorId, where }] }` (≤ 20), resolved as the recipient at send time.
 
+
+## Bake fixes (lane bake3, docs/plan/BAKE_MISC.md, D1380–D1387; migration 160)
+
+- **Bin (D1380).** `GET /api/bin` items of the workspace types (`form`, `goal`, `checkin`, `contact_book`, `contact`, `company`, `deal`, `time_project`, `booking_type`, `townhall_session`) carry `href`: the item's in-app path (relative, the module's friendly path; a contact book's is `/contacts?book=<shortid>`). A contact book lists and restores with `folder_name` / `folderName` "Contacts" (it was null). `POST /api/bin/goal/:id/restore` restores again (it was always 404).
+- **AI usage (D1381).** `GET /api/agents/admin/usage?group=user|agent&from=&to=` is unchanged; Settings → AI → Usage (`/settings/ai/usage`) reads it.
+- **Workspace settings (D1382).** `GET`/`PUT /api/workspace/settings`: `settings.publicTownhall` (boolean, default `true`; `team_settings` key `public_townhall`, seeded by migration 160 from `public_forms`). It decides townhall audience links (`publicPolicyAllows("townhall_session")`); `publicForms` no longer does. `PUT /api/townhall/sessions/:id/public-link` while it is off: 403 `POLICY_OFF` "Public townhall links are turned off for this workspace".
+- **Booking link names (D1384).** `GET /api/bookings/admin/handles?users=<id,…>` (admins; 403 `ADMIN_ONLY`; ≤ 500 ids): `{ handles: { <userId>: <handle> } }` for members with a booking profile. The reset is `POST /api/bookings/profile/:userId/reset-handle`, as before.
+- **MCP (D1385)**, each with the module's write scope and `bin:write`, item access on its id, never offered to chat agents: `restore_form { formId }`, `restore_goal { goalId }`, `restore_contact { contactId }`, `restore_company { companyId }`, `restore_deal { dealId }`, `restore_time_project { projectId }`, `restore_townhall_session { sessionId }` (ids are UUIDs; result `{ restored, folderId, folderName, visibility }` or `{ restored, alreadyRestored }`; errors `NOT_FOUND`, `PURGING`, `PARENT_IN_BIN`); `bin_time_project { projectId }` → `{ binned, purgeAfter }` and `bin_townhall_session { sessionId }` (id, short id, or segment) → `{ binned }`, both counting against the Bin buckets.
+- **Goals (D1386).** `GET /api/goals/for-cards?ids=<cardId,…>` (≤ 200 UUIDs; 400 `INVALID` beyond): `{ cards: { <cardId>: [{ id, title, href, progress, health }] } }`, at most 5 goals a card, only cards on boards the caller can read and goals they can open; cards with none are absent.
+- **Removed (D1386).** `PUT /api/crm/pipelines/:id/stages` (send the same body to `PATCH /api/crm/pipelines/:id`) and `GET /api/crm/search` (MCP `search_crm` and `GET /api/search?scope=contacts` stay). The client module field `settingsSections` is gone.
+- **CSV (D1387).** UTF-8 with a BOM, CRLF, formula-leading cells prefixed with `'` (T514), `Cache-Control: no-store`, `Content-Disposition: attachment`, ≤ 10,000 rows (a last line says where it stopped), audited:
+  - `GET /api/goals/export.csv?period=&owner=&team=&state=&health=&mine=1&q=&closed=1` (the list's filters): Goal, Kind, State, Health, Progress %, Expected %, Owner, Team, Period, Start, Due, Key results, Last check-in, Link. Audit `goals.export`.
+  - `GET /api/checkins/:id/export.csv` (readers of the standup; 404 otherwise): Date, Person, Status, Submitted, then one column per question. Named standups: a row per participant per round; anonymous: a row per answer, "Anonymous", the day only; rounds under the anonymity threshold are left out; the newest 100 rounds. Audit `checkins.export`.
+  - `GET /api/bookings/export.csv?view=upcoming|past|cancelled|pending&status=&from=&to=&type=` (bookings the caller can read; guests 404): Start (UTC), End (UTC), Minutes, Type, Host, Co-hosts, Booker, Booker email, Guests, Status, Location, Booker time zone, Source, Booked at. Audit `bookings.export`.
+  - `GET /api/tasks/boards/:boardId/export.csv?archived=1` (readers of the board; 404 otherwise): Key, Title, Column, Done, Priority, Assignees, Tags, Start, Due, Due time, Estimate, Parent, Sprint, Subitems done, Comments, Description (start), Created, Updated, Done at, Archived at. Audit `tasks.export`.

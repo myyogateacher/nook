@@ -12,8 +12,8 @@ import type { NavItem, NavRecent, NavTree } from "./navModel";
  * rank first.
  */
 
-export type PaletteGroupId = "apps" | "recent" | "actions" | "commands" | "search";
-export const PALETTE_GROUP_LABELS: Record<PaletteGroupId, string> = { apps: "Apps", recent: "Recent", actions: "Quick actions", commands: "Commands", search: "Search" };
+export type PaletteGroupId = "apps" | "recent" | "actions" | "commands" | "search" | "results";
+export const PALETTE_GROUP_LABELS: Record<PaletteGroupId, string> = { apps: "Apps", recent: "Recent", actions: "Quick actions", commands: "Commands", search: "Search", results: "Results" };
 const GROUP_ORDER: readonly PaletteGroupId[] = ["apps", "recent", "actions", "commands", "search"];
 /** The order before anything is typed (D1293, review): Recent, Quick actions, Apps, Commands. */
 const BROWSE_ORDER: readonly PaletteGroupId[] = ["recent", "actions", "apps", "commands"];
@@ -44,13 +44,32 @@ export type PaletteEntry = {
   keywords?: string;
   /** In the app on screen: ranks a little higher among equal matches (Contacts › Insights while in Contacts). */
   here?: boolean;
+  /** The item it opens (a recent item, a search result): no two entries shown name the same one (D1346). */
+  item?: { kind: string; id: string };
   action: PaletteAction;
 };
+
+const itemKey = (entry: PaletteEntry) => entry.item ? `${entry.item.kind}:${entry.item.id}` : entry.action.kind === "path" ? `href:${entry.action.href}` : null;
+
+/** The entries in order, each item (by kind and id, else by href) only the first time. */
+function uniqueEntries(entries: readonly PaletteEntry[], seen = new Set<string>()): PaletteEntry[] {
+  return entries.filter((entry) => {
+    const key = itemKey(entry);
+    if (key === null) return true;
+    const href = entry.action.kind === "path" ? `href:${entry.action.href}` : null;
+    if (seen.has(key) || (href && seen.has(href))) return false;
+    seen.add(key);
+    if (href) seen.add(href);
+    return true;
+  });
+}
 
 export type PaletteSources = {
   tree: NavTree;
   /** Recently edited notes, newest first (the Notes list already loaded in this tab). */
   recentNotes?: readonly NavRecent[];
+  /** Recently opened items of any kind, newest first, already resolved for this person (D1344); `app` is its app's label. */
+  recentItems?: ReadonlyArray<{ kind: string; id: string; title: string; href: string; icon: LucideIcon; app: string }>;
   /** Quick actions this person may run (visibleQuickActions). */
   quickActions?: ReadonlyArray<QuickActionDef & { module: string }>;
   /** The module label each quick action belongs to, by module id. */
@@ -68,7 +87,7 @@ export type PaletteSources = {
 export const PALETTE_RECENT_NOTES = 5;
 
 /** Every entry, before filtering, in the order shown when nothing is typed. */
-export function paletteEntries({ tree, recentNotes = [], quickActions = [], moduleLabels = {}, canToggleSidebar = false, toggleShortcut, canCustomize = false }: PaletteSources): PaletteEntry[] {
+export function paletteEntries({ tree, recentNotes = [], recentItems = [], quickActions = [], moduleLabels = {}, canToggleSidebar = false, toggleShortcut, canCustomize = false }: PaletteSources): PaletteEntry[] {
   const entries: PaletteEntry[] = [];
   const recents: PaletteEntry[] = [];
   const top = [...tree.primary, ...tree.pinned, ...tree.apps, tree.settings];
@@ -76,12 +95,17 @@ export function paletteEntries({ tree, recentNotes = [], quickActions = [], modu
     entries.push({ id: `nav:${item.id}`, group: "apps", label: item.label, icon: item.icon, browse: true, action: { kind: "nav", item } });
     for (const child of item.children ?? []) {
       const entry: PaletteEntry = { id: `nav:${child.id}`, group: child.kind === "recent" ? "recent" : "apps", label: child.label, context: item.label, icon: child.icon, hint: child.kind === "recent" ? item.label : undefined, browse: child.kind === "recent", here: item.current, action: { kind: "nav", item: child } };
-      if (child.kind === "recent") recents.push(entry); else entries.push(entry);
+      // A recent board or collection names its item (`tasks:recent:<id>`), for de-duplication.
+      if (child.kind === "recent") recents.push({ ...entry, item: { kind: item.id === "tasks" ? "board" : item.id === "collections" ? "collection" : item.id, id: child.id.slice(child.id.lastIndexOf(":") + 1) } });
+      else entries.push(entry);
     }
   }
+  // D1344: recently opened items lead, newest first; a board, collection, or note they already name
+  // is not listed twice.
+  const opened = recentItems.map((item): PaletteEntry => ({ id: `opened:${item.kind}:${item.id}`, group: "recent", label: item.title || "Untitled", context: item.app, icon: item.icon, hint: item.app, browse: true, item: { kind: item.kind, id: item.id }, action: { kind: "path", href: item.href } }));
   const notesIcon = tree.apps.find((item) => item.id === "notes")?.icon ?? tree.pinned.find((item) => item.id === "notes")?.icon;
-  if (notesIcon) for (const note of recentNotes.slice(0, PALETTE_RECENT_NOTES)) recents.push({ id: `note:${note.id}`, group: "recent", label: note.name || "Untitled", context: "Notes", icon: notesIcon, hint: "Notes", browse: true, action: { kind: "path", href: note.href } });
-  entries.push(...recents);
+  if (notesIcon) for (const note of recentNotes.slice(0, PALETTE_RECENT_NOTES)) recents.push({ id: `note:${note.id}`, group: "recent", label: note.name || "Untitled", context: "Notes", icon: notesIcon, hint: "Notes", browse: true, item: { kind: "note", id: note.id }, action: { kind: "path", href: note.href } });
+  entries.push(...uniqueEntries([...opened, ...recents]));
   for (const action of quickActions) entries.push({ id: `quick:${action.module}:${action.id}`, group: "actions", label: action.label, context: moduleLabels[action.module], icon: action.icon, browse: true, action: { kind: "quick", action } });
   entries.push({ id: "command:shortcuts", group: "commands", label: "Keyboard shortcuts", icon: Keyboard, hint: "?", browse: true, keywords: "help keys", action: { kind: "command", command: "shortcuts" } });
   if (canCustomize) entries.push({ id: "command:customize", group: "commands", label: "Customize sidebar", icon: SlidersHorizontal, browse: true, keywords: "pin reorder order hide apps", action: { kind: "command", command: "customize" } });
@@ -136,7 +160,21 @@ export function paletteScore(entry: Pick<PaletteEntry, "label" | "context" | "ke
   return total;
 }
 
-export type PaletteGroup = { id: PaletteGroupId; label: string; entries: PaletteEntry[] };
+/** `key`: unique among the groups shown (search results have one group per app, all `results`). */
+export type PaletteGroup = { id: PaletteGroupId; key?: string; label: string; entries: PaletteEntry[] };
+
+/**
+ * The palette with the server's search results (D1340): the local groups as filterPalette ordered
+ * them, then one group per app with results, then Search ("Search notes for …") last, so a query
+ * that names an app or a recent item still opens it with Enter and the fallback stays at the end.
+ */
+export function withResults(groups: readonly PaletteGroup[], results: readonly PaletteGroup[]): PaletteGroup[] {
+  const ordered = [...groups.filter((group) => group.id !== "search"), ...results, ...groups.filter((group) => group.id === "search")];
+  // D1346: an item shown in an earlier group (a recent note, a recent card) is never shown again in a
+  // later one, by kind and id (and by href, for entries that name no item).
+  const seen = new Set<string>();
+  return ordered.map((group) => ({ ...group, entries: uniqueEntries(group.entries, seen) })).filter((group) => group.entries.length > 0);
+}
 
 export const PALETTE_LIMIT = 60;
 

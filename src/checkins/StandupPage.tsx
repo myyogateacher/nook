@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertOctagon, BellRing, ChevronLeft, ChevronRight, Lock, Play, Square, Sunrise, PenLine } from "lucide-react";
+import { AlertOctagon, BellRing, ChevronLeft, ChevronRight, Download, Lock, Play, Square, Sunrise, PenLine } from "lucide-react";
 import { ModuleHome } from "../ui/ModuleHome";
 import { formatWorkspaceRoute } from "../workspaceModules/registry";
 import { EmptyState } from "../ui/EmptyState";
@@ -14,6 +14,9 @@ import { closeRound, errorCode, errorText, getStandup, listRounds, nudgeRound, r
 import { AnswerCard, answerValue, cadenceText, dateText, Faces, PersonFace, relativeDeadline, StateBadge, timeText } from "./parts";
 import { AnswerSheet } from "./AnswerSheet";
 import { StandupSettings } from "./StandupSettings";
+import { ItemTimeline } from "../ui/activity/ItemTimeline";
+import { canCommentAtLevel } from "../ui/activity/activityAccess";
+import { module as standupsModule } from "./module";
 
 type PageProps = WorkspaceAppProps & { segment: string; sub: string | null; third: string | null; go: (path: string[], options?: { replace?: boolean }) => void };
 
@@ -43,7 +46,7 @@ export function StandupPage(props: PageProps) {
   }, [segment, reload]);
 
   const date = sub && DATE.test(sub) ? sub : null;
-  const tab = sub === "insights" ? "insights" : sub === "settings" ? "settings" : "round";
+  const tab = sub === "insights" ? "insights" : sub === "settings" ? "settings" : sub === "activity" ? "activity" : "round";
   useEffect(() => {
     if (!detail || tab !== "round") return;
     let live = true;
@@ -84,18 +87,23 @@ export function StandupPage(props: PageProps) {
     ...(canEdit && round?.round.status === "open" ? [
       { id: "nudge", label: "Nudge people who haven't answered", icon: BellRing, onSelect: () => { nudgeRound(round.round.id).then((result) => flash(result.nudged ? `Nudged ${result.nudged} ${result.nudged === 1 ? "person" : "people"}` : "Everyone has answered or was nudged in the last hour")).catch((reason) => flash(errorText(reason, "Could not nudge"))); } },
       { id: "close", label: "Close this round", icon: Square, onSelect: () => { closeRound(round.round.id).then(() => { flash("Round closed; the summary went out"); refresh(); }).catch((reason) => flash(errorText(reason, "Could not close the round"))); } }
-    ] : [])
+    ] : []),
+    // D1387: every round's answers you can read, as CSV.
+    { id: "export", label: "Export answers (CSV)", icon: Download, onSelect: () => { window.location.href = `/api/checkins/${encodeURIComponent(detail.id)}/export.csv`; } }
   ];
 
   return <ModuleHome icon={Sunrise} title="Standups" heading={detail.name} displayName={props.displayName} onHome={props.onHome} onSettings={props.onSettings} onSignOut={props.onSignOut}
     primary={due ? { label: "Answer", icon: PenLine, onClick: openAnswer, shortcut: false } : canEdit && tab === "round" && roundState === "none" ? { label: "Start a round", icon: Play, onClick: () => void start(), shortcut: false } : undefined}
     menu={menu}
-    tabs={[{ id: "round", label: "Rounds" }, { id: "insights", label: "Insights" }, { id: "settings", label: "Settings" }]} activeTab={tab}
+    tabs={[{ id: "round", label: "Rounds" }, { id: "insights", label: "Insights" }, { id: "activity", label: "Activity" }, { id: "settings", label: "Settings" }]} activeTab={tab}
     tabsInSidebar={{ label: detail.name, hrefFor: (id) => formatWorkspaceRoute({ app: "checkins", path: id === "round" ? [segmentNow] : [segmentNow, id], search: "" }) }}
     onTab={(id) => go(id === "round" ? [segmentNow] : [segmentNow, id])}
     filters={<p className="standup-subline"><button type="button" className="ui-text-button" onClick={() => go([])}><ChevronLeft aria-hidden="true" />All standups</button><span className="standup-muted">{cadenceText(detail.schedule)}{detail.status === "paused" ? " · Paused" : ""}</span>{detail.anonymous && <span className="standup-state tone-info"><Lock aria-hidden="true" />Anonymous</span>}</p>}>
     {tab === "round" && <RoundTab {...props} detail={detail} round={round} state={roundState} view={view} setView={setView} segmentNow={segmentNow} canEdit={canEdit} onStart={() => void start()} onSkipped={refresh} />}
     {tab === "insights" && <Insights detail={detail} />}
+    {/* The standup's history (rounds opened and closed, settings, questions, who takes part) and comments (D1375). */}
+    {tab === "activity" && <div className="standup-activity"><ItemTimeline kind="checkin" id={detail.id} title="Activity" renderers={standupsModule.activityRenderers}
+      canComment={canCommentAtLevel(detail.level) && (props.role === "admin" || props.role === "member")} refreshKey={String(reload)} /></div>}
     {tab === "settings" && <StandupSettings {...props} detail={detail} canEdit={canEdit} onChanged={(next) => { if (next) setDetail(next); else refresh(); }} onDeleted={() => go([])} />}
   </ModuleHome>;
 }

@@ -28,8 +28,8 @@ describe("routes", () => {
       expect(parseRoute(path)).toEqual(route);
       expect(formatRoute(route)).toBe(path);
     }
-    expect([...AI_TABS]).toEqual(["providers", "tools", "policy"]);
-    expect(AI_TAB_LABELS).toEqual({ providers: "Model providers", tools: "Tool servers", policy: "Chat policy" });
+    expect([...AI_TABS]).toEqual(["providers", "tools", "policy", "usage"]);
+    expect(AI_TAB_LABELS).toEqual({ providers: "Model providers", tools: "Tool servers", policy: "Chat policy", usage: "Usage" });
   });
 
   test("an unknown or malformed subpath opens bare AI (which then opens the first tab); other sections take no tab", () => {
@@ -50,7 +50,7 @@ describe("routes", () => {
 
 describe("tab visibility and the redirect", () => {
   test("admins see every tab; every other role sees none (the page and its nav entry are for admins)", () => {
-    expect(aiTabsFor("admin")).toEqual(["providers", "tools", "policy"]);
+    expect(aiTabsFor("admin")).toEqual(["providers", "tools", "policy", "usage"]);
     for (const role of ["member", "viewer", "guest", undefined] as const) {
       expect(aiTabsFor(role)).toEqual([]);
       expect(hubEntries(role, { teamModuleEnabled: true }).map((entry) => entry.id)).not.toContain("ai");

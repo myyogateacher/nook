@@ -5,7 +5,7 @@ import type { PreviewKind } from "./mimeSniff";
 import { readableCollectionPredicate } from "./collections/access";
 import { AUDIENCE_ALL_USERS } from "./team/roles";
 import { groupGrantExists } from "./access/groups";
-import { attachmentLinkReadBranch } from "./attachments/hosts";
+import { attachmentLinkReadBranch, CODE_READ_HOSTS } from "./attachments/hosts";
 
 export type Visibility = "private" | "selected" | "all_users";
 
@@ -124,12 +124,27 @@ const attachmentLinkPredicate = attachmentLinkReadBranch({ documentReadable: (al
  */
 export const readableSinglePredicate = `(${readablePredicate} OR ${attachedToReadableCard} OR (d.deleted_at IS NULL AND ${collectionAttachmentPredicate}) OR ${attachmentLinkPredicate})`;
 
+/**
+ * D1363, T690: a live document linked from a host whose read rule is code (item comments), checked
+ * host by host as `userId` now. Single reads only, like the SQL link branches; at most 20 links.
+ */
+function readableThroughCodeHost(documentId: string, userId: string) {
+  if (!CODE_READ_HOSTS.length) return false;
+  const links = db.query(`SELECT l.host_kind, l.host_id FROM attachment_links l JOIN documents d ON d.id = l.document_id AND d.deleted_at IS NULL
+    WHERE l.document_id = ? AND l.host_kind IN (${CODE_READ_HOSTS.map(() => "?").join(",")}) LIMIT 20`).all(documentId, ...CODE_READ_HOSTS.map((spec) => spec.kind)) as Array<{ host_kind: string; host_id: string }>;
+  return links.some((link) => CODE_READ_HOSTS.find((spec) => spec.kind === link.host_kind)?.readable?.(link.host_id, userId) === true);
+}
+
 export function readableDocument(documentId: string, userId: string) {
-  return db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND ${readableSinglePredicate}`).get({ documentId, userId }) as DocumentRow | null;
+  const row = db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND ${readableSinglePredicate}`).get({ documentId, userId }) as DocumentRow | null;
+  if (row || !readableThroughCodeHost(documentId, userId)) return row;
+  return db.query("SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL").get(documentId) as DocumentRow | null;
 }
 
 export function readableDocumentSummary(documentId: string, userId: string) {
-  return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND ${readableSinglePredicate}`).get({ documentId, userId }) as DocumentSummary | null;
+  const row = db.query(`${documentSummarySelect} WHERE d.id = $documentId AND ${readableSinglePredicate}`).get({ documentId, userId }) as DocumentSummary | null;
+  if (row || !readableThroughCodeHost(documentId, userId)) return row;
+  return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND d.deleted_at IS NULL`).get({ documentId, userId }) as DocumentSummary | null;
 }
 
 /**

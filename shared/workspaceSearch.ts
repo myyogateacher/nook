@@ -1,6 +1,7 @@
 /**
  * Search across modules (§B.12): `GET /api/search?scope=all&q=` fans out to every scope the caller
- * has (built-in: notes, files, whiteboards, collections, reports; plus each registered module scope)
+ * has (built-in: notes, cards, events, files, whiteboards, collections, reports, chats, D1341; plus each
+ * registered module scope)
  * and returns the top results per scope under its header. A module scope's own query is
  * `GET /api/search?scope=<scope>&q=`.
  */
@@ -16,6 +17,12 @@ export type ModuleSearchResult = {
   href: string;
   updatedAt?: string;
 };
+
+/**
+ * What every built-in hit also carries as `ref` (D1342), beside its scope's own fields: the item's
+ * kind and id, its plain title, and its in-app href. Chats are not a work kind (they cannot be linked).
+ */
+export type SearchItemRef = { kind: WorkKind | "chat"; id: string; title: string; href: string };
 
 export type SearchSection = {
   scope: string;

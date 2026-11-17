@@ -24,10 +24,11 @@ export function parseTimeRoute(segments: string[], search: string): WorkspaceRou
     const week = params.get("week");
     return { path: ["timesheet"], search: week && /^\d{4}-\d{2}-\d{2}$/.test(week) ? `?week=${week}` : "" };
   }
-  // A project's view rides in `?tab=` (the week-approval notification opens `?tab=approvals`, D1190).
+  // A project's view rides in `?tab=` (the week-approval notification opens `?tab=approvals`, D1190;
+  // `?tab=activity` the project's history and comments, D1367).
   if (first === "projects" && second && segments.length === 2) {
     const view = params.get("tab");
-    return view === "team" || view === "approvals" ? { path: ["projects", second], search: `?tab=${view}` } : { path: ["projects", second] };
+    return view === "team" || view === "approvals" || view === "activity" ? { path: ["projects", second], search: `?tab=${view}` } : { path: ["projects", second] };
   }
   if (first && TABS.has(first) && segments.length === 1) return { path: [first] };
   const entry = params.get("entry");
@@ -65,6 +66,15 @@ export const module: WorkspaceClientModule = {
   workKindRenderers: {
     time_entry: { icon: Clock, label: "Time entry" },
     time_project: { icon: FolderClock, label: "Time project" }
+  },
+  // A project's history (D1375): the kinds server/time/projects.ts registers.
+  activityRenderers: {
+    time_project_created: () => "created this project",
+    time_project_changed: (entry) => `renamed it to “${entry.payload.to?.label ?? ""}”`,
+    time_week_submitted: (entry) => `submitted the week of ${entry.payload.extra?.weekStart ?? ""}`.trim(),
+    time_week_approved: (entry) => `approved the week of ${entry.payload.extra?.weekStart ?? ""}`.trim(),
+    time_week_rejected: (entry) => `returned the week of ${entry.payload.extra?.weekStart ?? ""}`.trim(),
+    time_week_unlocked: (entry) => `unlocked the week of ${entry.payload.extra?.weekStart ?? ""}`.trim()
   },
   searchRenderer: {
     scope: "time", label: "Time", icon: Clock,

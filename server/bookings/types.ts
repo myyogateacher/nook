@@ -273,8 +273,8 @@ export function registerTypeBin() {
     type: "booking_type" as const,
     provider: {
       list(userId: string): BinItem[] {
-        return (db.query("SELECT id, title, deleted_at, purge_after, purge_started_at FROM booking_types WHERE deleted_at IS NOT NULL AND (owner_id = ? OR deleted_by = ?) ORDER BY deleted_at DESC LIMIT 500").all(userId, userId) as Array<{ id: string; title: string; deleted_at: string; purge_after: string; purge_started_at: string | null }>)
-          .map((row) => ({ type: "booking_type" as BinItem["type"], id: row.id, title: row.title, deleted_at: row.deleted_at, purge_after: row.purge_after, purging: row.purge_started_at !== null, ...binDefaults, can_purge: true }));
+        return (db.query("SELECT id, title, short_id, deleted_at, purge_after, purge_started_at FROM booking_types WHERE deleted_at IS NOT NULL AND (owner_id = ? OR deleted_by = ?) ORDER BY deleted_at DESC LIMIT 500").all(userId, userId) as Array<{ id: string; title: string; short_id: string; deleted_at: string; purge_after: string; purge_started_at: string | null }>)
+          .map((row) => ({ type: "booking_type" as BinItem["type"], id: row.id, title: row.title, deleted_at: row.deleted_at, purge_after: row.purge_after, purging: row.purge_started_at !== null, ...binDefaults, can_purge: true, href: typeHref(row) }));
       },
       restore(id: string, userId: string) {
         return withResourceLock(`booking_types:${id}`, async (): Promise<RestoreOutcome> => {

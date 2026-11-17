@@ -45,7 +45,7 @@ export type GoalFilter = { period?: string | null; owner?: string | null; team?:
 
 const json = (body: unknown) => JSON.stringify(body);
 
-export function listGoals(filter: GoalFilter, cursor?: string | null, signal?: AbortSignal) {
+function goalQuery(filter: GoalFilter) {
   const query = new URLSearchParams();
   if (filter.period) query.set("period", filter.period);
   if (filter.owner) query.set("owner", filter.owner);
@@ -55,10 +55,18 @@ export function listGoals(filter: GoalFilter, cursor?: string | null, signal?: A
   if (filter.mine) query.set("mine", "1");
   if (filter.q?.trim()) query.set("q", filter.q.trim());
   if (filter.closed) query.set("closed", "1");
+  return query;
+}
+
+export function listGoals(filter: GoalFilter, cursor?: string | null, signal?: AbortSignal) {
+  const query = goalQuery(filter);
   query.set("view", filter.view ?? "tree");
   if (cursor) query.set("cursor", cursor);
   return api<{ goals: GoalSummary[]; nextCursor: string | null }>(`/goals?${query}`, { signal });
 }
+
+/** D1387: the goals list's CSV, with the list's filters. */
+export const goalsExportUrl = (filter: GoalFilter) => `/api/goals/export.csv?${goalQuery(filter)}`;
 
 export const getGoal = (ref: string) => api<{ goal: GoalDetail }>(`/goals/${encodeURIComponent(ref)}`);
 export const createGoal = (input: GoalInput) => api<{ goal: GoalDetail }>("/goals", { method: "POST", body: json(input) });

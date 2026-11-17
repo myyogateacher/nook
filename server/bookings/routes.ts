@@ -16,6 +16,8 @@ import { addFeed, FeedError, listFeeds, refreshFeed, removeFeed } from "./feeds"
 import { bookingsInsights } from "./insights";
 import { bookableByHost, bookingForm, MAX_BOOKABLE_HOSTS, requireTypeForBooking } from "./bookable";
 import { workKindAdapter } from "../links/adapters";
+import { csvResponse } from "../csvExport";
+import { bookingsCsv } from "./export";
 
 /**
  * The app's Bookings routes (§D.6 HTTP), behind every session, CSRF, two-factor, and role-write
@@ -170,6 +172,16 @@ export function registerBookingRoutes(router: ModuleRouter) {
     if (c.get("user").role !== "admin") throw new BookingError(403, "ADMIN_ONLY", "Only admins can reset a link name");
     return c.json({ profile: resetHandle(userId, c.req.param("userId") ?? "") });
   }));
+  // D1384: the members' booking link names for Settings → Team's "Reset booking link name" (admins, one
+  // batched read for the members on screen). Members without a booking profile are left out.
+  router.get("/api/bookings/admin/handles", handle((c) => {
+    if (c.get("user").role !== "admin") throw new BookingError(403, "ADMIN_ONLY", "Only admins see members' booking link names");
+    const ids = [...new Set((c.req.query("users") ?? "").split(",").map((id) => id.trim().toLowerCase()).filter((id) => /^[0-9a-f-]{6,64}$/.test(id)))];
+    if (ids.length > MAX_BOOKABLE_HOSTS) throw new BookingError(400, "INVALID", `Ask for at most ${MAX_BOOKABLE_HOSTS} members at a time`);
+    if (!ids.length) return c.json({ handles: {} });
+    const rows = db.query(`SELECT user_id, handle FROM booking_profiles WHERE user_id IN (${ids.map(() => "?").join(",")})`).all(...ids) as Array<{ user_id: string; handle: string }>;
+    return c.json({ handles: Object.fromEntries(rows.map((row) => [row.user_id, row.handle])) });
+  }));
   router.get("/api/bookings/feeds", handle((c, userId) => c.json({ feeds: listFeeds(userId) })));
   router.post("/api/bookings/feeds", handle(async (c, userId) => {
     const input = await body(c, z.object({ label: z.string().max(80).default(""), url: z.string().min(8).max(2048) }).strict());
@@ -257,6 +269,12 @@ export function registerBookingRoutes(router: ModuleRouter) {
   router.get("/api/bookings", handle((c, userId) => {
     const query = c.req.query();
     return c.json(listBookings(userId, { ...query, view: query.view as ListFilter["view"], limit: query.limit ? Number(query.limit) : undefined }));
+  }));
+  // D1387: the bookings list as CSV, with the list's filters.
+  router.get("/api/bookings/export.csv", handle((c, userId) => {
+    const query = c.req.query();
+    const view = ["upcoming", "past", "cancelled", "pending"].includes(query.view ?? "") ? query.view as ListFilter["view"] : undefined;
+    return csvResponse(bookingsCsv(userId, { view, status: query.status, from: query.from, to: query.to, type: query.type }), `bookings-${view ?? "all"}.csv`);
   }));
   router.get("/api/bookings/insights", handle((c, userId) => c.json(bookingsInsights(userId, { days: Number(c.req.query("days") ?? 90), tz: c.req.query("tz") ?? "UTC" }))));
   router.post("/api/bookings", handle(async (c, userId) => {

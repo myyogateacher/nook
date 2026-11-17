@@ -20,7 +20,7 @@ export type SearchScopeDef = {
 };
 
 const scopes = new Map<string, SearchScopeDef>();
-export const BUILTIN_SEARCH_SCOPES = ["notes", "collections", "whiteboards", "reports", "files"] as const;
+export const BUILTIN_SEARCH_SCOPES = ["notes", "collections", "whiteboards", "reports", "files", "cards", "events", "chats"] as const;
 
 export function registerSearchScope(def: SearchScopeDef) {
   if (!/^[a-z][a-z_]{1,23}$/.test(def.scope) || (BUILTIN_SEARCH_SCOPES as readonly string[]).includes(def.scope) || def.scope === "all") throw new Error(`Invalid search scope ${def.scope}`);

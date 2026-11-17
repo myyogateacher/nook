@@ -264,7 +264,7 @@ export function ShareSheet({ session, memberUrl, publicUrl, publicAllowed, canMa
       <section>
         <h3><Globe aria-hidden="true" />Audience link</h3>
         {!publicAllowed
-          ? <p className="th-hint">Public links are turned off for this workspace (Settings → Workspace).</p>
+          ? <p className="th-hint">Public townhall links are turned off for this workspace (Settings → Workspace → Public townhall links).</p>
           : publicUrl
             ? <>
               <p className="th-hint">Anyone with this link can ask, upvote, and vote, without an account. Turn it off to stop it at once.</p>

@@ -5,6 +5,7 @@ import { anchorsOf, keyReach, reachCovers } from "./keyResources";
 import { workKindAdapter } from "./links/adapters";
 import { createLink, deleteLink, LinkError, linksOf, refFrom, resolveRef } from "./links/service";
 import { listItemActivity } from "./activity/service";
+import { keyReachesRef } from "./links/keyReach";
 import { addComment, CommentError, listComments } from "./activity/comments";
 import { datasetAllowed, datasetDef, DatasetError, listDatasets, runDatasetQuery } from "./datasets/registry";
 import { structuredQuerySchema } from "./datasets/routes";
@@ -20,7 +21,7 @@ import { registerAgentTools } from "./agents/nookBridge";
 import { readableCard } from "./tasks/access";
 import { cardIdForKey } from "./tasks/keys";
 import { CARD_KEY_PATTERN } from "../shared/boardKeys";
-import { ITEM_COMMENT_MAX, MENTIONABLE_LIMIT_MAX, MENTION_QUERY_MAX, mentionMarkdown } from "../shared/itemActivity";
+import { ITEM_COMMENT_MAX, MENTIONABLE_LIMIT_MAX, MENTION_QUERY_MAX, mentionMarkdown, type ItemComment } from "../shared/itemActivity";
 import { mentionCandidates } from "./people/mentions";
 import { LINK_RELATIONS, WORK_KINDS, type WorkKind, type WorkRef } from "../shared/workRefs";
 import { WORKSPACE_SCOPES } from "../shared/workspaceModules";
@@ -81,6 +82,13 @@ const mapLinkError = (error: unknown): never => {
   throw error;
 };
 
+
+/**
+ * A comment as a key sees it (D1363): its files as a count only. The attachment tools never offer item
+ * comments, so no file name or id reaches a key through here either.
+ */
+const forKey = ({ attachments, ...comment }: ItemComment) => ({ ...comment, fileCount: attachments.length });
+
 export const workTools: McpToolSpec[] = [
   defineTool({
     name: "resolve_ref",
@@ -112,14 +120,8 @@ export const workTools: McpToolSpec[] = [
       const ref = toRef(item, key);
       keyItem(key, ref, "read");
       // A key over chosen items sees only links whose other side it reaches too (T203).
-      const keyAllows = (other: WorkRef) => {
-        const adapter = workKindAdapter(other.kind);
-        if (!adapter) return false;
-        const reach = keyReach(key, adapter.scopes.read);
-        return reachCovers(reach, adapter.itemKind ? anchorsOf(adapter.itemKind, other.id) : reach === "all" ? [] : null);
-      };
       try {
-        return { links: linksOf(ref, { userId: key.userId }, { keyAllows }) };
+        return { links: linksOf(ref, { userId: key.userId }, { keyAllows: keyReachesRef(key) }) };
       } catch (error) {
         return mapLinkError(error);
       }
@@ -182,7 +184,8 @@ export const workTools: McpToolSpec[] = [
     handler: ({ item, cursor, limit }, key) => {
       const ref = toRef(item, key);
       keyItem(key, ref, "read");
-      return listItemActivity(ref.kind, ref.id, { cursor: cursor ?? null, limit: limit ?? 50 });
+      // A linked item's title only when the person can read it and the key reaches it (D1390, T203).
+      return listItemActivity(ref.kind, ref.id, { viewer: { userId: key.userId }, mayReadRef: keyReachesRef(key), cursor: cursor ?? null, limit: limit ?? 50 });
     }
   }),
   defineTool({
@@ -198,7 +201,7 @@ export const workTools: McpToolSpec[] = [
       const ref = toRef(item, key);
       keyItem(key, ref, "read");
       try {
-        return { comments: listComments(ref.kind, ref.id, key.userId) };
+        return { comments: listComments(ref.kind, ref.id, key.userId).map(forKey) };
       } catch (error) {
         return mapLinkError(error);
       }
@@ -217,7 +220,7 @@ export const workTools: McpToolSpec[] = [
       const ref = toRef(item, key);
       keyItem(key, ref, "write");
       try {
-        return { comment: addComment({ kind: ref.kind, itemId: ref.id, authorId: key.userId, body, parentId: parentId?.toLowerCase() ?? null }) };
+        return { comment: forKey(addComment({ kind: ref.kind, itemId: ref.id, authorId: key.userId, body, parentId: parentId?.toLowerCase() ?? null })) };
       } catch (error) {
         return mapLinkError(error);
       }

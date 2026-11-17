@@ -5,10 +5,14 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 - Plans of record: `DEVELOPMENT_PLAN.md`, `docs/plan/research/`, [reports plan](docs/plan/WAVES_45-48_REPORTS.md), [report theme](docs/plan/REPORT_THEME.md), [workspace modules](docs/plan/WORKSPACE_MODULES.md).
 - Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
-**Current state (2026-11-16).**
-- **v0.47.0** (2026-10-24) is the latest release. Everything since is in `CHANGELOG.md` under Unreleased: the seven workspace modules (Forms, Time, Goals, Standups, Contacts, Bookings, Townhall; the product owner answered the plan's §G questions and every wave shipped), the left navigation, task priority, @mentions, and the bake fixes.
-- Migrations: **001–078** are released and immutable (045, 054, 067, 070, 071, 072, 075 unused; 054 reserved for Messages). **079–123** and **160** are in Unreleased code; parallel lanes take id blocks (160–164 is one), so check `server/migrations/` and `server/migrations/workspace/index.ts` before picking one.
+**Current state (2026-11-17).**
+- **v0.48.0** (2026-11-17) is the latest release: PRs #3–#12 (workspace modules, left sidebar, ⌘K search everywhere, @mentions, Tasks keys/timeline/priority, friendly URLs). Every merged PR from now on gets a GitHub release.
+- Migrations: **001–123, 155, 160** are released and immutable (v0.48.0); earlier: **001–078** (045, 054, 067, 070, 071, 072, 075 unused; 054 reserved for Messages). **079–123** and **160** are in Unreleased code; parallel lanes take id blocks (160–164 is one), so check `server/migrations/` and `server/migrations/workspace/index.ts` before picking one.
 - Development lands on `main` through pull requests, each after its gates pass.
+
+## Release blockers (v0.48.1)
+
+- [ ] 10 tests fail on main (Docker verify is red since PRs #3–#12). Always failing: `tests/bookings.test.ts` "an outside ICS feed (through the egress guard) blocks slots", `tests/schedules.test.ts` "dispatcher (T504) > each occurrence runs once" (cancelSchedules returns 3, expected 1). Failing only in the full run (pass alone, so shared state or ordering): `tests/workspaceRegistry.test.ts` datasets, `tests/team.test.ts` reading, `tests/tasksCardFace.test.tsx` (3 face tests), `tests/publicPages.test.ts` email verification, `tests/goals.test.ts` search/datasets/Today, `tests/calendarApi.test.ts` Personal calendar.
 
 ## Leftovers (lane W3-WIRE, D1049)
 

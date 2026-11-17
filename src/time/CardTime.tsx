@@ -75,6 +75,12 @@ export function useCardTotals(cardId: string): Totals | null {
   return totals;
 }
 
+/** The card face asks this before it draws a footer line for the badge (D888, D1386): only once time is logged. */
+export function useCardHasTime(card: CardSlotCard) {
+  const totals = useCardTotals(card.id);
+  return Boolean(totals && (totals.seconds > 0 || totals.running));
+}
+
 /** The card face badge: logged time, once there is any (and "of 5h" on hours boards). */
 export function CardTimeBadge({ card }: { card: CardSlotCard }) {
   const totals = useCardTotals(card.id);

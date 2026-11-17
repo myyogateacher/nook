@@ -93,11 +93,14 @@ export function schedulesOf(owner: { kind: string; id: string }): Schedule[] {
   return (db.query("SELECT * FROM schedules WHERE owner_kind = ? AND owner_id = ? ORDER BY purpose").all(owner.kind, owner.id) as ScheduleRow[]).map(toSchedule);
 }
 
-/** Removes the owner's schedules (one purpose, or all). Their fire history goes with them. Returns how many. */
+/**
+ * Removes the owner's schedules (one purpose, or all). Their fire history goes with them. Returns how many
+ * schedules went. Counted with RETURNING: bun:sqlite's `.changes` also counts the cascaded schedule_fires rows.
+ */
 export function cancelSchedules(owner: { kind: string; id: string }, purpose?: string): number {
   return purpose
-    ? db.query("DELETE FROM schedules WHERE owner_kind = ? AND owner_id = ? AND purpose = ?").run(owner.kind, owner.id, purpose).changes
-    : db.query("DELETE FROM schedules WHERE owner_kind = ? AND owner_id = ?").run(owner.kind, owner.id).changes;
+    ? db.query("DELETE FROM schedules WHERE owner_kind = ? AND owner_id = ? AND purpose = ? RETURNING id").all(owner.kind, owner.id, purpose).length
+    : db.query("DELETE FROM schedules WHERE owner_kind = ? AND owner_id = ? RETURNING id").all(owner.kind, owner.id).length;
 }
 
 /** Pauses or resumes a schedule; resuming computes the next fire from now (missed occurrences are not replayed). */

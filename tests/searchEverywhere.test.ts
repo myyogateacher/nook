@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
 
 const { resetSearchRateLimit } = await import("../server/searchRoutes");
@@ -62,6 +62,7 @@ beforeAll(async () => {
   ids.privateCard = (await api(owner, "POST", `/tasks/boards/${privateBoard.body.board.id}/cards`, { columnId: privateBoard.body.columns[0].id, title: `${tag} secret card` })).body.card.id;
 
   const calendar = (await api(owner, "POST", "/calendars", { name: `${tag} team calendar`, color: "blue" })).body.calendar.id as string;
+  ids.calendar = calendar;
   db.query("UPDATE calendars SET visibility = 'all_users' WHERE id = ?").run(calendar);
   ids.event = (await api(owner, "POST", `/calendars/${calendar}/events`, { title: `${tag} offsite`, allDay: true, startDate: "2026-12-01", endDate: "2026-12-02" })).body.event.id;
   const privateCalendar = (await api(owner, "POST", "/calendars", { name: "Private", color: "red" })).body.calendar.id as string;
@@ -76,6 +77,14 @@ beforeAll(async () => {
     db.query("INSERT INTO chat_fts (chat_id, owner_id, title, body) VALUES (?, ?, ?, '')").run(id, session.userId, `${tag} chat of ${key}`);
     ids[key] = id;
   }
+});
+
+// The suite shares one database: the everyone-shared items go back to private, so later files'
+// fresh accounts do not see them (tests/calendarApi.test.ts expects only its own Personal calendar).
+afterAll(() => {
+  db.query("UPDATE calendars SET visibility = 'private' WHERE id = ?").run(ids.calendar);
+  db.query("UPDATE boards SET visibility = 'private' WHERE id = ?").run(ids.board);
+  db.query("UPDATE notes SET visibility = 'private' WHERE id = ?").run(ids.sharedNote);
 });
 
 describe("scope=all across apps (D1341)", () => {

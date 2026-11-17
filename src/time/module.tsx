@@ -4,7 +4,7 @@ import { Clock, FolderClock, Play, Timer } from "lucide-react";
 import { WORKSPACE_MODULE_LABELS } from "../../shared/workspaceModules";
 import type { WorkspaceClientModule, WorkspaceRoutePart } from "../workspaceModules/types";
 import { TimerTopBar } from "./TimerBar";
-import { CardTimerAction, CardTimeSection, ItemTimeSection, TimelineTimeFill } from "./CardTime";
+import { CardTimeBadge, CardTimerAction, CardTimeSection, ItemTimeSection, TimelineTimeFill, useCardHasTime } from "./CardTime";
 import { TodayTimeSection } from "./TodayTime";
 import { startTimer } from "./timerStore";
 
@@ -53,6 +53,9 @@ export const module: WorkspaceClientModule = {
   quickActions: [{ id: "start-timer", label: "Start timer", icon: Play, hiddenFor: ["viewer"], run: async () => { await startTimer({}); } }],
   cardSections: [{ id: "time.section", area: "side", order: 20, component: CardTimeSection }],
   cardHeaderActions: [{ id: "time.start", order: 10, component: CardTimerAction }],
+  // Registered with the module (a fixed list, so the face's `useShows` hooks keep their order) and drawn
+  // only for cards with logged time: a card without time keeps no footer line (D888, D1386).
+  cardFaceBadges: [{ id: "time.badge", order: 10, component: CardTimeBadge, useShows: useCardHasTime }],
   timelineDecorations: [{ id: "time.fill", order: 10, component: TimelineTimeFill }],
   itemSections: [{ id: "time.item", kinds: ["goal", "contact", "company", "deal", "booking"], order: 20, component: ItemTimeSection }],
   shortcuts: [{ keys: "Alt+T", label: "Start or stop the timer" }, { keys: "n", label: "Log time (in Time)" }, { keys: "j / k", label: "Move between entries" }],

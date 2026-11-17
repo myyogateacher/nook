@@ -222,4 +222,15 @@ export function registerTestModule() {
   });
 }
 
-export const unregisterTestModule = () => unregisterWorkspaceModuleForTests(TEST_MODULE);
+/**
+ * Unregisters the module and drops its rows: the suite shares one database, so a widget one file shared
+ * would otherwise count in the next file's searches and datasets (tests/workLinks.test.ts before
+ * tests/workspaceRegistry.test.ts), and its pending schedules would outlive their handler.
+ */
+export const unregisterTestModule = () => {
+  unregisterWorkspaceModuleForTests(TEST_MODULE);
+  db.transaction(() => {
+    db.query("DELETE FROM schedules WHERE owner_kind = ?").run(TEST_KIND);
+    db.exec("DELETE FROM test_pings; DELETE FROM test_widgets");
+  })();
+};

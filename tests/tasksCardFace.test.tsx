@@ -158,6 +158,22 @@ test("D1386: a module badge draws the footer line only for cards it has somethin
   }
 });
 
+test("D888: the Time badge draws no footer line for a card without logged time", async () => {
+  const { module: time } = await import("../src/time/module");
+  const { registerCardFaceBadge, registeredCardFaceBadges } = await import("../src/ui/cardSlots");
+  const badge = time.cardFaceBadges?.find((item) => item.id === "time.badge");
+  expect(badge?.useShows).toBeFunction();
+  registerCardFaceBadge({ ...badge!, module: "time" });
+  try {
+    expect(renderToStaticMarkup(<CardFace card={base} tags={tags} done={false} today={today} excerptId="ex" />))
+      .toBe('<div class="task-card-face" aria-hidden="true"><span class="task-card-title">Fix login</span></div>');
+  } finally {
+    const list = registeredCardFaceBadges() as unknown as Array<{ id: string }>;
+    const at = list.findIndex((item) => item.id === "time.badge");
+    if (at >= 0) list.splice(at, 1);
+  }
+});
+
 test("lane cards are named groups described by their excerpt, with the Move button outside the hidden face", () => {
   const markup = renderToStaticMarkup(<BoardColumnView column={column} cards={[{ ...full, due_on: "2999-01-01" }, { ...base, id: "k2", title: "Plain" }]} tags={tags} owner={false} isFirst isLast draggingId={null} dropIndex={null}
     onDragStart={noop} onDragEnd={noop} onDragOverIndex={noop} onDropAt={noop} onKeyMove={noop} onCardMenu={noop} onOpenCard={noop} onColumnMenu={noop} onMoveColumn={noop} onAddCard={async () => undefined} />);

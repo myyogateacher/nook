@@ -122,6 +122,8 @@ describe("public pages", () => {
 
   test("email verification: the submission counts only after the code mailed to the address", async () => {
     resetPublicLimits();
+    // Earlier files' queued mail would take the dispatch batch (MAIL_BATCH, oldest first) ahead of this code.
+    db.query("DELETE FROM mail_outbox WHERE status = 'queued'").run();
     const sent: Array<{ to: string; text: string; subject: string; headers?: Record<string, string> }> = [];
     mail.setMailTransportForTests(async (message) => { sent.push(message); return { id: `msg_${sent.length}` }; });
     try {

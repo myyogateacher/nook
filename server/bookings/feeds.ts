@@ -88,12 +88,14 @@ export function addFeed(userId: string, input: { label: string; url: string }): 
 
 export function removeFeed(userId: string, feedId: string) {
   const removed = db.transaction(() => {
-    const changes = db.query("DELETE FROM booking_feeds WHERE id = ? AND user_id = ?").run(feedId, userId).changes;
-    if (changes) {
+    // RETURNING, not `.changes`: bun:sqlite's `.changes` also counts the rows the delete cascades to
+    // (the feed's busy intervals), so a feed that had been fetched read as "not found" (404).
+    const removed = db.query("DELETE FROM booking_feeds WHERE id = ? AND user_id = ? RETURNING id").all(feedId, userId).length;
+    if (removed) {
       cancelSchedules({ kind: "booking_feed", id: feedId });
       audit(userId, null, "bookings.feed_remove", { feedId });
     }
-    return changes === 1;
+    return removed === 1;
   })();
   if (!removed) throw new FeedError(404, "Calendar not found", "NOT_FOUND");
 }

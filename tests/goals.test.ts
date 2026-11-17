@@ -221,7 +221,8 @@ describe("goals end to end", () => {
     expect(query.status).toBe(200);
     expect(query.body.rows.some((row: unknown[]) => row[0] === "Secret sub-goal")).toBe(false);
     expect(query.body.rows.some((row: unknown[]) => row[0] === "Grow MRR 20%")).toBe(true);
-    const checkins = await api(owner, "POST", "/datasets/query", { dataset: "goals.checkins", measures: [{ fn: "count" }] });
+    // This file's goal only: the suite shares one database, and other files' workspace goals are readable too.
+    const checkins = await api(owner, "POST", "/datasets/query", { dataset: "goals.checkins", measures: [{ fn: "count" }], filters: [{ column: "goal_id", op: "eq", value: companyId }] });
     expect(checkins.body.rows[0][0]).toBe(2);
   });
 

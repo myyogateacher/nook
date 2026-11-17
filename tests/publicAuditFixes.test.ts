@@ -13,7 +13,9 @@ const mail = await import("../server/mail");
  */
 
 let unregister: () => void;
+let outboxBefore = 0;
 beforeAll(() => {
+  outboxBefore = (db.query("SELECT COALESCE(MAX(rowid), 0) AS id FROM mail_outbox").get() as { id: number }).id;
   mail.setMailTransportForTests(async () => ({ id: "msg" }));
   unregister = registerMailTemplate("test.audit_outside", {
     name: "test.audit_outside", class: "activity",
@@ -23,6 +25,9 @@ beforeAll(() => {
   }) as unknown as () => void;
 });
 afterAll(() => {
+  // The suite shares one outbox: the ~45 codes queued here would fill a later file's dispatch batch
+  // (MAIL_BATCH, oldest first), and the test template's row would outlive its template.
+  db.query("DELETE FROM mail_outbox WHERE rowid > ? AND status = 'queued'").run(outboxBefore);
   unregister?.();
   mail.setMailTransportForTests(null);
 });

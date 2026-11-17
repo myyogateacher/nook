@@ -6,8 +6,6 @@ import { elapsedSeconds, TimerChip } from "../ui/time/Duration";
 import { notify } from "../ui/notify";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { useRole } from "../team/roleAccess";
-import { registerCardFaceBadge } from "../ui/cardSlots";
-import { CardTimeBadge } from "./CardTime";
 import { entryLabel, type TimeEntry } from "../../shared/time";
 import { formatDuration } from "../../shared/duration";
 import { timeApi } from "./api";
@@ -53,10 +51,6 @@ export function TimerTopBar() {
     return () => query.removeEventListener?.("change", update);
   }, []);
   useTimerShortcut(role !== "viewer");
-  // The card face badge joins once Time runs in the signed-in shell (this chip is in every header), not
-  // at import: a registered badge gives every card face a footer line, so screens that render cards
-  // without the shell (tests, embeds) stay as they were (D888).
-  useEffect(() => { registerCardFaceBadge({ id: "time.badge", order: 10, component: CardTimeBadge, module: "time" }); }, []);
   if (role === "viewer" || !loaded) return null;
   // Phones (§D.2): the running chip is the dot and the time in one button that opens the timer sheet
   // (which has Stop), so the header's account row keeps one line.

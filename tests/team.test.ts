@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createUser, dataDir, db, origin, request, s3Backend, type Session } from "./support/harness";
@@ -14,6 +14,21 @@ const Y = new Date().getUTCFullYear() + 5;
 beforeEach(() => {
   resetTeamRateLimits();
   resetMcpLimits();
+});
+
+// The suite shares one database, and by this file earlier files have left hundreds of active accounts:
+// the Team list stops at TEAM_LIST_LIMIT (500, active first, then role and name), so this file's
+// accounts fell off it. Earlier accounts are blocked while this file runs (one admin stays active for
+// the `users_keep_one_admin` trigger) and unblocked afterwards.
+let parked: string[] = [];
+beforeAll(() => {
+  const keep = db.query("SELECT id FROM users WHERE kind = 'person' AND role = 'admin' AND disabled_at IS NULL ORDER BY rowid LIMIT 1").get() as { id: string } | null;
+  parked = (db.query("SELECT id FROM users WHERE kind = 'person' AND disabled_at IS NULL AND id IS NOT ?").all(keep?.id ?? null) as Array<{ id: string }>).map((row) => row.id);
+  const at = new Date().toISOString();
+  db.transaction(() => { for (const id of parked) db.query("UPDATE users SET disabled_at = ? WHERE id = ?").run(at, id); })();
+});
+afterAll(() => {
+  db.transaction(() => { for (const id of parked) db.query("UPDATE users SET disabled_at = NULL WHERE id = ?").run(id); })();
 });
 
 type Role = "admin" | "member" | "viewer" | "guest";

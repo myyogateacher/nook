@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.47.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.48.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -476,7 +476,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
 | `AGENT_IMAGE_PROXY_TEST_HOSTS` | empty | Tests and local QA only: hosts (names, addresses, or CIDR ranges) the chat image proxy may reach over http on any port, standing in for a public picture host. Refused at startup when `NODE_ENV=production`. The proxy never uses `AGENT_ALLOWED_PRIVATE_HOSTS`: in production it loads public https addresses on port 443 only. |
-| `APP_VERSION` | `0.47.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.48.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 | `LOG_LEVEL` | `info` | `error`, `warn`, `info`, or `debug` (see *Logs*). `debug` adds health checks, static files, single 401/404s, successful polls, and query SQL. Any other value means `info`. |
 | `LOG_FORMAT` | `pretty` | `pretty` (one readable line per event with `key=value` fields) or `json` (one JSON object per line, for a log shipper). |
@@ -761,6 +761,17 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+### Upgrading to 0.48.0
+
+Back up first with `./scripts/backup.sh --force`. 32 migrations run once, in order, on the first boot, and can only be undone by restoring that backup. They add tables, columns, indexes, search indexes and triggers; the backfills are the only steps that touch existing rows:
+
+- **Tasks:** 079 (`board_keys`) gives every board a code from its name and numbers every card in creation order; 080 (`card_start_dates`) adds start dates; 081 (`card_activity`) creates an empty history table, so cards have no history from before the upgrade; 082 (`card_estimates`) adds estimates, off on every board; 123 (`card_priority`) adds priority and turns every card flagged Urgent into priority Urgent (the `urgent` flag is still accepted by REST and MCP).
+- **Friendly URLs:** 083 (`short_ids`) adds a short id to notes, files, whiteboards, collections and reports, with a backfill. Old links keep working.
+- **Workspace modules:** 085–089 (shared foundations: workspace words, work links, item activity and comments, the question engine, people and companies, schedules and public pages), 090–091 (Forms), 093–094 (Time), 096–097 (Goals), 099–100 (Standups), 102–104 (Contacts), 106–107 and 112 (Bookings), 111 (goal check-ins from standups), 113 (Reports on "This workspace"), 115–116 (Townhall; 116 re-salts named askers, so a public participant can't withdraw a named question asked before the upgrade), 120 (Time budget alerts fire once per crossing), 155 (module sharing in the digest) and 160 (`public_townhall`, a separate switch that copies the current public-forms setting, so nothing changes on upgrade).
+- **Sidebar:** 122 (`sidebar_preferences`) adds one nullable column so the sidebar layout follows you across devices.
+
+Migration numbers 084, 092, 095, 098, 101, 105, 108–110, 114, 117–119, 121 and 124–154, 156–159 are unused; the gaps are expected. No new settings and no new dependencies. Public pages (`/p/…`, for forms, booking pages and Townhall audience links) are **on by default**: anyone with a link can use them once someone publishes one. An admin can turn each off in the workspace settings before people start publishing. Pull, rebuild with `APP_VERSION=0.48.0`, and restart.
 
 ### Upgrading to 0.47.0
 

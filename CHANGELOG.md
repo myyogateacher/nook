@@ -2,7 +2,7 @@
 
 Release notes for Nook, newest first. Upgrade steps for each release are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
-## Unreleased
+## v0.48.0 — 2026-11-17
 
 **Link history names what was linked**
 
@@ -267,11 +267,14 @@ Release notes for Nook, newest first. Upgrade steps for each release are in [doc
 
 **Upgrading**
 
-- **Back up first** (`./scripts/backup.sh --force`). Four migrations run once on the first boot, all quick:
-- Migration **079** (`board_keys`) gives every board a code from its name and numbers every card in creation order.
-- Migration **080** (`card_start_dates`) adds the start date columns.
-- Migration **081** (`card_activity`) creates an empty table. Cards changed before the upgrade have no history from before it.
-- Migration **082** (`card_estimates`) adds three columns. Every board starts with estimates off.
+Back up first with `./scripts/backup.sh --force`. 32 migrations run once, in order, on the first boot, and can only be undone by restoring that backup. They add tables, columns, indexes, search indexes and triggers; the backfills are the only steps that touch existing rows:
+
+- **Tasks:** 079 (`board_keys`) gives every board a code from its name and numbers every card in creation order; 080 (`card_start_dates`) adds start dates; 081 (`card_activity`) creates an empty history table, so cards have no history from before the upgrade; 082 (`card_estimates`) adds estimates, off on every board; 123 (`card_priority`) adds priority and turns every card flagged Urgent into priority Urgent (the `urgent` flag is still accepted by REST and MCP).
+- **Friendly URLs:** 083 (`short_ids`) adds a short id to notes, files, whiteboards, collections and reports, with a backfill. Old links keep working.
+- **Workspace modules:** 085–089 (shared foundations: workspace words, work links, item activity and comments, the question engine, people and companies, schedules and public pages), 090–091 (Forms), 093–094 (Time), 096–097 (Goals), 099–100 (Standups), 102–104 (Contacts), 106–107 and 112 (Bookings), 111 (goal check-ins from standups), 113 (Reports on "This workspace"), 115–116 (Townhall; 116 re-salts named askers, so a public participant can't withdraw a named question asked before the upgrade), 120 (Time budget alerts fire once per crossing), 155 (module sharing in the digest) and 160 (`public_townhall`, a separate switch that copies the current public-forms setting, so nothing changes on upgrade).
+- **Sidebar:** 122 (`sidebar_preferences`) adds one nullable column so the sidebar layout follows you across devices.
+
+Migration numbers 084, 092, 095, 098, 101, 105, 108–110, 114, 117–119, 121 and 124–154, 156–159 are unused; the gaps are expected. No new settings and no new dependencies. Public pages (`/p/…`, for forms, booking pages and Townhall audience links) are **on by default**: anyone with a link can use them once someone publishes one. An admin can turn each off in the workspace settings before people start publishing. Pull, rebuild with `APP_VERSION=0.48.0`, and restart.
 
 ## v0.47.0 — 2026-10-24
 
